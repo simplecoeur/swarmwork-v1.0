@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { AVATAR_LIMITS, ErrorCode } from '@swarm/shared';
 import { AVATAR_EXT_TO_MIME, AVATAR_MIME_TO_EXT } from '../domain/accountService';
 import {
