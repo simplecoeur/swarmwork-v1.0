@@ -67,6 +67,7 @@ import { attachAssetRefs } from '../domain/assetService';
 import { registerM7Routes } from './m7';
 import { registerM8Routes } from './m8';
 import { registerV120Routes } from './v120';
+import { registerV130Routes } from './v130';
 import {
   adjudicateSchema,
   apiDeleteSchema,
@@ -1808,5 +1809,12 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     app,
     { repos, logger, dataDir: path.dirname(deps.dbPath) },
     { auth, wsAuth, requireAdmin, audit, createTask: createOneTask },
+  );
+
+  /* ================= v1.3.0 路由组（A3 任务模板 / B 精选与公示 / F 办公室风格） ================= */
+  registerV130Routes(
+    app,
+    { repos, logger, dataDir: path.dirname(deps.dbPath) },
+    { auth, wsAuth, requireAdmin, audit },
   );
 }

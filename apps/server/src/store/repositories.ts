@@ -251,6 +251,43 @@ export interface SkillRow {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** v1.3.0 B 生态（迁移 015）：官方精选标记/时间、上架时间、公开署名快照 */
+  featured?: number;
+  featured_at?: string | null;
+  listed_at?: string | null;
+  contributor_name?: string | null;
+  contributor_workspace_name?: string | null;
+}
+
+/* ----- v1.3.0 A3 任务模板（迁移 015） ----- */
+export interface TemplateRow {
+  id: string;
+  workspace_id: string | null;
+  scope: string;
+  industry_pack_id: string | null;
+  name: string;
+  type_id: string;
+  brief_template: string;
+  suggested_role: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/* ----- v1.3.0 F 风格模板（迁移 016） ----- */
+export interface StyleTemplateRow {
+  id: string;
+  workspace_id: string | null;
+  owner_type: string;
+  name: string;
+  config: string;
+  visibility: string;
+  apply_count: number;
+  contributor_name: string | null;
+  contributor_workspace_name: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DeliveryLinkRow {
@@ -1171,8 +1208,9 @@ export class Repos {
         `INSERT INTO skills (id, slug, owner_type, owner_id, workspace_id, name, description, role,
           prompt_template, input_schema, kb_binding, output_spec, example_input, example_output,
           version, changelog, status, visibility, source_skill_id, source_version, install_count,
-          verified_notes, created_by, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          verified_notes, created_by, created_at, updated_at,
+          featured, featured_at, listed_at, contributor_name, contributor_workspace_name)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id, row.slug, row.owner_type, row.owner_id, row.workspace_id, row.name, row.description,
@@ -1180,6 +1218,8 @@ export class Repos {
         row.example_input, row.example_output, row.version, row.changelog, row.status, row.visibility,
         row.source_skill_id, row.source_version, row.install_count, row.verified_notes, row.created_by,
         row.created_at, row.updated_at,
+        row.featured ?? 0, row.featured_at ?? null, row.listed_at ?? null,
+        row.contributor_name ?? null, row.contributor_workspace_name ?? null,
       );
   }
   updateSkill(row: SkillRow): void {
@@ -1188,13 +1228,16 @@ export class Repos {
         `UPDATE skills SET slug=?, owner_type=?, owner_id=?, workspace_id=?, name=?, description=?, role=?,
           prompt_template=?, input_schema=?, kb_binding=?, output_spec=?, example_input=?, example_output=?,
           version=?, changelog=?, status=?, visibility=?, source_skill_id=?, source_version=?, install_count=?,
-          verified_notes=?, updated_at=? WHERE id=?`,
+          verified_notes=?, updated_at=?,
+          featured=?, featured_at=?, listed_at=?, contributor_name=?, contributor_workspace_name=? WHERE id=?`,
       )
       .run(
         row.slug, row.owner_type, row.owner_id, row.workspace_id, row.name, row.description, row.role,
         row.prompt_template, row.input_schema, row.kb_binding, row.output_spec, row.example_input,
         row.example_output, row.version, row.changelog, row.status, row.visibility, row.source_skill_id,
-        row.source_version, row.install_count, row.verified_notes, row.updated_at, row.id,
+        row.source_version, row.install_count, row.verified_notes, row.updated_at,
+        row.featured ?? 0, row.featured_at ?? null, row.listed_at ?? null,
+        row.contributor_name ?? null, row.contributor_workspace_name ?? null, row.id,
       );
   }
   getSkill(id: string): SkillRow | undefined {
@@ -1231,6 +1274,89 @@ export class Repos {
   }
   bumpSkillInstallCount(id: string): void {
     this.db.prepare('UPDATE skills SET install_count = install_count + 1 WHERE id = ?').run(id);
+  }
+
+  /* ----- 任务模板（v1.3.0 A3，迁移 015） ----- */
+  /** 可见集：本空间自建 + official + 本空间行业包的 industry 模板 */
+  listVisibleTemplates(workspaceId: string, packId: string | null): TemplateRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM task_templates
+          WHERE workspace_id = ?
+             OR scope = 'official'
+             OR (scope = 'industry' AND industry_pack_id IS NOT NULL AND (
+                   industry_pack_id = ?
+                   OR industry_pack_id = (SELECT industry FROM industry_packs WHERE id = ?)
+                 ))
+          ORDER BY CASE scope WHEN 'official' THEN 0 WHEN 'industry' THEN 1 ELSE 2 END, created_at, id`,
+      )
+      .all(workspaceId, packId ?? '', packId ?? '') as unknown as TemplateRow[];
+  }
+  insertTemplate(row: TemplateRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO task_templates (id, workspace_id, scope, industry_pack_id, name, type_id,
+          brief_template, suggested_role, created_by, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.id, row.workspace_id, row.scope, row.industry_pack_id, row.name, row.type_id,
+        row.brief_template, row.suggested_role, row.created_by, row.created_at, row.updated_at,
+      );
+  }
+  getTemplate(id: string): TemplateRow | undefined {
+    return this.db.prepare('SELECT * FROM task_templates WHERE id = ?').get(id) as unknown as TemplateRow | undefined;
+  }
+  deleteTemplate(id: string): void {
+    this.db.prepare('DELETE FROM task_templates WHERE id = ?').run(id);
+  }
+
+  /* ----- 风格模板（v1.3.0 F，迁移 016） ----- */
+  insertStyleTemplate(row: StyleTemplateRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO style_templates (id, workspace_id, owner_type, name, config, visibility,
+          apply_count, contributor_name, contributor_workspace_name, created_by, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.id, row.workspace_id, row.owner_type, row.name, row.config, row.visibility,
+        row.apply_count, row.contributor_name, row.contributor_workspace_name, row.created_by,
+        row.created_at, row.updated_at,
+      );
+  }
+  getStyleTemplate(id: string): StyleTemplateRow | undefined {
+    return this.db.prepare('SELECT * FROM style_templates WHERE id = ?').get(id) as unknown as StyleTemplateRow | undefined;
+  }
+  listStyleTemplatesByWorkspace(workspaceId: string): StyleTemplateRow[] {
+    return this.db
+      .prepare('SELECT * FROM style_templates WHERE workspace_id = ? ORDER BY created_at, id')
+      .all(workspaceId) as unknown as StyleTemplateRow[];
+  }
+  /** 平台库：官方模板（owner_type='platform'）+ 已过审公开的用户模板 */
+  listPublicStyleTemplates(): StyleTemplateRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM style_templates WHERE owner_type = 'platform' OR visibility = 'public' ORDER BY apply_count DESC, created_at, id",
+      )
+      .all() as unknown as StyleTemplateRow[];
+  }
+  updateStyleTemplate(row: StyleTemplateRow): void {
+    this.db
+      .prepare(
+        `UPDATE style_templates SET workspace_id=?, owner_type=?, name=?, config=?, visibility=?,
+          apply_count=?, contributor_name=?, contributor_workspace_name=?, created_by=?, updated_at=? WHERE id=?`,
+      )
+      .run(
+        row.workspace_id, row.owner_type, row.name, row.config, row.visibility, row.apply_count,
+        row.contributor_name, row.contributor_workspace_name, row.created_by, row.updated_at, row.id,
+      );
+  }
+  deleteStyleTemplate(id: string): void {
+    this.db.prepare('DELETE FROM style_templates WHERE id = ?').run(id);
+  }
+  bumpStyleTemplateApplyCount(id: string): void {
+    this.db.prepare('UPDATE style_templates SET apply_count = apply_count + 1 WHERE id = ?').run(id);
   }
 
   /* ----- 交付页 / 渠道推送（M7 §11.2） ----- */

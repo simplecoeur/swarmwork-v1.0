@@ -74,6 +74,29 @@ function fail(code: string, message: string, status = 400): never {
   throw Object.assign(new Error(message), { code, statusCode: status });
 }
 
+/**
+ * v1.3.0 B 公开署名解析：platform 官方 skill 无个人署名（null，前端以「官方」标区分）；
+ * workspace skill 优先行内快照（approve 时落定的 contributor_name/contributor_workspace_name），
+ * 快照非空必须用快照原值（源用户改名/注销后仍保留）；两者皆空才回退实时查
+ * （贡献者显示名 ?? '已注销用户'、空间名 ?? '已注销空间'）。
+ */
+export function contributorOf(
+  repos: Repos,
+  row: SkillRow,
+): { name: string | null; workspaceName: string | null } {
+  if (row.owner_type === 'platform') return { name: null, workspaceName: null };
+  // 快照以空串落定表示「当时取不到」→ 视同未落定，仍走实时回退（approve 端约定）
+  const snapName = row.contributor_name?.trim() ? row.contributor_name : null;
+  const snapWs = row.contributor_workspace_name?.trim() ? row.contributor_workspace_name : null;
+  if (snapName !== null || snapWs !== null) return { name: snapName, workspaceName: snapWs };
+  const user = row.created_by ? repos.getUser(row.created_by) : undefined;
+  const ws = row.workspace_id ? repos.getWorkspace(row.workspace_id) : undefined;
+  return {
+    name: user?.display_name ?? '已注销用户',
+    workspaceName: ws?.name ?? '已注销空间',
+  };
+}
+
 export function skillDto(repos: Repos, row: SkillRow, forWorkspaceId?: string): SkillDto & { installedCopyId: string | null } {
   let hasNewerSource = false;
   if (row.source_skill_id && row.source_version != null) {
@@ -105,6 +128,11 @@ export function skillDto(repos: Repos, row: SkillRow, forWorkspaceId?: string): 
     sourceSkillId: row.source_skill_id,
     sourceVersion: row.source_version,
     installCount: row.install_count,
+    featured: row.featured === 1,
+    featuredAt: row.featured_at ?? null,
+    listedAt: row.listed_at ?? null,
+    contributorName: contributorOf(repos, row).name,
+    contributorWorkspaceName: contributorOf(repos, row).workspaceName,
     hasNewerSource,
     verifiedNotes: row.verified_notes,
     createdBy: row.created_by,
@@ -246,6 +274,11 @@ export function registerM7Routes(
       created_by: ctx.user.id,
       created_at: ts,
       updated_at: ts,
+      featured: 0,
+      featured_at: null,
+      listed_at: null,
+      contributor_name: null,
+      contributor_workspace_name: null,
     };
     repos.insertSkill(row);
     audit(req, ctx, 'create_skill', 'skill', row.id, row.name);
@@ -434,7 +467,19 @@ export function registerM7Routes(
     const { id } = req.params as { id: string };
     const cur = getSkillOr404(id);
     if (cur.visibility !== 'pending_review') fail(ErrorCode.VALIDATION, '该 skill 不在待审核状态');
-    repos.updateSkill({ ...cur, visibility: 'public', status: 'published', updated_at: nowIso() });
+    // v1.3.0 B：上架即落定——listed_at + 署名快照（当前贡献者显示名/当前空间名，能取到必须落真实值；
+    // 取不到写空串，contributorOf 把空串视同未落定、仍走实时回退）。
+    const contributor = cur.created_by ? repos.getUser(cur.created_by) : undefined;
+    const ws = cur.workspace_id ? repos.getWorkspace(cur.workspace_id) : undefined;
+    repos.updateSkill({
+      ...cur,
+      visibility: 'public',
+      status: 'published',
+      listed_at: nowIso(),
+      contributor_name: contributor?.display_name ?? '',
+      contributor_workspace_name: ws?.name ?? '',
+      updated_at: nowIso(),
+    });
     audit(req, ctx, 'admin_approve_skill', 'skill', id, cur.name);
     return { ok: true };
   });

@@ -22,7 +22,9 @@ export type NotificationType =
   | 'schedule_result'
   | 'webhook_failed'
   | 'impersonation'
-  | 'transfer';
+  | 'transfer'
+  | 'skill_featured'
+  | 'skill_unfeatured';
 
 export const NOTIFICATION_TYPES: NotificationType[] = [
   'adjudication',
@@ -34,6 +36,8 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
   'webhook_failed',
   'impersonation',
   'transfer',
+  'skill_featured',
+  'skill_unfeatured',
 ];
 
 export interface NotifyPrefs {

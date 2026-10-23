@@ -533,3 +533,17 @@ export const assetImportConfirmSchema = z.object({
     .min(1, '没有可导入的分段草案')
     .max(IMPORT_LIMITS.MAX_ASSET_SECTIONS, '资产单次导入最多 200 个分段，请拆分文件分批导入'),
 });
+
+/* ---------- v1.3.0 A3 任务模板 / B 精选 / F 办公室风格 ---------- */
+
+export const templateCreateSchema = z.object({
+  name: z.string().trim().min(1, '模板名必填').max(100),
+  typeId: z.string().trim().min(1).default('文案'),
+  briefTemplate: z.string().max(4000).default(''),
+  suggestedRole: z.string().trim().max(50).default(''),
+});
+
+export const skillFeatureSchema = z.object({
+  featured: z.boolean(),
+});
+
