@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { requestRaw } from '../api';
 import { yuan } from '../utils';
+import { Badge, Button, Dialog, Field, Input, Select, Spinner, useConfirm } from './ui';
 import type { AdminUser, AdminWorkspace, IndustryPack, SkillListItem, TrialApi } from '../types';
 
 const PROVIDERS = ['deepseek', 'openai', 'anthropic', 'custom'];
@@ -24,6 +25,7 @@ const STATUS_LABEL: Record<string, string> = {
  */
 export default function Admin() {
   const { post, toast } = useApp();
+  const { ask, confirmNode } = useConfirm();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [workspaces, setWorkspaces] = useState<AdminWorkspace[]>([]);
   const [packs, setPacks] = useState<IndustryPack[]>([]);
@@ -88,23 +90,35 @@ export default function Admin() {
     loadUsers();
     loadWorkspaces();
   }
-  async function disableUser(u: AdminUser) {
-    if (!window.confirm(`停用 ${u.email}？其全部会话会立即失效。`)) return;
-    try {
-      await post(`/api/admin/users/${u.id}/disable`);
-    } catch { return; }
-    toast(`已停用 ${u.email}`);
-    loadUsers();
+  function disableUser(u: AdminUser) {
+    ask({
+      title: '停用用户',
+      message: `停用 ${u.email}？其全部会话会立即失效。`,
+      confirmLabel: '停用',
+      onConfirm: async () => {
+        try {
+          await post(`/api/admin/users/${u.id}/disable`);
+        } catch { return; }
+        toast(`已停用 ${u.email}`);
+        loadUsers();
+      },
+    });
   }
-  async function resetPassword(u: AdminUser) {
-    if (!window.confirm(`给 ${u.email} 重置密码？旧密码立即失效、其会话被吊销，下次登录须改密。`)) return;
-    let res: Record<string, unknown>;
-    try {
-      res = await post(`/api/admin/users/${u.id}/reset-password`);
-    } catch { return; }
-    // 临时密码只此一次返回：弹窗一次性展示，管理员自行转交用户
-    setResetResult({ email: u.email, temp: String(res.temporaryPassword ?? '') });
-    loadUsers();
+  function resetPassword(u: AdminUser) {
+    ask({
+      title: '重置密码',
+      message: `给 ${u.email} 重置密码？旧密码立即失效、其会话被吊销，下次登录须改密。`,
+      confirmLabel: '重置密码',
+      onConfirm: async () => {
+        let res: Record<string, unknown>;
+        try {
+          res = await post(`/api/admin/users/${u.id}/reset-password`);
+        } catch { return; }
+        // 临时密码只此一次返回：弹窗一次性展示，管理员自行转交用户
+        setResetResult({ email: u.email, temp: String(res.temporaryPassword ?? '') });
+        loadUsers();
+      },
+    });
   }
 
   return (
@@ -124,8 +138,8 @@ export default function Admin() {
               <tr key={u.id}>
                 <td>
                   {u.email}
-                  {u.isPlatformAdmin && <span className="chip rev">管理员</span>}
-                  {u.mustChangePassword && <span className="chip adj">待改密</span>}
+                  {u.isPlatformAdmin && <Badge variant="rev">管理员</Badge>}
+                  {u.mustChangePassword && <Badge variant="adj">待改密</Badge>}
                 </td>
                 <td>{u.displayName}</td>
                 <td>{STATUS_LABEL[u.status] ?? u.status}</td>
@@ -134,15 +148,15 @@ export default function Admin() {
                 <td>{fmtTime(u.lastLoginAt)}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {u.status === 'pending' && (
-                    <button className="btn small green" onClick={() => approveUser(u)}>通过</button>
+                    <Button size="small" variant="green" onClick={() => approveUser(u)}>通过</Button>
                   )}{' '}
                   {u.status === 'disabled' && (
-                    <button className="btn small green" onClick={() => approveUser(u)}>启用</button>
+                    <Button size="small" variant="green" onClick={() => approveUser(u)}>启用</Button>
                   )}{' '}
                   {u.status === 'active' && (
-                    <button className="btn small gray" onClick={() => disableUser(u)}>停用</button>
+                    <Button size="small" variant="gray" onClick={() => disableUser(u)}>停用</Button>
                   )}{' '}
-                  <button className="btn small gray" onClick={() => resetPassword(u)}>重置密码</button>
+                  <Button size="small" variant="gray" onClick={() => resetPassword(u)}>重置密码</Button>
                 </td>
               </tr>
             ))}
@@ -205,9 +219,9 @@ export default function Admin() {
         {packs.map((p) => (
           <div className="task" key={p.id}>
             <span className="tt">{p.name}</span>
-            <span className="chip">{p.industry}</span>
-            <span className="chip">v{p.version}</span>
-            <span className="chip">{p.status}</span>
+            <Badge>{p.industry}</Badge>
+            <Badge>v{p.version}</Badge>
+            <Badge>{p.status}</Badge>
             <div className="meta">{p.description}（作者：{p.author}）</div>
           </div>
         ))}
@@ -215,20 +229,18 @@ export default function Admin() {
 
       {/* ---------- 重置密码结果（一次性展示） ---------- */}
       {resetResult && (
-        <div className="modal show">
-          <div className="box">
-            <h2 style={{ marginTop: 0 }}>临时密码（只显示这一次）</h2>
+        <Dialog open onClose={() => setResetResult(null)} title="临时密码（只显示这一次）">
             <p className="hint">
               账号 <b>{resetResult.email}</b> 的临时密码如下，请立即转交给用户本人；
               关闭后无法再查看，用户用它登录后会被要求改密。
             </p>
             <pre className="result" style={{ fontSize: 18, textAlign: 'center' }}>{resetResult.temp}</pre>
             <div style={{ marginTop: 12 }}>
-              <button className="btn" onClick={() => setResetResult(null)}>已转交，关闭</button>
+              <Button onClick={() => setResetResult(null)}>已转交，关闭</Button>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
+      {confirmNode}
     </>
   );
 }
@@ -238,6 +250,8 @@ function SkillReviewCard() {
   const { post, toast } = useApp();
   const [pending, setPending] = useState<SkillListItem[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [rejecting, setRejecting] = useState<SkillListItem | null>(null);
+  const [reason, setReason] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -262,27 +276,29 @@ function SkillReviewCard() {
     load();
   }
 
-  async function reject(s: SkillListItem) {
-    const reason = window.prompt(`驳回「${s.name}」的原因（会记入审计）：`, '');
-    if (reason === null) return;
+  async function reject() {
+    if (!rejecting) return;
+    const s = rejecting;
     try {
       await post(`/api/admin/skills/${s.id}/reject`, { reason });
     } catch { return; }
     toast(`已驳回「${s.name}」，退回提交方空间可见状态`);
+    setRejecting(null);
+    setReason('');
     load();
   }
 
   return (
     <div className="card">
       <h2>Skill 上架审核 <span className="tag">用户提交上架的技能在此过审：通过 → 进平台库公开；驳回 → 退回本空间可见</span></h2>
-      {!loaded && <p className="hint">加载中…</p>}
+      {!loaded && <p><Spinner label="加载中…" /></p>}
       {loaded && pending.length === 0 && <p className="hint">暂无待审核的 skill。</p>}
       {pending.map((s) => (
         <div className="task" key={s.id}>
           <span className="tt">{s.name}</span>
-          <span className="chip">{s.role}</span>
-          <span className="chip">v{s.version}</span>
-          <span className="chip adj">待审核</span>
+          <Badge>{s.role}</Badge>
+          <Badge>v{s.version}</Badge>
+          <Badge variant="adj">待审核</Badge>
           <div className="meta">
             {s.description || '（无说明）'}
             <br />
@@ -290,13 +306,24 @@ function SkillReviewCard() {
             {s.changelog ? <><br />变更说明：{s.changelog}</> : null}
           </div>
           <pre className="result" style={{ maxHeight: 160 }}>{s.promptTemplate}</pre>
-          <button className="btn small green" onClick={() => approve(s)}>通过上架</button>{' '}
-          <button className="btn small gray" onClick={() => reject(s)}>驳回</button>
+          <Button size="small" variant="green" onClick={() => approve(s)}>通过上架</Button>{' '}
+          <Button size="small" variant="gray" onClick={() => { setRejecting(s); setReason(''); }}>驳回</Button>
         </div>
       ))}
       <div style={{ marginTop: 8 }}>
-        <button className="btn small gray" onClick={load}>刷新</button>
+        <Button size="small" variant="gray" onClick={load}>刷新</Button>
       </div>
+      {rejecting && (
+        <Dialog open onClose={() => setRejecting(null)} title={`驳回「${rejecting.name}」`}>
+          <Field label="驳回原因（会记入审计）">
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="如：提示词模板涉及违规内容" autoFocus />
+          </Field>
+          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+            <Button onClick={reject}>确认驳回</Button>
+            <Button variant="gray" onClick={() => setRejecting(null)}>取消</Button>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 }
@@ -344,31 +371,31 @@ function TrialApiForm({
       <div className="row">
         <div>
           <label>名称</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} />
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
           <label>服务商</label>
-          <select value={provider} onChange={(e) => setProvider(e.target.value)}>
-            {PROVIDERS.map((p) => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
+          <Select
+            value={provider}
+            onValueChange={setProvider}
+            options={PROVIDERS.map((p) => ({ value: p, label: p }))}
+          />
         </div>
       </div>
       <div className="row">
         <div>
           <label>Base URL</label>
-          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
         </div>
         <div>
           <label>模型</label>
-          <input value={model} onChange={(e) => setModel(e.target.value)} />
+          <Input value={model} onChange={(e) => setModel(e.target.value)} />
         </div>
       </div>
       <div className="row">
         <div>
           <label>API Key（密码框；留空 = 不修改）</label>
-          <input
+          <Input
             type="password"
             placeholder={initial && initial.hasKey ? `已保存：${initial.apiKeyMasked}` : '尚未填写'}
             value={apiKey}
@@ -377,13 +404,13 @@ function TrialApiForm({
         </div>
         <div>
           <label>单价（元/百万 token）</label>
-          <input type="number" step="0.01" min="0" value={pricePerM} onChange={(e) => setPricePerM(e.target.value)} />
+          <Input type="number" step="0.01" min="0" value={pricePerM} onChange={(e) => setPricePerM(e.target.value)} />
         </div>
       </div>
       <div style={{ marginTop: 8 }}>
-        <button className="btn small blue" onClick={() => save()}>保存体验 API</button>{' '}
+        <Button size="small" variant="blue" onClick={() => save()}>保存体验 API</Button>{' '}
         {initial && initial.hasKey && (
-          <button className="btn small gray" onClick={() => save(true)}>清除 Key</button>
+          <Button size="small" variant="gray" onClick={() => save(true)}>清除 Key</Button>
         )}
       </div>
     </div>
@@ -428,21 +455,19 @@ function GrantForm({
       <div className="row">
         <div>
           <label>目标空间</label>
-          <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
-            {workspaces.map((w) => (
-              <option key={w.id} value={w.id}>
-                {w.name}（{w.ownerEmail}）
-              </option>
-            ))}
-          </select>
+          <Select
+            value={workspaceId}
+            onValueChange={setWorkspaceId}
+            options={workspaces.map((w) => ({ value: w.id, label: `${w.name}（${w.ownerEmail}）` }))}
+          />
         </div>
         <div>
           <label>金额（元，≤ 10，每空间仅一次）</label>
-          <input type="number" step="0.5" min="0" max="10" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <Input type="number" step="0.5" min="0" max="10" value={amount} onChange={(e) => setAmount(e.target.value)} />
         </div>
       </div>
       <div style={{ marginTop: 8 }}>
-        <button className="btn small blue" onClick={grant}>发放</button>
+        <Button size="small" variant="blue" onClick={grant}>发放</Button>
       </div>
     </div>
   );

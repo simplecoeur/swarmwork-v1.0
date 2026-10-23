@@ -2,15 +2,16 @@ import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { fetchPipelineTemplates } from '../api';
 import { yuan } from '../utils';
+import { Badge, Button, Input, Select, type BadgeVariant } from './ui';
 import type { PipelineTemplate } from '../types';
 
-const projChipCls: Record<string, string> = {
+const projChipCls: Record<string, BadgeVariant> = {
   '已交付': 'done',
   '待裁决': 'adj',
   '进行中': 'run',
 };
 
-const taskChipCls: Record<string, string> = {
+const taskChipCls: Record<string, BadgeVariant> = {
   '已完成': 'done',
   '执行中': 'run',
   '待审核': 'rev',
@@ -109,32 +110,29 @@ function PipelineCard() {
           <div className="row">
             <div>
               <label>流水线模板</label>
-              <select
+              <Select
                 value={templateId}
-                onChange={(e) => {
-                  setTemplateId(e.target.value);
+                onValueChange={(v) => {
+                  setTemplateId(v);
                   setParams({});
                 }}
-              >
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                    {t.industry ? `（${t.industry}）` : ''}
-                  </option>
-                ))}
-              </select>
+                options={templates.map((t) => ({
+                  value: t.id,
+                  label: `${t.name}${t.industry ? `（${t.industry}）` : ''}`,
+                }))}
+              />
             </div>
             <div>
               <label>交给哪个小组</label>
-              <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-                {S.teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
+              <Select
+                value={teamId}
+                onValueChange={setTeamId}
+                options={S.teams.map((t) => ({ value: t.id, label: t.name }))}
+              />
             </div>
             <div>
               <label>项目名（可空，默认用模板名）</label>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tpl ? tpl.name : ''} />
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={tpl ? tpl.name : ''} />
             </div>
           </div>
           {tpl && (
@@ -146,11 +144,11 @@ function PipelineCard() {
                     <span style={{ fontWeight: 700 }}>
                       {i + 1}. {s.title}
                     </span>
-                    <span className="chip">{s.skillSlug}</span>
+                    <Badge>{s.skillSlug}</Badge>
                     {s.available ? (
-                      <span className="chip done">skill 就绪</span>
+                      <Badge variant="done">skill 就绪</Badge>
                     ) : (
-                      <span className="chip rej">缺 skill · 先去技能页安装</span>
+                      <Badge variant="rej">缺 skill · 先去技能页安装</Badge>
                     )}
                   </div>
                 ))}
@@ -161,7 +159,7 @@ function PipelineCard() {
                     {p.label}
                     {p.required ? ' *' : ''}
                   </label>
-                  <input
+                  <Input
                     value={params[p.key] ?? ''}
                     onChange={(e) => setParams({ ...params, [p.key]: e.target.value })}
                     placeholder={p.key}
@@ -169,7 +167,7 @@ function PipelineCard() {
                 </div>
               ))}
               <div style={{ marginTop: 10 }}>
-                <button className="btn" onClick={run}>启动流水线</button>
+                <Button onClick={run}>启动流水线</Button>
               </div>
             </>
           )}
@@ -197,7 +195,7 @@ function ProjectList() {
           return (
             <div className="task" key={p.id}>
               <span className="tt">{p.name}</span>
-              <span className={`chip ${projChipCls[p.status] || ''}`}>{p.status}</span>
+              <Badge variant={projChipCls[p.status] ?? 'default'}>{p.status}</Badge>
               <div className="meta">
                 {teamName(p.teamId)}
                 {p.clientName ? ` · 甲方：${p.clientName}` : ''}
@@ -208,9 +206,9 @@ function ProjectList() {
               </div>
               <div className="pbar"><div style={{ width: `${pct}%` }} /></div>
               <div style={{ marginTop: 6 }}>
-                <button className="btn small gray" onClick={() => setOpenId(open ? null : p.id)}>
+                <Button size="small" variant="gray" onClick={() => setOpenId(open ? null : p.id)}>
                   {open ? '收起子任务' : `展开子任务（${children.length}）`}
-                </button>
+                </Button>
               </div>
               {open && (
                 <div style={{ marginTop: 4 }}>
@@ -223,8 +221,8 @@ function ProjectList() {
                         title="点击定位到任务墙卡片"
                       >
                         <span style={{ fontWeight: 700 }}>{t.title}</span>
-                        <span className={`chip ${taskChipCls[t.status] || ''}`}>{t.status}</span>
-                        <span className="chip">{t.type}</span>
+                        <Badge variant={taskChipCls[t.status] ?? 'default'}>{t.status}</Badge>
+                        <Badge>{t.type}</Badge>
                         <span className="meta">{` · ${t.totalTokens || 0} token / ${yuan(t.totalCost)}`}</span>
                       </div>
                     ))

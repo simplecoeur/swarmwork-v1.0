@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useApp } from '../context';
 import type { AppState, Member, Team } from '../types';
+import { Button, Tooltip } from './ui';
 
 /* ============================================================
    像素办公室（UI 恢复 v0.4.0）：视觉实现移植自用户认可的原型
@@ -626,9 +627,9 @@ export default function PixelOffice({ onEdit }: { onEdit: (memberId: string) => 
         />
         <canvas ref={mmRef} className="minimap-canvas" width={192} height={120} title="小地图：点任意位置跳过去" onClick={onMinimapClick} />
         <div className="zoomctl">
-          <button type="button" className="mini-btn" onClick={() => zoomBy(1.2)}>＋</button>
-          <button type="button" className="mini-btn" onClick={() => zoomBy(0.8)}>－</button>
-          <button type="button" className="mini-btn" onClick={() => fitRef.current()}>全景</button>
+          <Tooltip content="放大"><Button variant="mini" onClick={() => zoomBy(1.2)}>＋</Button></Tooltip>
+          <Tooltip content="缩小"><Button variant="mini" onClick={() => zoomBy(0.8)}>－</Button></Tooltip>
+          <Tooltip content="回到全景"><Button variant="mini" onClick={() => fitRef.current()}>全景</Button></Tooltip>
         </div>
       </div>
       <div className="legend-row">

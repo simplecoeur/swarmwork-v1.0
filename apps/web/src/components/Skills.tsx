@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { fetchRegistry, fetchSkills } from '../api';
 import AssetRefPicker from './AssetRefPicker';
+import { Badge, Button, Checkbox, Dialog, EmptyState, Input, Select, Spinner, Textarea } from './ui';
 import type { AssetRef, RegistryRole, SkillInputField, SkillListItem } from '../types';
 
 const STATUS_LABEL: Record<string, string> = { draft: '草稿', published: '已发布', archived: '已归档' };
@@ -323,15 +324,15 @@ export default function Skills() {
     return (
       <div className="task" key={s.id}>
         <span className="tt">{s.name}</span>
-        <span className="chip">{s.role}</span>
-        <span className="chip">v{s.version}</span>
-        <span className={`chip ${s.status === 'published' ? 'done' : s.status === 'archived' ? 'can' : 'adj'}`}>
+        <Badge>{s.role}</Badge>
+        <Badge>v{s.version}</Badge>
+        <Badge variant={s.status === 'published' ? 'done' : s.status === 'archived' ? 'can' : 'adj'}>
           {STATUS_LABEL[s.status] ?? s.status}
-        </span>
-        <span className="chip">{VIS_LABEL[s.visibility] ?? s.visibility}</span>
-        <span className="chip">安装 {s.installCount}</span>
-        {s.sourceSkillId && <span className="chip">安装副本</span>}
-        {mine && s.hasNewerSource && <span className="chip rej">来源有新版</span>}
+        </Badge>
+        <Badge>{VIS_LABEL[s.visibility] ?? s.visibility}</Badge>
+        <Badge>安装 {s.installCount}</Badge>
+        {s.sourceSkillId && <Badge>安装副本</Badge>}
+        {mine && s.hasNewerSource && <Badge variant="rej">来源有新版</Badge>}
         <div className="meta">
           {s.description || '（无说明）'}
           <br />
@@ -347,35 +348,35 @@ export default function Skills() {
           {mine ? (
             <>
               {canEdit(s) && (
-                <button className="btn small gray" onClick={() => startEdit(s)}>编辑</button>
+                <Button size="small" variant="gray" onClick={() => startEdit(s)}>编辑</Button>
               )}{' '}
               {s.status === 'draft' && (
-                <button className="btn small green" onClick={() => act(s.id, 'publish', '已发布')}>发布</button>
+                <Button size="small" variant="green" onClick={() => act(s.id, 'publish', '已发布')}>发布</Button>
               )}{' '}
               {s.status !== 'archived' && (
-                <button className="btn small gray" onClick={() => act(s.id, 'archive', '已归档')}>归档</button>
+                <Button size="small" variant="gray" onClick={() => act(s.id, 'archive', '已归档')}>归档</Button>
               )}{' '}
               {s.sourceSkillId && s.hasNewerSource && source && (
-                <button className="btn small green" onClick={() => install(source, true)}>升级到新版</button>
+                <Button size="small" variant="green" onClick={() => install(source, true)}>升级到新版</Button>
               )}{' '}
               {s.status === 'published' && s.visibility !== 'public' && s.visibility !== 'pending_review' && (
-                <button className="btn small blue" onClick={() => act(s.id, 'submit-review', '已提交上架审核，等平台管理员通过')}>
+                <Button size="small" variant="blue" onClick={() => act(s.id, 'submit-review', '已提交上架审核，等平台管理员通过')}>
                   提交上架
-                </button>
+                </Button>
               )}{' '}
-              <button className="btn small gray" onClick={() => openDispatch(s, 'test')}>试运行</button>{' '}
-              <button className="btn small" onClick={() => openDispatch(s, 'dispatch')}>发单</button>
+              <Button size="small" variant="gray" onClick={() => openDispatch(s, 'test')}>试运行</Button>{' '}
+              <Button size="small" onClick={() => openDispatch(s, 'dispatch')}>发单</Button>
             </>
           ) : (
             <>
               {!installed && (
-                <button className="btn small blue" onClick={() => install(s, false)}>安装</button>
+                <Button size="small" variant="blue" onClick={() => install(s, false)}>安装</Button>
               )}{' '}
               {installed && s.hasNewerSource && (
-                <button className="btn small green" onClick={() => install(s, true)}>有新版 · 升级</button>
+                <Button size="small" variant="green" onClick={() => install(s, true)}>有新版 · 升级</Button>
               )}{' '}
               {installed && (
-                <button className="btn small" onClick={() => openDispatch(s, 'dispatch')}>发单</button>
+                <Button size="small" onClick={() => openDispatch(s, 'dispatch')}>发单</Button>
               )}
             </>
           )}
@@ -392,12 +393,12 @@ export default function Skills() {
           <span className="tag">自己建的（含草稿）与安装的副本；内容变更要写 changelog 才会升版本</span>
         </h2>
         <div style={{ marginBottom: 10 }}>
-          <button className="btn" onClick={startCreate}>＋ 新建技能</button>{' '}
-          <button className="btn gray" onClick={load}>刷新</button>
+          <Button onClick={startCreate}>＋ 新建技能</Button>{' '}
+          <Button variant="gray" onClick={load}>刷新</Button>
         </div>
-        {!loaded && <p className="hint">加载中…</p>}
+        {!loaded && <p><Spinner label="加载中…" /></p>}
         {loaded && own.length === 0 && (
-          <p className="hint">本空间还没有自建技能。点「新建技能」写一个，或到下方平台库安装官方技能。</p>
+          <EmptyState>本空间还没有自建技能。点「新建技能」写一个，或到下方平台库安装官方技能。</EmptyState>
         )}
         {own.map((s) => skillCard(s, true))}
       </div>
@@ -416,17 +417,15 @@ export default function Skills() {
 
       {/* ---------- 新建 / 编辑 ---------- */}
       {editorOpen && (
-        <div className="modal show">
-          <div className="box" style={{ maxWidth: 780 }}>
-            <h2 style={{ marginTop: 0 }}>{editing ? `编辑技能 · ${editing.name}` : '新建技能'}</h2>
+        <Dialog open onClose={() => { setEditorOpen(false); setEditing(null); }} title={editing ? `编辑技能 · ${editing.name}` : '新建技能'} wide={780}>
             <div className="row">
               <div>
                 <label>名称</label>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如：爆款标题生成" />
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如：爆款标题生成" />
               </div>
               <div>
                 <label>适用工种（可从注册表选，也可直接输入）</label>
-                <input
+                <Input
                   list="skill-role-list"
                   value={form.role}
                   onChange={(e) => setForm({ ...form, role: e.target.value })}
@@ -440,19 +439,20 @@ export default function Skills() {
               </div>
               <div>
                 <label>可见性</label>
-                <select
+                <Select
                   value={form.visibility}
-                  onChange={(e) => setForm({ ...form, visibility: e.target.value as SkillForm['visibility'] })}
-                >
-                  <option value="private">私有（仅自己）</option>
-                  <option value="workspace">本空间可见</option>
-                </select>
+                  onValueChange={(v) => setForm({ ...form, visibility: v as SkillForm['visibility'] })}
+                  options={[
+                    { value: 'private', label: '私有（仅自己）' },
+                    { value: 'workspace', label: '本空间可见' },
+                  ]}
+                />
               </div>
             </div>
             <label>说明</label>
-            <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="这个技能干什么、适合什么场景" />
+            <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="这个技能干什么、适合什么场景" />
             <label>提示词模板（用 {'{{参数key}}'} 占位，发单时按参数表替换）</label>
-            <textarea
+            <Textarea
               rows={6}
               value={form.promptTemplate}
               onChange={(e) => setForm({ ...form, promptTemplate: e.target.value })}
@@ -463,129 +463,121 @@ export default function Skills() {
             {form.rows.map((r, i) => (
               <div className="row" key={i} style={{ alignItems: 'flex-end', marginBottom: 4 }}>
                 <div>
-                  <input placeholder="key（如 title）" value={r.key} onChange={(e) => {
+                  <Input placeholder="key（如 title）" value={r.key} onChange={(e) => {
                     const rows = [...form.rows];
                     rows[i] = { ...r, key: e.target.value };
                     setForm({ ...form, rows });
                   }} />
                 </div>
                 <div>
-                  <input placeholder="显示名" value={r.label} onChange={(e) => {
+                  <Input placeholder="显示名" value={r.label} onChange={(e) => {
                     const rows = [...form.rows];
                     rows[i] = { ...r, label: e.target.value };
                     setForm({ ...form, rows });
                   }} />
                 </div>
                 <div>
-                  <select value={r.type} onChange={(e) => {
-                    const rows = [...form.rows];
-                    rows[i] = { ...r, type: e.target.value as SkillInputField['type'] };
-                    setForm({ ...form, rows });
-                  }}>
-                    {FIELD_TYPES.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
+                  <Select
+                    value={r.type}
+                    onValueChange={(v) => {
+                      const rows = [...form.rows];
+                      rows[i] = { ...r, type: v as SkillInputField['type'] };
+                      setForm({ ...form, rows });
+                    }}
+                    options={FIELD_TYPES.map((t) => ({ value: t, label: t }))}
+                  />
                 </div>
                 <div>
-                  <input placeholder="默认值" value={r.defaultText} onChange={(e) => {
+                  <Input placeholder="默认值" value={r.defaultText} onChange={(e) => {
                     const rows = [...form.rows];
                     rows[i] = { ...r, defaultText: e.target.value };
                     setForm({ ...form, rows });
                   }} />
                 </div>
                 <div>
-                  <input placeholder="选项（仅 select，逗号分隔）" value={r.optionsText} onChange={(e) => {
+                  <Input placeholder="选项（仅 select，逗号分隔）" value={r.optionsText} onChange={(e) => {
                     const rows = [...form.rows];
                     rows[i] = { ...r, optionsText: e.target.value };
                     setForm({ ...form, rows });
                   }} />
                 </div>
                 <div style={{ flex: '0 0 92px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
-                    <input
-                      type="checkbox"
-                      className="chk"
-                      checked={r.required}
-                      onChange={(e) => {
-                        const rows = [...form.rows];
-                        rows[i] = { ...r, required: e.target.checked };
-                        setForm({ ...form, rows });
-                      }}
-                    />
-                    必填
-                  </label>
+                  <Checkbox
+                    checked={r.required}
+                    onCheckedChange={(on) => {
+                      const rows = [...form.rows];
+                      rows[i] = { ...r, required: on };
+                      setForm({ ...form, rows });
+                    }}
+                    label="必填"
+                  />
                 </div>
                 <div style={{ flex: '0 0 64px' }}>
-                  <button
-                    className="btn small gray"
+                  <Button
+                    size="small"
+                    variant="gray"
                     onClick={() => setForm({ ...form, rows: form.rows.filter((_, x) => x !== i) })}
                   >
                     删除
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}
-            <button className="btn small gray" onClick={() => setForm({ ...form, rows: [...form.rows, { ...EMPTY_ROW }] })}>
+            <Button size="small" variant="gray" onClick={() => setForm({ ...form, rows: [...form.rows, { ...EMPTY_ROW }] })}>
               ＋ 加一行参数
-            </button>
+            </Button>
 
             <label>知识库绑定 · 范围（多选）</label>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               {KB_SCOPES.map((sc) => (
-                <label key={sc} style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
-                  <input
-                    type="checkbox"
-                    className="chk"
-                    checked={form.kbScopes.includes(sc)}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        kbScopes: e.target.checked
-                          ? [...form.kbScopes, sc]
-                          : form.kbScopes.filter((x) => x !== sc),
-                      })
-                    }
-                  />
-                  {KB_SCOPE_LABEL[sc]}（{sc}）
-                </label>
+                <Checkbox
+                  key={sc}
+                  checked={form.kbScopes.includes(sc)}
+                  onCheckedChange={(on) =>
+                    setForm({
+                      ...form,
+                      kbScopes: on
+                        ? [...form.kbScopes, sc]
+                        : form.kbScopes.filter((x) => x !== sc),
+                    })
+                  }
+                  label={`${KB_SCOPE_LABEL[sc]}（${sc}）`}
+                />
               ))}
             </div>
             <label>知识库绑定 · 标签（逗号分隔，按标签命中注入）</label>
-            <input value={form.kbTags} onChange={(e) => setForm({ ...form, kbTags: e.target.value })} placeholder="如：短剧, 钩子" />
+            <Input value={form.kbTags} onChange={(e) => setForm({ ...form, kbTags: e.target.value })} placeholder="如：短剧, 钩子" />
             <label>输出规格</label>
-            <textarea rows={2} value={form.outputSpec} onChange={(e) => setForm({ ...form, outputSpec: e.target.value })} placeholder="产出长什么样：结构、条数、格式要求……" />
+            <Textarea rows={2} value={form.outputSpec} onChange={(e) => setForm({ ...form, outputSpec: e.target.value })} placeholder="产出长什么样：结构、条数、格式要求……" />
             <div className="row">
               <div>
                 <label>示例参数（JSON，试运行时直接用它发单）</label>
-                <textarea rows={3} value={form.exampleInputText} onChange={(e) => setForm({ ...form, exampleInputText: e.target.value })} placeholder='{"title":"龙王归来"}' />
+                <Textarea rows={3} value={form.exampleInputText} onChange={(e) => setForm({ ...form, exampleInputText: e.target.value })} placeholder='{"title":"龙王归来"}' />
               </div>
               <div>
                 <label>示例产出</label>
-                <textarea rows={3} value={form.exampleOutput} onChange={(e) => setForm({ ...form, exampleOutput: e.target.value })} placeholder="一份理想产出的样子" />
+                <Textarea rows={3} value={form.exampleOutput} onChange={(e) => setForm({ ...form, exampleOutput: e.target.value })} placeholder="一份理想产出的样子" />
               </div>
             </div>
             <label>{editing ? '本次变更说明 changelog（必填，后端会据此升版本）' : '变更说明 changelog（可空，默认「初始版本」）'}</label>
-            <input value={form.changelog} onChange={(e) => setForm({ ...form, changelog: e.target.value })} placeholder="如：标题公式加入反问式钩子" />
+            <Input value={form.changelog} onChange={(e) => setForm({ ...form, changelog: e.target.value })} placeholder="如：标题公式加入反问式钩子" />
             <div style={{ marginTop: 12 }}>
-              <button className="btn blue" onClick={() => saveSkill(false)}>
+              <Button variant="blue" onClick={() => saveSkill(false)}>
                 {editing ? '保存' : '保存草稿'}
-              </button>{' '}
-              <button className="btn" onClick={() => saveSkill(true)}>保存并发布</button>{' '}
-              <button className="btn gray" onClick={() => { setEditorOpen(false); setEditing(null); }}>取消</button>
+              </Button>{' '}
+              <Button onClick={() => saveSkill(true)}>保存并发布</Button>{' '}
+              <Button variant="gray" onClick={() => { setEditorOpen(false); setEditing(null); }}>取消</Button>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
 
       {/* ---------- 发单 / 试运行 ---------- */}
       {dispatchSkill && (
-        <div className="modal show">
-          <div className="box" style={{ maxWidth: 640 }}>
-            <h2 style={{ marginTop: 0 }}>
-              {dispatchMode === 'test' ? '试运行' : '发单'} · {dispatchSkill.name}
-              <span className="tag" style={{ marginLeft: 8 }}>v{dispatchSkill.version}</span>
-            </h2>
+        <Dialog
+          open
+          onClose={() => setDispatchSkill(null)}
+          title={<>{dispatchMode === 'test' ? '试运行' : '发单'} · {dispatchSkill.name}<Badge>v{dispatchSkill.version}</Badge></>}
+        >
             {(dispatchSkill.inputSchema ?? []).map((f) => (
               <div key={f.key}>
                 <label>
@@ -593,34 +585,27 @@ export default function Skills() {
                   {f.required ? ' *' : ''}
                 </label>
                 {f.type === 'textarea' ? (
-                  <textarea
+                  <Textarea
                     rows={3}
                     placeholder={f.placeholder}
                     value={String(params[f.key] ?? '')}
                     onChange={(e) => setParams({ ...params, [f.key]: e.target.value })}
                   />
                 ) : f.type === 'select' ? (
-                  <select
+                  <Select
                     value={String(params[f.key] ?? '')}
-                    onChange={(e) => setParams({ ...params, [f.key]: e.target.value })}
-                  >
-                    <option value="">请选择</option>
-                    {(f.options ?? []).map((o) => (
-                      <option key={o} value={o}>{o}</option>
-                    ))}
-                  </select>
+                    onValueChange={(v) => setParams({ ...params, [f.key]: v })}
+                    placeholder="请选择"
+                    options={(f.options ?? []).map((o) => ({ value: o, label: o }))}
+                  />
                 ) : f.type === 'checkbox' ? (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
-                    <input
-                      type="checkbox"
-                      className="chk"
-                      checked={!!params[f.key]}
-                      onChange={(e) => setParams({ ...params, [f.key]: e.target.checked })}
-                    />
-                    是
-                  </label>
+                  <Checkbox
+                    checked={!!params[f.key]}
+                    onCheckedChange={(on) => setParams({ ...params, [f.key]: on })}
+                    label="是"
+                  />
                 ) : (
-                  <input
+                  <Input
                     type={f.type === 'number' ? 'number' : 'text'}
                     placeholder={f.placeholder}
                     value={String(params[f.key] ?? '')}
@@ -632,21 +617,21 @@ export default function Skills() {
             <div className="row">
               <div>
                 <label>交给哪个小组</label>
-                <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-                  {S.teams.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
+                <Select
+                  value={teamId}
+                  onValueChange={setTeamId}
+                  options={S.teams.map((t) => ({ value: t.id, label: t.name }))}
+                />
               </div>
               {dispatchMode === 'dispatch' && (
                 <div>
                   <label>挂到项目（可选）</label>
-                  <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                    <option value="">不挂项目</option>
-                    {S.projects.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
+                  <Select
+                    value={projectId}
+                    onValueChange={setProjectId}
+                    emptyLabel="不挂项目"
+                    options={S.projects.map((p) => ({ value: p.id, label: p.name }))}
+                  />
                 </div>
               )}
             </div>
@@ -657,13 +642,12 @@ export default function Skills() {
               </>
             )}
             <div style={{ marginTop: 12 }}>
-              <button className="btn" onClick={submitDispatch}>
+              <Button onClick={submitDispatch}>
                 {dispatchMode === 'test' ? '开始试运行' : '发单'}
-              </button>{' '}
-              <button className="btn gray" onClick={() => setDispatchSkill(null)}>取消</button>
+              </Button>{' '}
+              <Button variant="gray" onClick={() => setDispatchSkill(null)}>取消</Button>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
     </>
   );

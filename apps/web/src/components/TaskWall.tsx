@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { fetchKb } from '../api';
 import { yuan } from '../utils';
+import { Badge, Button, EmptyState, useConfirm, type BadgeVariant } from './ui';
 
-const chipCls: Record<string, string> = {
+const chipCls: Record<string, BadgeVariant> = {
   '已完成': 'done',
   '执行中': 'run',
   '待审核': 'rev',
@@ -14,6 +15,7 @@ const chipCls: Record<string, string> = {
 
 export default function TaskWall() {
   const { S, post, refresh, toast, teamName, memberName } = useApp();
+  const { ask, confirmNode } = useConfirm();
   // 注入审计展示：把任务记录的 injectedKbIds 映射成条目标题（ids 变化时才重拉）
   const [kbTitles, setKbTitles] = useState<Record<string, string>>({});
   const injectedSig = S ? S.tasks.map((t) => t.injectedKbIds.join(',')).join('|') : '';
@@ -34,30 +36,48 @@ export default function TaskWall() {
     refresh();
   }
 
-  /* 后悔药（M5）：取消/重试/删除，全部先 confirm 二次确认，合法性由后端状态机兜底 */
-  async function cancelTask(id: string, title: string) {
-    if (!window.confirm(`取消任务「${title}」？取消后不会再被执行。`)) return;
-    try {
-      await post(`/api/tasks/${id}/cancel`);
-    } catch { return; }
-    toast('任务已取消');
-    refresh();
+  /* 后悔药（M5）：取消/重试/删除，全部先走自有确认弹窗二次确认，合法性由后端状态机兜底 */
+  function cancelTask(id: string, title: string) {
+    ask({
+      title: '取消任务',
+      message: `取消任务「${title}」？取消后不会再被执行。`,
+      confirmLabel: '取消任务',
+      onConfirm: async () => {
+        try {
+          await post(`/api/tasks/${id}/cancel`);
+        } catch { return; }
+        toast('任务已取消');
+        refresh();
+      },
+    });
   }
-  async function retryTask(id: string, title: string) {
-    if (!window.confirm(`重试任务「${title}」？将清除停工原因并重新排队。`)) return;
-    try {
-      await post(`/api/tasks/${id}/retry`);
-    } catch { return; }
-    toast('已清除停工原因，重新排队');
-    refresh();
+  function retryTask(id: string, title: string) {
+    ask({
+      title: '重试任务',
+      message: `重试任务「${title}」？将清除停工原因并重新排队。`,
+      confirmLabel: '重试',
+      onConfirm: async () => {
+        try {
+          await post(`/api/tasks/${id}/retry`);
+        } catch { return; }
+        toast('已清除停工原因，重新排队');
+        refresh();
+      },
+    });
   }
-  async function deleteTask(id: string, title: string) {
-    if (!window.confirm(`删除任务「${title}」的记录？账本流水会保留，不影响对账与余额。`)) return;
-    try {
-      await post(`/api/tasks/${id}/delete`);
-    } catch { return; }
-    toast('任务记录已删除（账本保留）');
-    refresh();
+  function deleteTask(id: string, title: string) {
+    ask({
+      title: '删除任务记录',
+      message: `删除任务「${title}」的记录？账本流水会保留，不影响对账与余额。`,
+      confirmLabel: '删除记录',
+      onConfirm: async () => {
+        try {
+          await post(`/api/tasks/${id}/delete`);
+        } catch { return; }
+        toast('任务记录已删除（账本保留）');
+        refresh();
+      },
+    });
   }
 
   return (
@@ -68,8 +88,8 @@ export default function TaskWall() {
           [...S.tasks].reverse().map((t) => (
             <div className="task" key={t.id} id={`task-${t.id}`}>
               <span className="tt">{t.title}</span>
-              <span className={`chip ${chipCls[t.status] || ''}`}>{t.status}</span>
-              <span className="chip">{t.type}</span>
+              <Badge variant={chipCls[t.status] ?? 'default'}>{t.status}</Badge>
+              <Badge>{t.type}</Badge>
               <div className="meta">
                 {teamName(t.teamId)} · 负责人：{memberName(t.assigneeId)}
                 {' · 全程 '}{t.totalTokens || 0} token / {yuan(t.totalCost)}
@@ -93,16 +113,16 @@ export default function TaskWall() {
                 return (
                   <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {t.status === '待裁决' ? (
-                      <button className="btn small green" onClick={() => adjudicate(t.id)}>裁决通过</button>
+                      <Button size="small" variant="green" onClick={() => adjudicate(t.id)}>裁决通过</Button>
                     ) : null}
                     {canRetry ? (
-                      <button className="btn small blue" onClick={() => retryTask(t.id, t.title)}>重试</button>
+                      <Button size="small" variant="blue" onClick={() => retryTask(t.id, t.title)}>重试</Button>
                     ) : null}
                     {canCancel ? (
-                      <button className="btn small gray" onClick={() => cancelTask(t.id, t.title)}>取消任务</button>
+                      <Button size="small" variant="gray" onClick={() => cancelTask(t.id, t.title)}>取消任务</Button>
                     ) : null}
                     {canDelete ? (
-                      <button className="btn small gray" onClick={() => deleteTask(t.id, t.title)}>删除记录</button>
+                      <Button size="small" variant="gray" onClick={() => deleteTask(t.id, t.title)}>删除记录</Button>
                     ) : null}
                   </div>
                 );
@@ -110,9 +130,10 @@ export default function TaskWall() {
             </div>
           ))
         ) : (
-          <p className="hint">还没有任务，去上面发布第一单真活。</p>
+          <EmptyState>还没有任务，去上面发布第一单真活。</EmptyState>
         )}
       </div>
+      {confirmNode}
     </div>
   );
 }

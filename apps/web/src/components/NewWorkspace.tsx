@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { fetchIndustryPacks } from '../api';
+import { Button, Dialog, Input, RadioGroup, RadioItem } from './ui';
 import type { IndustryPack } from '../types';
 
 /** 行业包内容简述：从 manifest 里挑老板看得懂的几项（短剧包等都走这套通用口径） */
@@ -54,50 +55,43 @@ export default function NewWorkspaceModal({ onClose }: { onClose: () => void }) 
   }
 
   return (
-    <div className="modal show">
-      <div className="box">
-        <h2 style={{ marginTop: 0 }}>开新公司</h2>
-        <label>公司名（空间名）</label>
-        <input
-          placeholder="如：星尘短剧"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          autoFocus
-        />
-        <label>行业包（选一个，公司的工种/知识/模板按包开局；之后也能在设置里补）</label>
-        <label className="packopt">
-          <input type="radio" name="pack" checked={packId === ''} onChange={() => setPackId('')} />
-          <span>
-            <b>不选行业包（通用开局）</b>
-            <span className="hint" style={{ display: 'block' }}>白纸开局：只有系统通用工种，自己慢慢配。</span>
-          </span>
-        </label>
-        {!packsLoaded && <p className="hint">行业包加载中…</p>}
-        {packsLoaded && packs.length === 0 && (
-          <p className="hint">暂无可选行业包（平台还没上架），可先通用开局。</p>
-        )}
+    <Dialog open onClose={onClose} title="开新公司">
+      <label>公司名（空间名）</label>
+      <Input
+        placeholder="如：星尘短剧"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        autoFocus
+      />
+      <label>行业包（选一个，公司的工种/知识/模板按包开局；之后也能在设置里补）</label>
+      <RadioGroup value={packId} onValueChange={setPackId} ariaLabel="行业包">
+        <RadioItem value="" className="packopt">
+          <b>不选行业包（通用开局）</b>
+          <span className="hint" style={{ display: 'block' }}>白纸开局：只有系统通用工种，自己慢慢配。</span>
+        </RadioItem>
         {packs.map((p) => (
-          <label className="packopt" key={p.id}>
-            <input type="radio" name="pack" checked={packId === p.id} onChange={() => setPackId(p.id)} />
-            <span>
-              <b>{p.name}</b> <span className="tag">v{p.version}</span>
-              <span className="hint" style={{ display: 'block' }}>{p.description}</span>
-            </span>
-          </label>
+          <RadioItem className="packopt" key={p.id} value={p.id}>
+            <b>{p.name}</b> <span className="tag">v{p.version}</span>
+            <span className="hint" style={{ display: 'block' }}>{p.description}</span>
+          </RadioItem>
         ))}
-        {selected && (
-          <p className="hint" style={{ fontWeight: 700 }}>
-            「{selected.name}」内容：{selected.description}
-            {packSummary(selected) ? `（${packSummary(selected)}）` : ''}
-          </p>
-        )}
-        <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={create} disabled={busy}>
-            {busy ? '开通中…' : '开通并进入新公司'}
-          </button>
-          <button className="btn gray" onClick={onClose} disabled={busy}>取消</button>
-        </div>
+      </RadioGroup>
+      {!packsLoaded && <p className="hint">行业包加载中…</p>}
+      {packsLoaded && packs.length === 0 && (
+        <p className="hint">暂无可选行业包（平台还没上架），可先通用开局。</p>
+      )}
+      {selected && (
+        <p className="hint" style={{ fontWeight: 700 }}>
+          「{selected.name}」内容：{selected.description}
+          {packSummary(selected) ? `（${packSummary(selected)}）` : ''}
+        </p>
+      )}
+      <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+        <Button onClick={create} disabled={busy}>
+          {busy ? '开通中…' : '开通并进入新公司'}
+        </Button>
+        <Button variant="gray" onClick={onClose} disabled={busy}>取消</Button>
       </div>
-    </div>
+    </Dialog>
   );
 }

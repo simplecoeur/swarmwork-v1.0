@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { fetchRegistry } from '../api';
+import { Badge, Button, Input, Select, Spinner, Textarea } from './ui';
 import type { RegistryRole, RegistryTaskType } from '../types';
 
 /** 工种来源标注：系统内置 / 行业包带入 / 本空间自定义 */
@@ -92,7 +93,7 @@ export default function RegistryCard() {
         工种与任务类型{' '}
         <span className="tag">注册表驱动：发布任务的类型下拉、派单分工都读这里；行业包会带入专属工种/类型</span>
       </h2>
-      {!loaded && <p className="hint">加载中…</p>}
+      {!loaded && <p><Spinner label="加载中…" /></p>}
       {loaded && (
         <>
           <label>工种（{roles.length}）</label>
@@ -103,8 +104,8 @@ export default function RegistryCard() {
                 <span style={{ color: r.color || 'inherit' }}>■</span> {r.icon ? `${r.icon} ` : ''}
                 {r.name}
               </span>
-              <span className="chip">{roleSource(r)}</span>
-              {r.industry && <span className="chip">{r.industry}</span>}
+              <Badge>{roleSource(r)}</Badge>
+              {r.industry && <Badge>{r.industry}</Badge>}
               <div className="meta">{r.personaTemplate || '（无人设模板）'}</div>
             </div>
           ))}
@@ -114,13 +115,13 @@ export default function RegistryCard() {
           {taskTypes.map((t) => (
             <div className="task" key={t.typeId}>
               <span className="tt">{t.name}</span>
-              <span className="chip">→ {roleNameOf(t.roleId)}</span>
+              <Badge>→ {roleNameOf(t.roleId)}</Badge>
               {t.packId ? (
-                <span className="chip">行业包</span>
+                <Badge>行业包</Badge>
               ) : t.workspaceId ? (
-                <span className="chip">自定义</span>
+                <Badge>自定义</Badge>
               ) : (
-                <span className="chip">系统</span>
+                <Badge>系统</Badge>
               )}
             </div>
           ))}
@@ -130,26 +131,26 @@ export default function RegistryCard() {
             <div className="row">
               <div>
                 <label>工种名</label>
-                <input value={roleName} placeholder="如：剪辑师" onChange={(e) => setRoleName(e.target.value)} />
+                <Input value={roleName} placeholder="如：剪辑师" onChange={(e) => setRoleName(e.target.value)} />
               </div>
               <div>
                 <label>图标（emoji，可空）</label>
-                <input value={roleIcon} placeholder="如：✂️" onChange={(e) => setRoleIcon(e.target.value)} />
+                <Input value={roleIcon} placeholder="如：✂️" onChange={(e) => setRoleIcon(e.target.value)} />
               </div>
               <div>
                 <label>代表色</label>
-                <input type="color" value={roleColor} onChange={(e) => setRoleColor(e.target.value)} />
+                <Input type="color" value={roleColor} onChange={(e) => setRoleColor(e.target.value)} />
               </div>
             </div>
             <label>人设模板（这个工种干活时的身份与风格指令）</label>
-            <textarea
+            <Textarea
               rows={2}
               placeholder="如：你是一名短剧剪辑师，擅长卡点与高光提取……"
               value={rolePersona}
               onChange={(e) => setRolePersona(e.target.value)}
             />
             <div style={{ marginTop: 8 }}>
-              <button className="btn small blue" onClick={addRole}>新增工种</button>
+              <Button size="small" variant="blue" onClick={addRole}>新增工种</Button>
             </div>
           </div>
 
@@ -158,19 +159,19 @@ export default function RegistryCard() {
             <div className="row">
               <div>
                 <label>类型名</label>
-                <input value={typeName} placeholder="如：切片剪辑" onChange={(e) => setTypeName(e.target.value)} />
+                <Input value={typeName} placeholder="如：切片剪辑" onChange={(e) => setTypeName(e.target.value)} />
               </div>
               <div>
                 <label>派给哪个工种</label>
-                <select value={typeRoleId} onChange={(e) => setTypeRoleId(e.target.value)}>
-                  {roles.map((r) => (
-                    <option key={r.roleId} value={r.roleId}>{r.name}</option>
-                  ))}
-                </select>
+                <Select
+                  value={typeRoleId}
+                  onValueChange={setTypeRoleId}
+                  options={roles.map((r) => ({ value: r.roleId, label: r.name }))}
+                />
               </div>
             </div>
             <div style={{ marginTop: 8 }}>
-              <button className="btn small blue" onClick={addTaskType}>新增任务类型</button>
+              <Button size="small" variant="blue" onClick={addTaskType}>新增任务类型</Button>
             </div>
           </div>
         </>

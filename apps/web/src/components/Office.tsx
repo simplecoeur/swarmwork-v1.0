@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../context';
 import PixelOffice from './PixelOffice';
+import { Button, Input, Textarea } from './ui';
 
 function MemberEditor({ memberId, onClose }: { memberId: string; onClose: () => void }) {
   const { S, post, refresh, toast } = useApp();
@@ -32,17 +33,17 @@ function MemberEditor({ memberId, onClose }: { memberId: string; onClose: () => 
     <div className="card" style={{ marginTop: 10 }}>
       <h2>成员档案：{m.name}（{m.role}）</h2>
       <label>名字</label>
-      <input value={name} onChange={(e) => setName(e.target.value)} />
+      <Input value={name} onChange={(e) => setName(e.target.value)} />
       <label>专属提示词（只对这个成员生效，会拼进他的干活指令）</label>
-      <textarea
+      <Textarea
         rows={3}
         placeholder="如：文风幽默搞笑，标题爱用反问句……"
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
       />
       <div style={{ marginTop: 8 }}>
-        <button className="btn small blue" onClick={save}>保存</button>{' '}
-        <button className="btn small gray" onClick={onClose}>关闭</button>
+        <Button size="small" variant="blue" onClick={save}>保存</Button>{' '}
+        <Button size="small" variant="gray" onClick={onClose}>关闭</Button>
       </div>
     </div>
   );

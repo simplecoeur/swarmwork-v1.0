@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { fetchChannelPushes, fetchChannels, requestRaw } from '../api';
 import RegistryCard from './RegistryCard';
+import { Badge, Button, Input, Select, Spinner, Textarea, useConfirm } from './ui';
 import type { ApiItem, ChannelInfo, ChannelPush, Member, Team } from '../types';
 
 const PROVIDERS = ['deepseek', 'openai', 'anthropic', 'custom'];
@@ -16,6 +17,7 @@ function ApiForm({
   onDone: () => Promise<void>;
 }) {
   const { presets, post, toast } = useApp();
+  const { ask, confirmNode } = useConfirm();
   const [name, setName] = useState(api ? api.name : '');
   const [provider, setProvider] = useState(api ? api.provider : 'deepseek');
   const [baseUrl, setBaseUrl] = useState(api ? api.baseUrl : '');
@@ -59,13 +61,19 @@ function ApiForm({
     toast('Key 已清除');
     await onDone();
   }
-  async function deleteApi() {
+  function deleteApi() {
     if (!api) return;
-    if (!window.confirm('删除这条 API？')) return;
-    try {
-      await post('/api/apis/delete', { id: api.id });
-    } catch { return; }
-    await onDone();
+    ask({
+      title: '删除 API',
+      message: '删除这条 API？',
+      confirmLabel: '删除',
+      onConfirm: async () => {
+        try {
+          await post('/api/apis/delete', { id: api.id });
+        } catch { return; }
+        await onDone();
+      },
+    });
   }
   /** 测试连接（M5）：测当前表单值（Key 留空且已保存过则用库里 Key），探活不记账不扣费 */
   async function testApi() {
@@ -89,31 +97,31 @@ function ApiForm({
       <div className="row">
         <div>
           <label>名称</label>
-          <input value={name} placeholder="如：DeepSeek 主力" onChange={(e) => setName(e.target.value)} />
+          <Input value={name} placeholder="如：DeepSeek 主力" onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
           <label>服务商预设</label>
-          <select value={provider} onChange={(e) => onProviderChange(e.target.value)}>
-            {PROVIDERS.map((p) => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
+          <Select
+            value={provider}
+            onValueChange={onProviderChange}
+            options={PROVIDERS.map((p) => ({ value: p, label: p }))}
+          />
         </div>
       </div>
       <div className="row">
         <div>
           <label>Base URL（预设自动带出，可改）</label>
-          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
         </div>
         <div>
           <label>模型</label>
-          <input value={model} onChange={(e) => setModel(e.target.value)} />
+          <Input value={model} onChange={(e) => setModel(e.target.value)} />
         </div>
       </div>
       <div className="row">
         <div>
           <label>API Key（密码框；留空 = 不修改）</label>
-          <input
+          <Input
             type="password"
             placeholder={api && api.hasKey ? `已保存：${api.apiKeyMasked}` : '尚未填写'}
             value={apiKey}
@@ -122,25 +130,26 @@ function ApiForm({
         </div>
         <div>
           <label>采购单价（元/百万 token）</label>
-          <input type="number" step="0.01" min="0" value={pricePerM} onChange={(e) => setPricePerM(e.target.value)} />
+          <Input type="number" step="0.01" min="0" value={pricePerM} onChange={(e) => setPricePerM(e.target.value)} />
         </div>
         <div>
           <label>余额（元，到成本中心充值）</label>
-          <input value={api ? api.balanceYuan : 0} disabled readOnly />
+          <Input value={api ? api.balanceYuan : 0} disabled readOnly />
         </div>
       </div>
       <div style={{ marginTop: 8 }}>
-        <button className="btn small blue" onClick={saveApi}>保存</button>{' '}
-        <button className="btn small gray" onClick={testApi} disabled={testing}>
+        <Button size="small" variant="blue" onClick={saveApi}>保存</Button>{' '}
+        <Button size="small" variant="gray" onClick={testApi} disabled={testing}>
           {testing ? '测试中…' : '测试连接'}
-        </button>{' '}
+        </Button>{' '}
         {api && (
           <>
-            <button className="btn small gray" onClick={clearApiKey}>清除 Key</button>{' '}
-            <button className="btn small gray" onClick={deleteApi}>删除</button>
+            <Button size="small" variant="gray" onClick={clearApiKey}>清除 Key</Button>{' '}
+            <Button size="small" variant="gray" onClick={deleteApi}>删除</Button>
           </>
         )}
       </div>
+      {confirmNode}
       {testResult && (
         <p
           className="hint"
@@ -164,6 +173,7 @@ function TeamForm({
   onDone: () => Promise<void>;
 }) {
   const { S, post, toast } = useApp();
+  const { ask, confirmNode } = useConfirm();
   const [name, setName] = useState(team ? team.name : '');
   const [color, setColor] = useState(team ? team.color || '#e2574c' : '#5b8def');
   const [apiId, setApiId] = useState(team ? team.apiId || '' : '');
@@ -183,13 +193,19 @@ function TeamForm({
     toast('小组已保存');
     await onDone();
   }
-  async function deleteTeam() {
+  function deleteTeam() {
     if (!team) return;
-    if (!window.confirm('删除该小组及其成员？（已产生的任务与账本保留）')) return;
-    try {
-      await post('/api/teams/delete', { id: team.id });
-    } catch { return; }
-    await onDone();
+    ask({
+      title: '删除小组',
+      message: '删除该小组及其成员？（已产生的任务与账本保留）',
+      confirmLabel: '删除小组',
+      onConfirm: async () => {
+        try {
+          await post('/api/teams/delete', { id: team.id });
+        } catch { return; }
+        await onDone();
+      },
+    });
   }
 
   return (
@@ -197,28 +213,29 @@ function TeamForm({
       <div className="row">
         <div>
           <label>组名</label>
-          <input value={name} placeholder={team ? undefined : '如：内容组'} onChange={(e) => setName(e.target.value)} />
+          <Input value={name} placeholder={team ? undefined : '如：内容组'} onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
           <label>地毯颜色</label>
-          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
+          <Input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
         </div>
         <div>
           <label>使用 API</label>
-          <select value={apiId} onChange={(e) => setApiId(e.target.value)}>
-            <option value="">跟随公司默认</option>
-            {S.apis.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
+          <Select
+            value={apiId}
+            onValueChange={setApiId}
+            emptyLabel="跟随公司默认"
+            options={S.apis.map((a) => ({ value: a.id, label: a.name }))}
+          />
         </div>
       </div>
       <div style={{ marginTop: 8 }}>
-        <button className="btn small blue" onClick={saveTeam}>{team ? '保存' : '创建小组'}</button>{' '}
+        <Button size="small" variant="blue" onClick={saveTeam}>{team ? '保存' : '创建小组'}</Button>{' '}
         {team && (
-          <button className="btn small gray" onClick={deleteTeam}>删除小组</button>
+          <Button size="small" variant="gray" onClick={deleteTeam}>删除小组</Button>
         )}
       </div>
+      {confirmNode}
     </div>
   );
 }
@@ -234,6 +251,7 @@ function MemberForm({
   onDone: () => Promise<void>;
 }) {
   const { S, post, toast } = useApp();
+  const { ask, confirmNode } = useConfirm();
   const [name, setName] = useState(member ? member.name : '');
   const [role, setRole] = useState(member ? member.role : '文案');
   const [teamId, setTeamId] = useState(member ? member.teamId : initialTeamId);
@@ -256,14 +274,20 @@ function MemberForm({
     toast('成员已保存');
     await onDone();
   }
-  async function deleteMember() {
+  function deleteMember() {
     if (!member) return;
-    if (!window.confirm(`删除成员「${member.name}」？名下有未完成任务时后端会拒绝。`)) return;
-    try {
-      await post('/api/members/delete', { id: member.id });
-    } catch { return; }
-    toast('成员已删除');
-    await onDone();
+    ask({
+      title: '删除成员',
+      message: `删除成员「${member.name}」？名下有未完成任务时后端会拒绝。`,
+      confirmLabel: '删除成员',
+      onConfirm: async () => {
+        try {
+          await post('/api/members/delete', { id: member.id });
+        } catch { return; }
+        toast('成员已删除');
+        await onDone();
+      },
+    });
   }
 
   return (
@@ -271,38 +295,39 @@ function MemberForm({
       <div className="row">
         <div>
           <label>名字</label>
-          <input value={name} placeholder="如：妙笔" onChange={(e) => setName(e.target.value)} />
+          <Input value={name} placeholder="如：妙笔" onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
           <label>工种</label>
-          <select value={role} onChange={(e) => setRole(e.target.value as Member['role'])}>
-            {ROLES.map((r) => (
-              <option key={r} value={r}>{r}</option>
-            ))}
-          </select>
+          <Select
+            value={role}
+            onValueChange={(v) => setRole(v as Member['role'])}
+            options={ROLES.map((r) => ({ value: r, label: r }))}
+          />
         </div>
         <div>
           <label>所属小组（可换组）</label>
-          <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-            {S.teams.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
+          <Select
+            value={teamId}
+            onValueChange={setTeamId}
+            options={S.teams.map((t) => ({ value: t.id, label: t.name }))}
+          />
         </div>
       </div>
       <label>专属提示词（只对这个成员生效，会拼进他的干活指令）</label>
-      <textarea
+      <Textarea
         rows={2}
         placeholder="如：文风幽默搞笑，标题爱用反问句……"
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
       />
       <div style={{ marginTop: 8 }}>
-        <button className="btn small blue" onClick={saveMember}>{member ? '保存' : '创建成员'}</button>{' '}
+        <Button size="small" variant="blue" onClick={saveMember}>{member ? '保存' : '创建成员'}</Button>{' '}
         {member && (
-          <button className="btn small gray" onClick={deleteMember}>删除成员</button>
+          <Button size="small" variant="gray" onClick={deleteMember}>删除成员</Button>
         )}
       </div>
+      {confirmNode}
     </div>
   );
 }
@@ -367,15 +392,15 @@ export default function Settings() {
             />
           ))}
         </div>
-        <button
-          className="btn gray"
+        <Button
+          variant="gray"
           onClick={() => {
             setApiDrafts((ds) => [...ds, draftSeq]);
             setDraftSeq((n) => n + 1);
           }}
         >
           ＋ 新增一条 API
-        </button>
+        </Button>
       </div>
 
       <div className="card">
@@ -395,26 +420,23 @@ export default function Settings() {
             />
           ))}
         </div>
-        <button
-          className="btn gray"
+        <Button
+          variant="gray"
           onClick={() => {
             setTeamDrafts((ds) => [...ds, draftSeq]);
             setDraftSeq((n) => n + 1);
           }}
         >
           ＋ 新建小组
-        </button>
+        </Button>
         <label style={{ marginTop: 14 }}>公司默认 API（小组未单独指定时使用）</label>
         <div className="row">
-          <select
+          <Select
             value={defaultApi ?? S.defaultApiId ?? ''}
-            onChange={(e) => setDefaultApi(e.target.value)}
-          >
-            {S.apis.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-          <button className="btn blue" style={{ flex: '0 0 120px' }} onClick={saveDefaultApi}>保存默认</button>
+            onValueChange={setDefaultApi}
+            options={S.apis.map((a) => ({ value: a.id, label: a.name }))}
+          />
+          <Button variant="blue" style={{ flex: '0 0 120px' }} onClick={saveDefaultApi}>保存默认</Button>
         </div>
 
         <label style={{ marginTop: 16, fontSize: 13, color: 'var(--ink)' }}>成员管理（按小组；工种决定派单与审核分工，换组即时生效）</label>
@@ -445,8 +467,9 @@ export default function Settings() {
                 {ms.length === 0 && memberDrafts.every((d) => d.teamId !== t.id) && (
                   <p className="hint">这个组还没有成员，任务会因缺工种停工，先补齐成员。</p>
                 )}
-                <button
-                  className="btn small gray"
+                <Button
+                  size="small"
+                  variant="gray"
                   style={{ marginTop: 8 }}
                   onClick={() => {
                     setMemberDrafts((ds) => [...ds, { key: draftSeq, teamId: t.id }]);
@@ -454,7 +477,7 @@ export default function Settings() {
                   }}
                 >
                   ＋ 新增成员
-                </button>
+                </Button>
               </div>
             );
           })}
@@ -470,7 +493,7 @@ export default function Settings() {
         <div className="row">
           <div>
             <label>全公司同时执行任务上限（并发闸门）</label>
-            <input
+            <Input
               type="number"
               min="1"
               value={concurrency ?? String(S.params.concurrency)}
@@ -479,7 +502,7 @@ export default function Settings() {
           </div>
           <div>
             <label>单任务 token 预算上限（0 = 不限，超了停工待裁决）</label>
-            <input
+            <Input
               type="number"
               min="0"
               value={budget ?? String(S.params.taskBudgetTokens)}
@@ -488,7 +511,7 @@ export default function Settings() {
           </div>
         </div>
         <div style={{ marginTop: 10 }}>
-          <button className="btn blue" onClick={saveParams}>保存参数</button>
+          <Button variant="blue" onClick={saveParams}>保存参数</Button>
         </div>
       </div>
 
@@ -549,7 +572,7 @@ function ChannelCard() {
   return (
     <div className="card">
       <h2>渠道绑定（MJ 直推） <span className="tag">绑定后成果库可一键把成果直推到 MJ 平台；令牌加密保存、页面不回显</span></h2>
-      {!loaded && <p className="hint">加载中…</p>}
+      {!loaded && <p><Spinner label="加载中…" /></p>}
       {loaded && channel && (
         <ChannelBindForm key={`${channel.baseUrl}|${channel.account}|${channel.bound}`} channel={channel} onSaved={load} />
       )}
@@ -560,9 +583,9 @@ function ChannelCard() {
       {pushes.map((p) => (
         <div className="task" key={p.id}>
           <span className="tt">{p.channelType.toUpperCase()} 推送</span>
-          <span className={`chip ${p.status === 'ok' || p.status === 'success' ? 'done' : p.status === 'failed' ? 'rej' : 'adj'}`}>
+          <Badge variant={p.status === 'ok' || p.status === 'success' ? 'done' : p.status === 'failed' ? 'rej' : 'adj'}>
             {p.status}
-          </span>
+          </Badge>
           <div className="meta">
             {p.createdAt.slice(0, 16).replace('T', ' ')}
             {p.remoteRef ? ` · 远程引用：${p.remoteRef}` : ''}
@@ -570,7 +593,7 @@ function ChannelCard() {
             {p.message ? <><br />{p.message}</> : null}
           </div>
           <div style={{ marginTop: 6 }}>
-            <button className="btn small gray" onClick={() => refreshPush(p)}>回查指标</button>
+            <Button size="small" variant="gray" onClick={() => refreshPush(p)}>回查指标</Button>
           </div>
         </div>
       ))}
@@ -626,22 +649,22 @@ function ChannelBindForm({
       <div className="row">
         <div>
           <label>平台地址 baseUrl</label>
-          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="如：https://mjdramacente.cn" />
+          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="如：https://mjdramacente.cn" />
         </div>
         <div>
           <label>账号（可空，用于标注绑定身份）</label>
-          <input value={account} onChange={(e) => setAccount(e.target.value)} placeholder="如：MJ Drama 运营号" />
+          <Input value={account} onChange={(e) => setAccount(e.target.value)} placeholder="如：MJ Drama 运营号" />
         </div>
       </div>
       <label>访问令牌（密码框；留空 = 不修改已保存的令牌）</label>
-      <input
+      <Input
         type="password"
         value={token}
         onChange={(e) => setToken(e.target.value)}
         placeholder={channel.hasToken ? '已保存令牌，留空不改' : '尚未填写令牌'}
       />
       <div style={{ marginTop: 8 }}>
-        <button className="btn small blue" onClick={bind}>保存绑定</button>
+        <Button size="small" variant="blue" onClick={bind}>保存绑定</Button>
       </div>
       {bindMsg && <p className="hint" style={{ marginTop: 6, fontWeight: 700 }}>{bindMsg}</p>}
     </div>

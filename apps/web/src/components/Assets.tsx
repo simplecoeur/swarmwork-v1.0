@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { fetchAssets, fetchAssetTypes } from '../api';
+import { Badge, Button, Dialog, EmptyState, Input, Select, Textarea } from './ui';
 import type { Asset, AssetSection, AssetType } from '../types';
 
 /** 资产类型来源标注：行业包带入 / 本空间自定义 / 平台内置 */
@@ -116,18 +117,18 @@ export default function Assets() {
         {types.map((t) => (
           <div className="task" key={t.typeId}>
             <span className="tt">{t.name}</span>
-            <span className="chip">{typeSource(t)}</span>
-            {t.industry && <span className="chip">{t.industry}</span>}
+            <Badge>{typeSource(t)}</Badge>
+            {t.industry && <Badge>{t.industry}</Badge>}
             <div className="meta">typeId：{t.typeId}</div>
           </div>
         ))}
         <div className="row" style={{ alignItems: 'flex-end', marginTop: 8 }}>
           <div>
             <label>新增类型名称</label>
-            <input value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} placeholder="如：剧目档案" />
+            <Input value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} placeholder="如：剧目档案" />
           </div>
           <div style={{ flex: '0 0 130px' }}>
-            <button className="btn blue" onClick={addType}>新增类型</button>
+            <Button variant="blue" onClick={addType}>新增类型</Button>
           </div>
         </div>
       </div>
@@ -135,75 +136,74 @@ export default function Assets() {
       <div className="card">
         <h2>资产 <span className="tag">结构化内容（摘要 + 分段），改内容自动升版本；发单时可整份或按分段引用</span></h2>
         <div style={{ marginBottom: 10 }}>
-          <button className="btn" onClick={startCreate}>＋ 新建资产</button>{' '}
-          <button className="btn gray" onClick={load}>刷新</button>
+          <Button onClick={startCreate}>＋ 新建资产</Button>{' '}
+          <Button variant="gray" onClick={load}>刷新</Button>
         </div>
-        {loaded && assets.length === 0 && <p className="hint">暂无资产。新建一份（如剧目档案、品牌手册），发单时引用给干活的成员当参考。</p>}
+        {loaded && assets.length === 0 && <EmptyState>暂无资产。新建一份（如剧目档案、品牌手册），发单时引用给干活的成员当参考。</EmptyState>}
         {assets.map((a) => (
           <div className="task" key={a.id}>
             <span className="tt">{a.name}</span>
-            <span className="chip">{typeName(a.typeId)}</span>
-            <span className="chip">v{a.version}</span>
+            <Badge>{typeName(a.typeId)}</Badge>
+            <Badge>v{a.version}</Badge>
             <div className="meta">
               {(a.content?.sections ?? []).length} 个分段 · 更新于 {a.updatedAt.slice(0, 16).replace('T', ' ')}
               {a.content?.summary ? <><br />{a.content.summary}</> : null}
             </div>
             <div style={{ marginTop: 6 }}>
-              <button className="btn small gray" onClick={() => startEdit(a)}>编辑</button>
+              <Button size="small" variant="gray" onClick={() => startEdit(a)}>编辑</Button>
             </div>
           </div>
         ))}
       </div>
 
       {editorOpen && (
-        <div className="modal show">
-          <div className="box" style={{ maxWidth: 720 }}>
-            <h2 style={{ marginTop: 0 }}>{editingId ? '编辑资产' : '新建资产'}</h2>
+        <Dialog open onClose={() => setEditorOpen(false)} title={editingId ? '编辑资产' : '新建资产'} wide={720}>
             <div className="row">
               <div>
                 <label>名称</label>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如：《龙王归来》剧目档案" />
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如：《龙王归来》剧目档案" />
               </div>
               <div>
                 <label>类型</label>
-                <select value={form.typeId} onChange={(e) => setForm({ ...form, typeId: e.target.value })}>
-                  <option value="">请选择类型</option>
-                  {types.map((t) => (
-                    <option key={t.typeId} value={t.typeId}>{t.name}（{typeSource(t)}）</option>
-                  ))}
-                </select>
+                <Select
+                  value={form.typeId}
+                  onValueChange={(v) => setForm({ ...form, typeId: v })}
+                  placeholder="请选择类型"
+                  options={types.map((t) => ({ value: t.typeId, label: `${t.name}（${typeSource(t)}）` }))}
+                />
               </div>
             </div>
             <label>摘要 summary</label>
-            <textarea rows={2} value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} placeholder="一句话说清这份资产是什么" />
+            <Textarea rows={2} value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} placeholder="一句话说清这份资产是什么" />
             <label>分段 sections（key 是发单时按段引用的标识）</label>
             {form.sections.map((s, i) => (
               <div className="apicard" key={i}>
                 <div className="row">
                   <div>
-                    <input placeholder="key（如 selling-points）" value={s.key} onChange={(e) => {
+                    <Input placeholder="key（如 selling-points）" value={s.key} onChange={(e) => {
                       const sections = [...form.sections];
                       sections[i] = { ...s, key: e.target.value };
                       setForm({ ...form, sections });
                     }} />
                   </div>
                   <div>
-                    <input placeholder="分段标题" value={s.title} onChange={(e) => {
+                    <Input placeholder="分段标题" value={s.title} onChange={(e) => {
                       const sections = [...form.sections];
                       sections[i] = { ...s, title: e.target.value };
                       setForm({ ...form, sections });
                     }} />
                   </div>
                   <div style={{ flex: '0 0 64px' }}>
-                    <button
-                      className="btn small gray"
+                    <Button
+                      size="small"
+                      variant="gray"
                       onClick={() => setForm({ ...form, sections: form.sections.filter((_, x) => x !== i) })}
                     >
                       删除
-                    </button>
+                    </Button>
                   </div>
                 </div>
-                <textarea
+                <Textarea
                   rows={3}
                   style={{ marginTop: 6 }}
                   placeholder="分段正文"
@@ -216,18 +216,18 @@ export default function Assets() {
                 />
               </div>
             ))}
-            <button
-              className="btn small gray"
+            <Button
+              size="small"
+              variant="gray"
               onClick={() => setForm({ ...form, sections: [...form.sections, { key: '', title: '', body: '' }] })}
             >
               ＋ 加一段
-            </button>
+            </Button>
             <div style={{ marginTop: 12 }}>
-              <button className="btn" onClick={saveAsset}>保存（改内容自动升版）</button>{' '}
-              <button className="btn gray" onClick={() => setEditorOpen(false)}>取消</button>
+              <Button onClick={saveAsset}>保存（改内容自动升版）</Button>{' '}
+              <Button variant="gray" onClick={() => setEditorOpen(false)}>取消</Button>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
     </>
   );

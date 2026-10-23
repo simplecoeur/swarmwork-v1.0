@@ -4,6 +4,7 @@ import { fetchLedgerView } from '../api';
 import { yuan } from '../utils';
 import ReportModal, { buildReport } from './ReportModal';
 import type { ReportData } from './ReportModal';
+import { Badge, Button, Input, Select, Spinner } from './ui';
 import type { LedgerViewItem } from '../types';
 
 export default function CostCenter() {
@@ -49,7 +50,7 @@ export default function CostCenter() {
         </div>
         <p className="hint">口径：每次调用大模型都实时记账（任务 / 执行人所在组 / 所用 API / 阶段），成本 = 总 token ÷ 1,000,000 × 该 API 采购单价，并从该 API 余额中扣除。</p>
         <div style={{ marginTop: 8 }}>
-          <button className="btn green" onClick={() => setReport(buildReport(S))}>让总经理汇报</button>
+          <Button variant="green" onClick={() => setReport(buildReport(S))}>让总经理汇报</Button>
         </div>
       </div>
 
@@ -112,13 +113,13 @@ export default function CostCenter() {
         <div className="card">
           <h2>采购充值</h2>
           <label>充到哪条 API</label>
-          <select value={buyApi} onChange={(e) => setBuyApi(e.target.value)}>
-            {S.apis.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}（余额 {yuan(a.balanceYuan)}）</option>
-            ))}
-          </select>
+          <Select
+            value={buyApi}
+            onValueChange={setBuyApi}
+            options={S.apis.map((a) => ({ value: a.id, label: `${a.name}（余额 ${yuan(a.balanceYuan)}）` }))}
+          />
           <label>金额（元）</label>
-          <input
+          <Input
             type="number"
             min="0"
             step="0.01"
@@ -127,7 +128,7 @@ export default function CostCenter() {
             onChange={(e) => setBuyAmount(e.target.value)}
           />
           <div style={{ marginTop: 10 }}>
-            <button className="btn" onClick={purchase}>采购充值</button>
+            <Button onClick={purchase}>采购充值</Button>
           </div>
           {S.purchases.length ? (
             <div className="hint" style={{ marginTop: 10 }}>
@@ -209,17 +210,17 @@ function LedgerViewCard() {
           <a className="btn small blue" href={`/api/ledger-view/export?month=${month}`} download>
             导出该月台账 CSV
           </a>{' '}
-          <button className="btn small gray" onClick={load}>刷新时间线</button>
+          <Button size="small" variant="gray" onClick={load}>刷新时间线</Button>
         </div>
       </div>
-      {!loaded && <p className="hint">加载中…</p>}
+      {!loaded && <p><Spinner label="加载中…" /></p>}
       {loaded && items.length === 0 && <p className="hint">暂无台账记录。</p>}
       {items.slice(0, 50).map((it, i) => (
         <div className="subtask" key={`${it.ts}-${i}`} style={{ cursor: 'default' }}>
           <span className="meta">{it.ts.slice(0, 16).replace('T', ' ')}</span>{' '}
-          <span className={`chip ${it.kind === 'audit' ? 'rev' : 'run'}`}>
+          <Badge variant={it.kind === 'audit' ? 'rev' : 'run'}>
             {it.kind === 'audit' ? '操作审计' : '任务事件'}
-          </span>{' '}
+          </Badge>{' '}
           <span>{it.text}</span>
         </div>
       ))}

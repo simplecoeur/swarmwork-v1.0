@@ -15,6 +15,7 @@ import Assets from './components/Assets';
 import NotificationBell from './components/NotificationBell';
 import NewWorkspaceModal from './components/NewWorkspace';
 import { AuthGate, ChangePasswordGate } from './components/AuthGate';
+import { Button, Card, DropdownMenu, Select, Spinner } from './components/ui';
 import type { TabKey } from './types';
 
 function Shell() {
@@ -28,9 +29,11 @@ function Shell() {
   if (authStatus === 'loading') {
     return (
       <div className="auth-wrap">
-        <div className="card">
-          <p className="hint" style={{ textAlign: 'center' }}>正在确认登录状态…</p>
-        </div>
+        <Card>
+          <p style={{ textAlign: 'center' }}>
+            <Spinner label="正在确认登录状态…" />
+          </p>
+        </Card>
       </div>
     );
   }
@@ -41,7 +44,7 @@ function Shell() {
   const wsName = currentWorkspace?.name ?? S?.workspace?.name ?? '';
 
   const navBtn = (t: TabKey, label: string) => (
-    <button className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</button>
+    <Button variant="nav" className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</Button>
   );
 
   async function onSwitch(id: string) {
@@ -63,17 +66,15 @@ function Shell() {
           <div className="sub">真干活的 AI 办公室 · 数据存储在服务器 · Key 加密保存</div>
         </div>
         <div className="wsbar">
-          <select
+          <Select
             value={currentWorkspace?.id ?? ''}
-            onChange={(e) => onSwitch(e.target.value)}
+            onValueChange={onSwitch}
             title="切换空间（公司）"
-          >
-            {workspaces.length === 0 && <option value="">（暂无空间）</option>}
-            {workspaces.map((w) => (
-              <option key={w.id} value={w.id}>{w.name}</option>
-            ))}
-          </select>
-          <button className="mini-btn" onClick={() => setShowNewWs(true)}>＋开新公司</button>
+            ariaLabel="切换空间（公司）"
+            placeholder="（暂无空间）"
+            options={workspaces.map((w) => ({ value: w.id, label: w.name }))}
+          />
+          <Button variant="mini" onClick={() => setShowNewWs(true)}>＋开新公司</Button>
         </div>
         <nav>
           {navBtn('office', '办公室')}
@@ -86,10 +87,18 @@ function Shell() {
         </nav>
         <NotificationBell />
         <div className="userinfo">
-          <span>
-            {user?.displayName}（{user?.email}）{user?.isPlatformAdmin ? ' · 平台管理员' : ''}
-          </span>
-          <button className="mini-btn" onClick={logout}>退出登录</button>
+          <DropdownMenu
+            ariaLabel="账号菜单"
+            trigger={
+              <Button variant="mini">
+                {user?.displayName}（{user?.email}）{user?.isPlatformAdmin ? ' · 平台管理员' : ''} ▾
+              </Button>
+            }
+            items={[
+              { label: '＋ 开新公司', onSelect: () => setShowNewWs(true) },
+              { label: '退出登录', onSelect: () => void logout() },
+            ]}
+          />
         </div>
       </header>
 
@@ -103,7 +112,7 @@ function Shell() {
               你的账号还没有加入任何空间。开一家新公司（选个行业包开局），就能进办公室给 AI 团队派活了。
             </p>
             <div style={{ marginTop: 10 }}>
-              <button className="btn" onClick={() => setShowNewWs(true)}>＋ 开新公司</button>
+              <Button onClick={() => setShowNewWs(true)}>＋ 开新公司</Button>
             </div>
           </div>
         </main>
