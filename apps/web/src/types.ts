@@ -4,6 +4,8 @@ import type {
   ApiDto,
   AssetContentDto,
   AssetDto,
+  AssetImportConfirmDto,
+  AssetImportPreviewDto,
   AssetSectionDto,
   AssetTypeDto,
   AuthUserDto,
@@ -15,6 +17,9 @@ import type {
   FeedbackDto,
   IndustryPackDto,
   KbEntryDto,
+  KbImportConfirmDto,
+  KbImportDraftDto,
+  KbImportPreviewDto,
   LedgerEntryDto,
   MemberDto,
   NotificationDto,
@@ -100,6 +105,13 @@ export interface TrialApi {
 export type Presets = Record<string, { baseUrl: string; model: string }>;
 
 export type TabKey = 'office' | 'cost' | 'settings' | 'kb' | 'admin' | 'skills' | 'assets' | 'help';
+
+/* ---------- G-06 文件导入 ---------- */
+export type KbImportDraft = KbImportDraftDto;
+export type KbImportPreview = KbImportPreviewDto;
+export type KbImportConfirm = KbImportConfirmDto;
+export type AssetImportPreview = AssetImportPreviewDto;
+export type AssetImportConfirm = AssetImportConfirmDto;
 
 /* ---------- G-02/G-03/G-05/G-08（v1.2.0 批次一） ---------- */
 export type Capabilities = CapabilitiesDto;

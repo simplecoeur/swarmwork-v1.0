@@ -2,6 +2,8 @@ import type {
   AppState,
   AppNotification,
   Asset,
+  AssetImportConfirm,
+  AssetImportPreview,
   AssetType,
   AuthUser,
   ChannelInfo,
@@ -9,6 +11,8 @@ import type {
   Delivery,
   IndustryPack,
   KbEntry,
+  KbImportConfirm,
+  KbImportPreview,
   LedgerViewItem,
   PipelineTemplate,
   Presets,
@@ -215,6 +219,56 @@ export async function fetchPipelineTemplates(): Promise<PipelineTemplate[]> {
 export async function fetchLedgerView(): Promise<LedgerViewItem[]> {
   const j = await requestRaw('GET', '/api/ledger-view');
   return (j.timeline as LedgerViewItem[]) ?? [];
+}
+
+/* ---------- G-06 文件导入（两段式：multipart 预览 → JSON 确认落库） ---------- */
+
+/** multipart POST：与 requestRaw 同错误口径（ok:false 抛后端 message） */
+async function postForm(path: string, form: FormData): Promise<Record<string, unknown>> {
+  const r = await fetch(path, { method: 'POST', body: form });
+  const j = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!j.ok) {
+    const e = j.error as { message?: string } | string | undefined;
+    throw new Error(typeof e === 'string' ? e : e?.message || String(r.status));
+  }
+  return j;
+}
+
+export async function previewKbImport(
+  file: File,
+  scope: string,
+  scopeId: string | null,
+): Promise<KbImportPreview> {
+  const form = new FormData();
+  form.append('scope', scope);
+  if (scopeId) form.append('scopeId', scopeId);
+  form.append('file', file);
+  const j = await postForm('/api/kb/import/preview', form);
+  return { filename: String(j.filename ?? file.name), drafts: (j.drafts as KbImportPreview['drafts']) ?? [] };
+}
+
+export async function confirmKbImport(
+  body: KbImportConfirm,
+): Promise<{ created: number; failed: number }> {
+  const j = await requestRaw('POST', '/api/kb/import/confirm', body);
+  return { created: Number(j.created ?? 0), failed: Number(j.failed ?? 0) };
+}
+
+export async function previewAssetImport(file: File, typeId: string): Promise<AssetImportPreview> {
+  const form = new FormData();
+  form.append('typeId', typeId);
+  form.append('file', file);
+  const j = await postForm('/api/assets/import/preview', form);
+  return {
+    filename: String(j.filename ?? file.name),
+    name: String(j.name ?? ''),
+    sections: (j.sections as AssetImportPreview['sections']) ?? [],
+  };
+}
+
+export async function confirmAssetImport(body: AssetImportConfirm): Promise<Asset> {
+  const j = await requestRaw('POST', '/api/assets/import/confirm', body);
+  return j.asset as Asset;
 }
 
 /** G-04 任务过程时间线：步骤流 + 状态流水（执行中轮询增量刷新、已完成即回放，同一接口） */
