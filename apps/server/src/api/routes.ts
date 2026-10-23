@@ -40,6 +40,7 @@ import {
 import { balanceMilli, buildReport, trialBalanceMilli } from '../domain/costService';
 import { createProject } from '../domain/projectService';
 import { cancelTask, deleteTask, refreshProjectStatus, retryTask, transitionTask } from '../domain/taskService';
+import { recordTaskStep } from '../domain/taskSteps';
 import { createProvider, LlmGateway } from '../llm/gateway';
 import type { Logger } from '../logger';
 import { decryptKey, encryptKey, maskKey } from '../store/crypto';
@@ -1154,6 +1155,19 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       note: '发单',
     });
     if (body.assetRefs?.length) attachAssetRefs(repos, id, ctx.workspaceId, body.assetRefs);
+    // G-04：发单落 plan 步（时间线起点，旁路失败不影响发单结果）
+    recordTaskStep(
+      repos,
+      {
+        taskId: id,
+        workspaceId: ctx.workspaceId,
+        kind: 'plan',
+        summary: `任务已创建：《${body.title}》（${body.type}）`,
+        detail: { title: body.title, type: body.type, teamId: team.id },
+        callKey: `plan:${id}`,
+      },
+      logger,
+    );
     return { id };
   };
 
@@ -1193,6 +1207,54 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const task = repos.getTask(id, ctx.workspaceId);
     if (!task) fail(ErrorCode.NOT_FOUND, '任务不存在', 404);
     return { ok: true, task: taskDto(task!) };
+  });
+
+  /**
+   * 任务过程时间线（G-04）：steps（步骤流，含注入名单/用量/成本）为主、
+   * task_events 状态流水为辅，各自按时间升序返回，前端合并呈现。
+   * 权限走现有任务可见性：按 session 空间查任务，跨空间一律 404。
+   * 执行中与已完成走同一接口同一数据——已完成任务打开即完整回放。
+   */
+  app.get('/api/tasks/:id/timeline', async (req) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    const task = repos.getTask(id, ctx.workspaceId);
+    if (!task) fail(ErrorCode.NOT_FOUND, '任务不存在', 404);
+    const steps = repos.listTaskSteps(id).map((s) => {
+      let detail: Record<string, unknown> = {};
+      try {
+        const v = JSON.parse(s.detail || '{}') as unknown;
+        detail = v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+      } catch {
+        detail = {};
+      }
+      return {
+        id: s.id,
+        taskId: s.task_id,
+        seq: s.seq,
+        kind: s.kind,
+        actorMemberId: s.actor_member_id,
+        summary: s.summary,
+        detail,
+        callKey: s.call_key,
+        durationMs: s.duration_ms,
+        promptTokens: s.prompt_tokens,
+        completionTokens: s.completion_tokens,
+        costMilli: s.cost_milli,
+        costYuan: milliToYuan(s.cost_milli),
+        createdAt: s.created_at,
+      };
+    });
+    const events = repos.listTaskEvents(id).map((e) => ({
+      id: Number(e.id),
+      fromStatus: (e.from_status as string | null) ?? null,
+      toStatus: String(e.to_status),
+      actorType: String(e.actor_type),
+      actorId: (e.actor_id as string | null) ?? null,
+      note: String(e.note ?? ''),
+      createdAt: String(e.created_at),
+    }));
+    return { ok: true, steps, events };
   });
 
   const adjudicate = async (req: FastifyRequest, taskId: string) => {
