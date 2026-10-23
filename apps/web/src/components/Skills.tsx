@@ -167,7 +167,7 @@ function defaultParams(s: SkillListItem): Record<string, ParamValue> {
  * 列表走 GET /api/skills（本空间 + 平台库合并返回，前端按 workspaceId 分段）。
  */
 export default function Skills() {
-  const { S, post, send, toast, refresh, setTab, currentWorkspace, user, openSchedules, openDialog } = useApp();
+  const { S, post, send, toast, refresh, currentWorkspace, user, openSchedules, openDialog } = useApp();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [activity, setActivity] = useState<SkillActivityItem[]>([]);
   const [roles, setRoles] = useState<RegistryRole[]>([]);

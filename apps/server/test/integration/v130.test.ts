@@ -386,7 +386,9 @@ describe('F 办公室风格与风格模板', () => {
     const d = await jget(rig.base, '/api/office-style', userB.cookie);
     expect(d.ok).toBe(true);
     expect(d.style.palette.wall).toBeTruthy();
-    expect(d.style.floorPattern).toBe('wood');
+    // 默认 = v1.2.0 现画布观感（集成定案）：checker 地板 + 左右原有绿植 'green'
+    expect(d.style.floorPattern).toBe('checker');
+    expect(d.style.furniture).toEqual({ plantLeft: 'green', plantRight: 'green' });
     expect(d.style.poster.imageFileId).toBeNull();
     const put = await fetch(rig.base + '/api/office-style', {
       method: 'PUT',
