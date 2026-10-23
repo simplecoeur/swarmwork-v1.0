@@ -32,7 +32,7 @@ interface DeliveryState {
  * 有效成果沉淀到知识库 / skill、一键再发。底部管理已有交付页（浏览数/口令/过期/撤销）。
  */
 export default function Results() {
-  const { S, post, toast } = useApp();
+  const { S, post, toast, openDialog } = useApp();
   const { ask, confirmNode } = useConfirm();
   const [q, setQ] = useState('');
   const [verifiedOnly, setVerifiedOnly] = useState(false);
@@ -197,9 +197,7 @@ export default function Results() {
             action={
               <Button
                 size="small"
-                onClick={() =>
-                  document.getElementById('publish-anchor')?.scrollIntoView({ behavior: 'smooth' })
-                }
+                onClick={() => openDialog('publish')}
               >
                 去发一单出成果
               </Button>

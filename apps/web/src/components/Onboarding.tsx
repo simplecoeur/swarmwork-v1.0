@@ -264,7 +264,7 @@ export function ReopenGuideButton() {
  * 成员能力卡网格 + 官方技能推荐卡（未安装显示「安装」、已安装显示「发一单」）。
  */
 export function CapabilitiesShelf() {
-  const { S, post, toast, refresh, currentWorkspace } = useApp();
+  const { S, post, toast, refresh, currentWorkspace, openDialog } = useApp();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [busyId, setBusyId] = useState('');
 
@@ -302,7 +302,7 @@ export function CapabilitiesShelf() {
       });
       toast(`已用「${name}」发了一单，去任务墙看进度`);
       refresh();
-      scrollToId('taskwall-anchor');
+      openDialog('tasks', { section: 'taskwall' });
     } catch {
       /* post 已 toast 后端原文（含必填参数缺失等） */
     } finally {

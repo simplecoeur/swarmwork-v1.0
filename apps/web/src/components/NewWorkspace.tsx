@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { PROVIDER_PRESETS } from '@swarm/shared';
 import { useApp } from '../context';
 import { fetchIndustryPacks, testApiConnection, type Questionnaire } from '../api';
 import { Button, Checkbox, Dialog, Input, RadioGroup, RadioItem, Select, Stepper, Switch, Textarea } from './ui';
@@ -22,11 +23,9 @@ function packSummary(pack: IndustryPack): string {
 }
 
 /*
- * 服务商预设（问卷第 1 步）：与 Settings.tsx 的 API 表单同源口径——
- * Settings 用的是 context.presets（服务端 GET /api/presets = shared PROVIDER_PRESETS，
- * 键 deepseek/openai/anthropic/custom，选中带出 baseUrl/model）。
- * 本向导优先用同一份 context.presets；通义/智谱不在服务端预设内，用下方本地兜底常量补齐
- * （需协调者把 tongyi/zhipu 补进服务端 PROVIDER_PRESETS 后收口为同一份）。
+ * 服务商预设（问卷第 1 步）：与 Settings.tsx 的 API 表单同源——context.presets
+ * （服务端 GET /api/presets = shared PROVIDER_PRESETS，六家齐全）。
+ * context 未就绪时以 shared 常量同值兜底（FALLBACK_PRESETS 即 PROVIDER_PRESETS 本身）。
  */
 const PROVIDER_OPTIONS = [
   { value: 'deepseek', label: 'DeepSeek' },
@@ -37,14 +36,7 @@ const PROVIDER_OPTIONS = [
   { value: 'custom', label: '自定义' },
 ] as const;
 
-const FALLBACK_PRESETS: Record<string, { baseUrl: string; model: string }> = {
-  deepseek: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
-  openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
-  anthropic: { baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-5' },
-  tongyi: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-  zhipu: { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus' },
-  custom: { baseUrl: '', model: '' },
-};
+const FALLBACK_PRESETS: Record<string, { baseUrl: string; model: string }> = PROVIDER_PRESETS;
 
 const USE_OPTIONS = ['内容生产', '日常办公', '学习研究', '运营推广', '其他'] as const;
 

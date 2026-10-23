@@ -34,7 +34,7 @@ function asStringArray(v: unknown): Array<{ title?: string; name?: string; ref?:
 }
 
 function StepDetail({ step }: { step: TaskStep }) {
-  const { setTab } = useApp();
+  const { openDialog } = useApp();
   const d = step.detail ?? {};
   if (step.kind === 'inject') {
     const kb = asStringArray(d.kb);
@@ -46,7 +46,7 @@ function StepDetail({ step }: { step: TaskStep }) {
           <div>
             命中知识：
             {kb.map((k, i) => (
-              <button key={i} type="button" className="tl-link" onClick={() => setTab('kb')}>
+              <button key={i} type="button" className="tl-link" onClick={() => openDialog('kb')}>
                 《{k.title ?? ''}》
               </button>
             ))}
@@ -56,7 +56,7 @@ function StepDetail({ step }: { step: TaskStep }) {
           <div>
             命中资产：
             {assets.map((a, i) => (
-              <button key={i} type="button" className="tl-link" onClick={() => setTab('assets')}>
+              <button key={i} type="button" className="tl-link" onClick={() => openDialog('assets')}>
                 《{a.name ?? a.ref ?? ''}》
               </button>
             ))}

@@ -167,7 +167,7 @@ function defaultParams(s: SkillListItem): Record<string, ParamValue> {
  * 列表走 GET /api/skills（本空间 + 平台库合并返回，前端按 workspaceId 分段）。
  */
 export default function Skills() {
-  const { S, post, send, toast, refresh, setTab, currentWorkspace, user, openSchedules } = useApp();
+  const { S, post, send, toast, refresh, setTab, currentWorkspace, user, openSchedules, openDialog } = useApp();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [activity, setActivity] = useState<SkillActivityItem[]>([]);
   const [roles, setRoles] = useState<RegistryRole[]>([]);
@@ -344,7 +344,7 @@ export default function Skills() {
     } catch { return; }
     setDispatchSkill(null);
     refresh();
-    setTab('office');
+    openDialog('tasks', { section: 'taskwall' });
   }
 
   /* G-10 快捷钮：把当前发单参数带到定时任务页预填新建表单（不直接建计划，周期在那边定） */

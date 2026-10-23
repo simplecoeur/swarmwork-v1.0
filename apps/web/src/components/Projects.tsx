@@ -234,7 +234,7 @@ function ProjectPlanCard({ firstChildId }: { firstChildId: string | null }) {
 }
 
 function ProjectList() {
-  const { S, teamName, memberName } = useApp();
+  const { S, teamName, memberName, openDialog } = useApp();
   const [openId, setOpenId] = useState<string | null>(null);
   // G-04：子任务行展开各自时间线（按任务 id，同一时刻只展开一条）
   const [openTlId, setOpenTlId] = useState<string | null>(null);
@@ -249,9 +249,7 @@ function ProjectList() {
           action={
             <Button
               size="small"
-              onClick={() =>
-                document.getElementById('publish-anchor')?.scrollIntoView({ behavior: 'smooth' })
-              }
+              onClick={() => openDialog('publish')}
             >
               去下发第一个方案
             </Button>

@@ -2,7 +2,8 @@
  * 办公室风格配置（v1.3.0 F）：当前空间风格存 settings(key='officeStyle', workspace 维度)，
  * 风格模板存 style_templates 表（迁移 016）。本文件只定义配置形状与默认值。
  * 默认值 = 现有办公室观感：墙面取 PixelOffice 隔断主色 #b09a76、地板取其浅木色 #ead9b8、
- * 点缀取品牌红 #d93a2b；floorPattern 默认 'wood'。
+ * 点缀取品牌红 #d93a2b；floorPattern 默认 'checker'（与现画布明暗格一致）、左右绿植默认
+ * 'green'（现画布原有两盆），保证未定制空间与 v1.2.0 画布像素级一致（v1.3.0 集成定案）。
  */
 export interface OfficeStyleConfig {
   palette: { wall: string; floor: string; accent: string };
@@ -14,8 +15,8 @@ export interface OfficeStyleConfig {
 
 export const DEFAULT_OFFICE_STYLE: OfficeStyleConfig = {
   palette: { wall: '#b09a76', floor: '#ead9b8', accent: '#d93a2b' },
-  floorPattern: 'wood',
-  furniture: {},
+  floorPattern: 'checker',
+  furniture: { plantLeft: 'green', plantRight: 'green' },
   poster: { imageFileId: null },
   sign: { mode: 'text', text: '', imageFileId: null },
 };

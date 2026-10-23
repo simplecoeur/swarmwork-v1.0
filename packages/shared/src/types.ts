@@ -352,6 +352,15 @@ export interface SkillDto {
   sourceSkillId: string | null;
   sourceVersion: number | null;
   installCount: number;
+  /** v1.3.0 生态：官方精选标记（仅用户上架 skill 可被管理员晋升）与晋升时间 */
+  featured: boolean;
+  featuredAt: string | null;
+  /** v1.3.0 生态：公开署名来源快照（上架审核通过时落定；源用户/空间注销后仍保留）。
+   * 官方自研 skill 为 null（以 ownerType='platform' + 「官方」标区分）。 */
+  contributorName: string | null;
+  contributorWorkspaceName: string | null;
+  /** v1.3.0 生态：上架（审核通过）时间；「最新动态」公示口径 */
+  listedAt: string | null;
   /** 快照来源有新版（源 version > 本副本 source_version） */
   hasNewerSource: boolean;
   /** 飞轮沉淀的已验证做法备注（M8 追加，渲染时拼入 brief） */
@@ -359,6 +368,35 @@ export interface SkillDto {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** v1.3.0 任务模板（A3）：官方/行业模板 workspaceId 为 null；个人模板仅本空间可见 */
+export interface TaskTemplateDto {
+  id: string;
+  workspaceId: string | null;
+  /** official 平台官方 / industry 行业包 / workspace 本空间自建 */
+  scope: 'official' | 'industry' | 'workspace';
+  industryPackId: string | null;
+  name: string;
+  /** 建议任务类型（注册表 typeId；套用时若当前空间无此类型则不预填类型） */
+  typeId: string;
+  /** 说明骨架，可含 {{占位}} */
+  briefTemplate: string;
+  /** 建议工种（展示提示，不参与派单） */
+  suggestedRole: string;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** v1.3.0 生态公示（B3）：平台库「最新动态」条目 */
+export interface SkillActivityItemDto {
+  skillId: string;
+  name: string;
+  kind: 'listed' | 'featured';
+  contributorName: string | null;
+  contributorWorkspaceName: string | null;
+  at: string;
 }
 
 /** 只读交付页（§11.2）：管理视图（token 明文仅创建时返回一次）。
