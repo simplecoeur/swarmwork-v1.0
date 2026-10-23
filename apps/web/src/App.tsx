@@ -13,6 +13,8 @@ import Admin from './components/Admin';
 import Skills from './components/Skills';
 import Assets from './components/Assets';
 import HelpCenter from './components/HelpCenter';
+import { GlobalSearch, SearchResultsPage } from './components/GlobalSearch';
+import type { SearchItem } from './types';
 import FeedbackDialog from './components/FeedbackDialog';
 import NotificationBell, { NotificationCenterDialog } from './components/NotificationBell';
 import NewWorkspaceModal from './components/NewWorkspace';
@@ -31,6 +33,8 @@ function Shell() {
   const [notifOpen, setNotifOpen] = useState(false);
   // v1.1.0 移动端底部栏高亮：office tab 内含办公室/发单/任务墙三段，用它区分当前落点
   const [mNav, setMNav] = useState<'office' | 'publish' | 'tasks'>('office');
+  // G-09 全局搜索：结果页关键词（顶栏搜索回车进入）
+  const [searchQuery, setSearchQuery] = useState('');
 
   // 鉴权门（M6）：探活中 / 未登录 / 强制改密，三种状态都不渲染主界面
   if (authStatus === 'loading') {
@@ -80,6 +84,20 @@ function Shell() {
   const moreActive =
     tab === 'assets' || tab === 'kb' || tab === 'cost' || tab === 'settings' || tab === 'admin' || tab === 'help';
 
+  /* G-09 搜索命中跳转：按类型落到对应页面/区块 */
+  const goSearchItem = (item: SearchItem) => {
+    if (item.type === 'task') goOfficeSection('tasks', 'taskwall-anchor');
+    else if (item.type === 'result') goMoreSection('results-anchor');
+    else if (item.type === 'project') goMoreSection('projects-anchor');
+    else if (item.type === 'kb') setTab('kb');
+    else if (item.type === 'asset') setTab('assets');
+    else if (item.type === 'skill') setTab('skills');
+  };
+  const showSearchResults = (q: string) => {
+    setSearchQuery(q);
+    setTab('search');
+  };
+
   async function onSwitch(id: string) {
     if (!id || id === currentWorkspace?.id) return;
     try {
@@ -109,6 +127,7 @@ function Shell() {
           />
           <Button variant="mini" onClick={() => setShowNewWs(true)}>＋开新公司</Button>
         </div>
+        <GlobalSearch onShowResults={showSearchResults} onNavigate={goSearchItem} />
         <nav>
           {navBtn('office', '办公室')}
           {navBtn('skills', '技能')}
@@ -214,6 +233,11 @@ function Shell() {
             {tab === 'help' && (
               <section>
                 <HelpCenter />
+              </section>
+            )}
+            {tab === 'search' && (
+              <section>
+                <SearchResultsPage query={searchQuery} onNavigate={goSearchItem} />
               </section>
             )}
           </main>

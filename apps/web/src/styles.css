@@ -451,6 +451,28 @@ header{ flex-wrap:wrap; }
 .help-md pre code{ background:none; border:none; padding:0; }
 .help-toc{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
 
+/* G-09 全局搜索：顶栏搜索框 + 分组下拉（桌面）；移动端图标 + 全屏层规则在下方 ≤768px 段 */
+.globalsearch{ position:relative; flex:0 1 300px; min-width:180px; }
+.gs-toggle{ display:none; }
+.gs-overlay{ display:none; }
+.gs-panel{
+  position:absolute; top:calc(100% + 6px); left:0; right:0; z-index:80;
+  background:var(--panel); border:3px solid var(--line); box-shadow:var(--shadow-sm);
+  max-height:60vh; overflow-y:auto; padding:6px;
+}
+.gs-hint{ font-size:13px; color:var(--ink-soft); padding:8px; }
+.gs-group-title{ font-size:12px; font-weight:900; color:var(--ink-soft); padding:6px 8px 2px; }
+.gs-item{
+  display:block; width:100%; text-align:left; font:inherit; cursor:pointer;
+  background:none; border:none; border-bottom:2px dashed var(--line);
+  padding:7px 8px; color:var(--ink);
+}
+.gs-item:hover{ background:var(--panel2); }
+.gs-item-title{ display:block; font-size:13.5px; font-weight:800; overflow-wrap:anywhere; }
+.gs-item-snippet{ display:block; font-size:12px; color:var(--ink-soft); overflow-wrap:anywhere; }
+.gs-item--all{ font-weight:900; text-align:center; }
+.gs-item--page{ border:2px solid var(--line); background:var(--panel); margin-bottom:6px; box-shadow:2px 2px 0 rgba(44,37,25,.9); }
+
 /* ============ v1.1.0 移动端适配（≤768px） ============
    铁律：桌面（>768px）布局与视觉零变化——除以下三条「默认隐藏/无样式」声明外，
    全部移动规则都收在 @media (max-width:768px) 内；颜色/边框/阴影只引用既有 token。 */
@@ -568,4 +590,16 @@ header{ flex-wrap:wrap; }
 
   /* ---- 底部栏锚点跳转时避开 sticky 顶栏 ---- */
   #publish-anchor, #projects-anchor, #taskwall-anchor, #results-anchor{ scroll-margin-top:132px; }
+
+  /* ---- G-09 全局搜索：顶栏只留图标，点击展开全屏搜索层 ---- */
+  .globalsearch{ flex:0 0 auto; min-width:0; margin-left:auto; }
+  .gs-desktop{ display:none; }
+  .gs-toggle{ display:inline-flex; }
+  .gs-overlay{
+    display:block; position:fixed; inset:0; z-index:90; overflow-y:auto;
+    background:var(--panel); padding:12px 10px 92px;
+  }
+  .gs-overlay-bar{ display:flex; gap:8px; align-items:center; }
+  .gs-overlay-bar .ui-input{ flex:1; }
+  .gs-panel--overlay{ position:static; box-shadow:none; border:none; max-height:none; padding:0; }
 }
