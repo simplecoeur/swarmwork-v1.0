@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { PROVIDER_PRESETS } from '@swarm/shared';
 import { useApp } from '../context';
 import { fetchIndustryPacks, testApiConnection, type Questionnaire } from '../api';
 import { Button, Checkbox, Dialog, Input, RadioGroup, RadioItem, Select, Stepper, Switch, Textarea } from './ui';
@@ -24,8 +23,10 @@ function packSummary(pack: IndustryPack): string {
 
 /*
  * 服务商预设（问卷第 1 步）：与 Settings.tsx 的 API 表单同源——context.presets
- * （服务端 GET /api/presets = shared PROVIDER_PRESETS，六家齐全）。
- * context 未就绪时以 shared 常量同值兜底（FALLBACK_PRESETS 即 PROVIDER_PRESETS 本身）。
+ * （服务端 GET /api/presets = shared PROVIDER_PRESETS，六家齐全）为运行时准。
+ * 下方 FALLBACK_PRESETS 与 shared PROVIDER_PRESETS 逐项同值（集成时已核对），
+ * 仅作 context 未就绪时的初始值；不能直接 import shared 常量——web 此前只有类型
+ * 导入，shared 的 CJS 桶文件使 Rollup 无法静态解析其值导出（v1.3.0 集成定案）。
  */
 const PROVIDER_OPTIONS = [
   { value: 'deepseek', label: 'DeepSeek' },
@@ -36,7 +37,14 @@ const PROVIDER_OPTIONS = [
   { value: 'custom', label: '自定义' },
 ] as const;
 
-const FALLBACK_PRESETS: Record<string, { baseUrl: string; model: string }> = PROVIDER_PRESETS;
+const FALLBACK_PRESETS: Record<string, { baseUrl: string; model: string }> = {
+  deepseek: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
+  openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  anthropic: { baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-5' },
+  tongyi: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+  zhipu: { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus' },
+  custom: { baseUrl: '', model: '' },
+};
 
 const USE_OPTIONS = ['内容生产', '日常办公', '学习研究', '运营推广', '其他'] as const;
 
