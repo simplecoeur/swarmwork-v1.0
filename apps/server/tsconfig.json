@@ -1,0 +1,1 @@
+{"compilerOptions":{"lib":["ES2022"],"module":"CommonJS","moduleResolution":"Node10","outDir":"dist","rootDir":"src","types":["node"]},"extends":"../../tsconfig.base.json","include":["src"]}

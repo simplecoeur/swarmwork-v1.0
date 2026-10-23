@@ -1,0 +1,10 @@
+node_modules/
+dist/
+apps/server/public/assets/
+data/
+*.db
+*.db-journal
+*.log
+.DS_Store
+.env
+apps/server/public/

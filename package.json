@@ -1,0 +1,30 @@
+{
+  "description": "干活蜂群 · 本地版（monorepo：apps/web + apps/server + packages/shared）",
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.19.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "name": "agent-swarm",
+  "private": true,
+  "scripts": {
+    "build": "npm run build -w @swarm/shared && npm run build -w @swarm/server && npm run build -w @swarm/web",
+    "dev": "npm run build -w @swarm/shared && npm run dev -w @swarm/server",
+    "format": "prettier --write \"apps/*/src/**/*.{ts,tsx}\" \"packages/*/src/**/*.ts\" \"tools/*.js\"",
+    "lint": "eslint apps/server/src apps/server/test packages/shared/src apps/web/src tools --max-warnings 0",
+    "test": "npm run build -w @swarm/shared && npm run test -w @swarm/server",
+    "typecheck": "npm run build -w @swarm/shared && npm run typecheck -w @swarm/server && npm run typecheck -w @swarm/web"
+  },
+  "version": "0.2.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}
