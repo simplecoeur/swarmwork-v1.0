@@ -7,13 +7,19 @@ import type {
   AssetSectionDto,
   AssetTypeDto,
   AuthUserDto,
+  CapabilitiesDto,
   ChannelPushDto,
+  CostEstimateDto,
+  CostSummaryDto,
   DeliveryLinkDto,
+  FeedbackDto,
   IndustryPackDto,
   KbEntryDto,
   LedgerEntryDto,
   MemberDto,
   NotificationDto,
+  NotifyPrefsDto,
+  OnboardingDto,
   OutcomeMarkDto,
   ParamsDto,
   PipelineTemplateDto,
@@ -93,7 +99,15 @@ export interface TrialApi {
 
 export type Presets = Record<string, { baseUrl: string; model: string }>;
 
-export type TabKey = 'office' | 'cost' | 'settings' | 'kb' | 'admin' | 'skills' | 'assets';
+export type TabKey = 'office' | 'cost' | 'settings' | 'kb' | 'admin' | 'skills' | 'assets' | 'help';
+
+/* ---------- G-02/G-03/G-05/G-08（v1.2.0 批次一） ---------- */
+export type Capabilities = CapabilitiesDto;
+export type Onboarding = OnboardingDto;
+export type NotifyPrefs = NotifyPrefsDto;
+export type FeedbackItem = FeedbackDto;
+export type CostEstimate = CostEstimateDto;
+export type CostSummary = CostSummaryDto;
 
 /* ---------- M7/M8：直接沿用 shared DTO ---------- */
 export type Skill = SkillDto;
