@@ -498,3 +498,44 @@ export async function putDailySettings(settings: Partial<DailySettings>): Promis
   const j = await requestRaw('PUT', '/api/daily-settings', { settings });
   return j.settings as DailySettings;
 }
+
+/* ---------- v1.3.0 C2 注册问卷 ---------- */
+
+export interface QuestionnaireApi {
+  provider: string;
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
+
+export interface Questionnaire {
+  api: QuestionnaireApi | null;
+  industry: string;
+  job: string;
+  uses: string[];
+  problems: string;
+  checkinReminderEnabled: boolean;
+  checkinReminderTime: string;
+  briefingEnabled: boolean;
+  briefingTime: string;
+  supervisionItems: string;
+}
+
+/** 问卷第 1 步「测试连接」：无空间上下文的探活，失败抛后端原文 message */
+export async function testApiConnection(body: QuestionnaireApi): Promise<void> {
+  await requestRaw('POST', '/api/apis/test-connection', body);
+}
+
+export async function fetchQuestionnaire(): Promise<Questionnaire | null> {
+  const j = await requestRaw('GET', '/api/questionnaire');
+  const q = j.questionnaire as (Questionnaire & { uses?: string | string[] }) | null;
+  if (!q) return null;
+  return {
+    ...q,
+    uses: Array.isArray(q.uses) ? q.uses : q.uses ? [q.uses] : [],
+  };
+}
+
+export async function putQuestionnaire(questionnaire: Questionnaire): Promise<void> {
+  await requestRaw('PUT', '/api/questionnaire', { questionnaire });
+}

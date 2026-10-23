@@ -6,14 +6,17 @@ import {
   fetchChannels,
   fetchDailySettings,
   fetchPreferences,
+  fetchQuestionnaire,
   fetchVisitLinks,
   fetchWebhookDeliveries,
   fetchWebhooks,
   lookupUserByEmail,
   putDailySettings,
   putPreference,
+  putQuestionnaire,
   requestRaw,
   type DailySettings,
+  type Questionnaire,
 } from '../api';
 import RegistryCard from './RegistryCard';
 import FeedbackDialog from './FeedbackDialog';
@@ -523,6 +526,8 @@ export default function Settings() {
       <NotifyPrefsCard />
 
       <DailySettingsCard />
+
+      <QuestionnaireCard />
 
       <WorkspaceTransferCard />
 
@@ -1134,6 +1139,119 @@ function DailySettingsCard() {
           <div style={{ marginTop: 8 }}>
             <Button variant="blue" onClick={save} disabled={saving}>
               {saving ? '保存中…' : '保存'}
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- 我的问卷（v1.3.0 C2）：GET/PUT /api/questionnaire ---------------- */
+function QuestionnaireCard() {
+  const { toast } = useApp();
+  const [q, setQ] = useState<Questionnaire | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setQ(await fetchQuestionnaire());
+    } catch {
+      /* 服务端未就绪时按「无问卷」呈现 */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const patch = (p: Partial<Questionnaire>) => setQ((s) => (s ? { ...s, ...p } : s));
+
+  async function save() {
+    if (!q) return;
+    const timeOk = (t: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
+    if (!timeOk(q.briefingTime) || !timeOk(q.checkinReminderTime)) {
+      return toast('时间格式不对，请用 HH:MM（如 09:00）');
+    }
+    setSaving(true);
+    try {
+      await putQuestionnaire(q);
+      toast('问卷已保存（提醒修改即时生效）');
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>我的问卷 <span className="tag">开公司时填的问卷答案；团队就是按它生成的</span></h2>
+      {!loaded && <p><Spinner label="加载中…" /></p>}
+      {loaded && !q && <p className="hint">开公司时跳过了问卷。</p>}
+      {q && (
+        <>
+          <div className="row">
+            <div>
+              <label>行业</label>
+              <Input value={q.industry} onChange={(e) => patch({ industry: e.target.value })} />
+            </div>
+            <div>
+              <label>具体工作</label>
+              <Input value={q.job} onChange={(e) => patch({ job: e.target.value })} />
+            </div>
+          </div>
+          {q.uses.length > 0 && (
+            <p className="hint" style={{ marginTop: 8 }}>打算怎么用：{q.uses.join('、')}</p>
+          )}
+          {q.problems && (
+            <p className="hint" style={{ marginTop: 4 }}>希望解决的问题：{q.problems}</p>
+          )}
+          {q.api ? (
+            <p className="hint" style={{ marginTop: 4 }}>
+              已接入 API：{q.api.provider} · {q.api.model} · Key ••••
+            </p>
+          ) : (
+            <p className="hint" style={{ marginTop: 4 }}>API：未接入（可用体验额度）</p>
+          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+            <span style={{ flex: 1, fontSize: 13.5, fontWeight: 700 }}>签到提醒</span>
+            <Switch
+              checked={q.checkinReminderEnabled}
+              onCheckedChange={(on) => patch({ checkinReminderEnabled: on })}
+              ariaLabel="问卷签到提醒开关"
+            />
+            <span className="hint">{q.checkinReminderEnabled ? '开' : '关'}</span>
+          </div>
+          <label>签到提醒时间（HH:MM）</label>
+          <Input type="time" value={q.checkinReminderTime} onChange={(e) => patch({ checkinReminderTime: e.target.value })} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+            <span style={{ flex: 1, fontSize: 13.5, fontWeight: 700 }}>总经理晨报</span>
+            <Switch
+              checked={q.briefingEnabled}
+              onCheckedChange={(on) => patch({ briefingEnabled: on })}
+              ariaLabel="问卷晨报开关"
+            />
+            <span className="hint">{q.briefingEnabled ? '开' : '关'}</span>
+          </div>
+          <label>晨报时间（HH:MM）</label>
+          <Input type="time" value={q.briefingTime} onChange={(e) => patch({ briefingTime: e.target.value })} />
+          <label>督促事项</label>
+          <Textarea
+            rows={3}
+            value={q.supervisionItems}
+            onChange={(e) => patch({ supervisionItems: e.target.value })}
+            placeholder="如：每天发一集短剧"
+          />
+          <p className="hint" style={{ marginTop: 8 }}>
+            提醒修改即时生效；行业/工作修改仅存档，不会重组现有团队。
+          </p>
+          <div style={{ marginTop: 8 }}>
+            <Button variant="blue" onClick={save} disabled={saving}>
+              {saving ? '保存中…' : '保存问卷'}
             </Button>
           </div>
         </>
