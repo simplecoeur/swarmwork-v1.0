@@ -38,7 +38,7 @@ const PAGE_SIZE = 20;
  * 数据走 GET /api/notifications（分页 + type 过滤在服务端）。
  */
 export function NotificationList({ onNavigate }: { onNavigate?: () => void }) {
-  const { toast, setTab } = useApp();
+  const { toast, setTab, openDialog } = useApp();
   const [items, setItems] = useState<AppNotification[]>([]);
   const [unread, setUnread] = useState(0);
   const [total, setTotal] = useState(0);
@@ -85,17 +85,18 @@ export function NotificationList({ onNavigate }: { onNavigate?: () => void }) {
     }
   }
 
-  /** 跳目标任务：切到办公室任务墙并滚动高亮对应任务卡 */
+  /** 跳目标任务：打开任务弹窗（taskwall 区段）后再滚动定位对应任务卡（范式同 App.tsx goSearchItem） */
   function jumpToTask(n: AppNotification) {
     if (!n.taskId) return;
     void markRead(n.id);
     onNavigate?.();
     setTab('office');
+    openDialog('tasks', { section: 'taskwall' });
     window.setTimeout(() => {
       document
         .getElementById(`task-${n.taskId}`)
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 120);
+    }, 220);
   }
 
   const groups = new Map<string, AppNotification[]>();

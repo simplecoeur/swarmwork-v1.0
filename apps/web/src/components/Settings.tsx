@@ -578,13 +578,13 @@ export default function Settings() {
 
 /* ---------------- 帮助与反馈入口（G-05：设置页进帮助中心/反馈） ---------------- */
 function HelpEntryCard() {
-  const { setTab } = useApp();
+  const { setTab, closeDialog } = useApp();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   return (
     <div className="card">
       <h2>帮助与反馈 <span className="tag">使用说明、高频问题都在帮助中心；意见与问题可直接留言给平台</span></h2>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Button variant="blue" onClick={() => setTab('help')}>打开帮助中心</Button>
+        <Button variant="blue" onClick={() => { closeDialog(); setTab('help'); }}>打开帮助中心</Button>
         <Button variant="gray" onClick={() => setFeedbackOpen(true)}>✉️ 意见反馈</Button>
         <ReopenGuideButton />
       </div>
