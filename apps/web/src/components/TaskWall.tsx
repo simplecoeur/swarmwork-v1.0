@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { fetchKb } from '../api';
+import { createTemplateFromTask, fetchKb } from '../api';
 import { yuan } from '../utils';
 import TaskTimeline from './TaskTimeline';
 import ResultView from './ResultView';
@@ -16,7 +16,18 @@ const chipCls: Record<string, BadgeVariant> = {
 };
 
 export default function TaskWall() {
-  const { S, post, refresh, toast, teamName, memberName } = useApp();
+  const { S, post, refresh, toast, teamName, memberName, openDialog } = useApp();
+
+  /* v1.3.0 A3：把这单存为本空间模板（发单弹窗模板行可套用） */
+  async function saveAsTemplate(taskId: string) {
+    try {
+      await createTemplateFromTask(taskId);
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
+    toast('已存为模板，可在发单时套用');
+  }
   const { ask, confirmNode } = useConfirm();
   // G-04：过程时间线展开态（按任务 id）；执行中随组件内 2s 轮询增量刷新，已完成打开即回放
   const [openTl, setOpenTl] = useState<Record<string, boolean>>({});
@@ -110,13 +121,16 @@ export default function TaskWall() {
               ) : null}
               {t.rejectReason ? <div className="reject">打回/裁决原因：{t.rejectReason}</div> : null}
               {t.blockedReason ? <div className="blocked">停工原因：{t.blockedReason}</div> : null}
-              <div style={{ marginTop: 6 }}>
+              <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <Button
                   size="small"
                   variant="gray"
                   onClick={() => setOpenTl((m) => ({ ...m, [t.id]: !m[t.id] }))}
                 >
                   {openTl[t.id] ? '收起过程时间线' : '过程时间线'}
+                </Button>
+                <Button size="small" variant="gray" onClick={() => void saveAsTemplate(t.id)}>
+                  存为模板
                 </Button>
               </div>
               {openTl[t.id] ? (
@@ -154,12 +168,7 @@ export default function TaskWall() {
           <EmptyState
             example={<>示例：《新剧第 1 集》英文标题 · 文案 · 已完成 · 全程 12,300 token / ¥0.025</>}
             action={
-              <Button
-                size="small"
-                onClick={() =>
-                  document.getElementById('publish-anchor')?.scrollIntoView({ behavior: 'smooth' })
-                }
-              >
+              <Button size="small" onClick={() => openDialog('publish')}>
                 去发布第一单
               </Button>
             }

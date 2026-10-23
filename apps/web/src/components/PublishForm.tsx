@@ -1,17 +1,89 @@
 import { useEffect, useState} from 'react';
 import { useApp} from '../context';
-import { fetchRegistry} from '../api';
+import { deleteTemplate, fetchRegistry, fetchTemplates} from '../api';
 import AssetRefPicker from './AssetRefPicker';
 import EstimateLine from './EstimateLine';
-import { Button, Input, Select, Tabs, Textarea} from './ui';
-import type { AssetRef, RegistryTaskType} from '../types';
+import { Badge, Button, Input, Select, Tabs, Textarea, useConfirm} from './ui';
+import type { AssetRef, RegistryTaskType, TaskTemplate} from '../types';
 
 const FALLBACK_TYPES = ['文案', '调研', '代码'];
 
 type Mode = 'task' | 'project' | 'batch';
 
+/* ---------- v1.3.0 A3：模板行（三组横向滚动卡片；套用只预填、绝不直接发单） ---------- */
+const TPL_GROUPS: Array<{ scope: TaskTemplate['scope']; label: string }> = [
+{ scope: 'official', label: '官方' },
+{ scope: 'industry', label: '行业' },
+{ scope: 'workspace', label: '我的' },
+];
+
+function TemplateStrip({
+templates,
+regTypes,
+onApply,
+}: {
+templates: TaskTemplate[];
+regTypes: RegistryTaskType[];
+onApply: (t: TaskTemplate) => void;
+}) {
+const { toast } = useApp();
+const { ask, confirmNode } = useConfirm();
+const [items, setItems] = useState<TaskTemplate[]>(templates);
+useEffect(() => setItems(templates), [templates]);
+if (!items.length) return null;
+const typeLabel = (typeId: string) => regTypes.find((t) => t.typeId === typeId)?.name ?? typeId;
+function remove(t: TaskTemplate) {
+ask({
+title: '删除模板',
+message: `删除模板「${t.name}」？删除后不可恢复。`,
+confirmLabel: '删除',
+onConfirm: async () => {
+try {
+await deleteTemplate(t.id);
+} catch (e) {
+toast('出错：' + (e instanceof Error ? e.message : String(e)));
+return;
+}
+setItems((xs) => xs.filter((x) => x.id !== t.id));
+toast('模板已删除');
+},
+});
+}
+return (
+<div>
+{TPL_GROUPS.map((g) => {
+const group = items.filter((t) => t.scope === g.scope);
+if (!group.length) return null;
+return (
+<div key={g.scope}>
+<div className="tpl-group-title">{g.label}模板</div>
+<div className="tpl-strip">
+{group.map((t) => (
+<div className="tpl-card" key={t.id}>
+<div className="tpl-card-name">{t.name}</div>
+<div className="tpl-card-meta">
+<Badge>{typeLabel(t.typeId)}</Badge>
+{t.suggestedRole ? <span>{t.suggestedRole}</span> : null}
+</div>
+<div className="tpl-card-actions">
+<Button size="small" variant="blue" onClick={() => onApply(t)}>套用</Button>
+{t.scope === 'workspace' ? (
+<Button size="small" variant="gray" onClick={() => remove(t)}>删除</Button>
+) : null}
+</div>
+</div>
+))}
+</div>
+</div>
+);
+})}
+{confirmNode}
+</div>
+);
+}
+
 export default function PublishForm() {
-const { S, post, refresh, toast} = useApp();
+const { S, post, refresh, toast, publishPrefill, setPublishPrefill} = useApp();
 const [mode, setMode] = useState<Mode>('task');
 const [title, setTitle] = useState('');
 const [type, setType] = useState('文案');
@@ -31,12 +103,33 @@ const [pBrief, setPBrief] = useState('');
 const [clientName, setClientName] = useState('');
 // 任务类型改注册表驱动（M6）：拉 GET /api/registry 的 taskTypes，typeId 即提交值；拉不到回退默认三项
 const [regTypes, setRegTypes] = useState<RegistryTaskType[]>([]);
+// v1.3.0 A3：模板列表（挂载时拉取，套用只预填不发单）
+const [templates, setTemplates] = useState<TaskTemplate[]>([]);
 
 useEffect(() => {
 fetchRegistry()
 .then((r) => setRegTypes(r.taskTypes))
 .catch(() => setRegTypes([]));
+fetchTemplates()
+.then(setTemplates)
+.catch(() => setTemplates([]));
 }, []);
+
+// v1.3.0 E：发单弹窗打开（本组件挂载）时消费快速发单条/外部入口的预填一次并清空
+useEffect(() => {
+if (!publishPrefill) return;
+if (publishPrefill.title) setTitle(publishPrefill.title);
+if (publishPrefill.brief !== undefined) setBrief(publishPrefill.brief);
+if (publishPrefill.typeId) setType(publishPrefill.typeId);
+setPublishPrefill(null);
+}, [publishPrefill, setPublishPrefill]);
+
+function applyTemplate(t: TaskTemplate) {
+setTitle(t.name);
+if (regTypes.some((x) => x.typeId === t.typeId)) setType(t.typeId);
+setBrief(t.briefTemplate);
+toast(`已套用模板「${t.name}」，改好后点发布`);
+}
 
 // 注册表就绪后，若当前选中值不在注册表内，切到第一项
 useEffect(() => {
@@ -143,6 +236,7 @@ options={S.teams.map((t) => ({ value: t.id, label: t.name}))}
 
 const taskContent = (
 <>
+<TemplateStrip templates={templates} regTypes={regTypes} onApply={applyTemplate} />
 <label>标题</label>
 <Input
 placeholder="如：给 MJ Drama 首支视频写英文标题"
