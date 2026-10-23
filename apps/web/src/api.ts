@@ -33,7 +33,8 @@ export async function requestRaw(
 ): Promise<Record<string, unknown>> {
   const r = await fetch(path, {
     method,
-    headers: { 'content-type': 'application/json' },
+    // 无 body 时不带 content-type：否则 Fastify 会把空 body 按 JSON 解析并拒绝（DELETE 吊销等无体请求）
+    headers: body === undefined ? undefined : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const j = (await r.json().catch(() => ({}))) as Record<string, unknown>;
@@ -269,6 +270,41 @@ export async function previewAssetImport(file: File, typeId: string): Promise<As
 export async function confirmAssetImport(body: AssetImportConfirm): Promise<Asset> {
   const j = await requestRaw('POST', '/api/assets/import/confirm', body);
   return j.asset as Asset;
+}
+
+/* ---------- G-07 开放 API（Token / Webhook 管理面，走会话） ---------- */
+
+export async function fetchApiTokens(): Promise<import('./types').ApiToken[]> {
+  const j = await requestRaw('GET', '/api/tokens');
+  return (j.tokens as import('./types').ApiToken[]) ?? [];
+}
+
+export async function fetchWebhooks(): Promise<import('./types').WebhookItem[]> {
+  const j = await requestRaw('GET', '/api/webhooks');
+  return (j.webhooks as import('./types').WebhookItem[]) ?? [];
+}
+
+export async function fetchWebhookDeliveries(
+  webhookId: string,
+): Promise<import('./types').WebhookDelivery[]> {
+  const j = await requestRaw('GET', `/api/webhooks/${webhookId}/deliveries`);
+  return (j.deliveries as import('./types').WebhookDelivery[]) ?? [];
+}
+
+/* ---------- G-09 全局搜索 ---------- */
+
+export async function fetchSearch(
+  q: string,
+  types?: string[],
+): Promise<import('./types').SearchResponse> {
+  const qs = new URLSearchParams();
+  qs.set('q', q);
+  if (types?.length) qs.set('types', types.join(','));
+  const j = await requestRaw('GET', `/api/search?${qs.toString()}`);
+  return {
+    groups: (j.groups as import('./types').SearchResponse['groups']) ?? [],
+    results: (j.results as import('./types').SearchItem[]) ?? [],
+  };
 }
 
 /** G-04 任务过程时间线：步骤流 + 状态流水（执行中轮询增量刷新、已完成即回放，同一接口） */

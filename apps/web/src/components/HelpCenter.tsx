@@ -11,7 +11,7 @@ import openApi from '../content/help/open-api.md?raw';
 const SECTIONS = [
   { id: 'getting-started', label: '快速上手', source: gettingStarted },
   { id: 'faq', label: '高频问题', source: faq },
-  { id: 'open-api', label: '开放 API（预留）', source: openApi },
+  { id: 'open-api', label: '开放 API', source: openApi },
 ] as const;
 
 /**

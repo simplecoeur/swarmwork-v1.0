@@ -1,11 +1,30 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { fetchChannelPushes, fetchChannels, fetchPreferences, putPreference, requestRaw } from '../api';
+import {
+  fetchApiTokens,
+  fetchChannelPushes,
+  fetchChannels,
+  fetchPreferences,
+  fetchWebhookDeliveries,
+  fetchWebhooks,
+  putPreference,
+  requestRaw,
+} from '../api';
 import RegistryCard from './RegistryCard';
 import FeedbackDialog from './FeedbackDialog';
 import { NOTIFICATION_TYPE_LABELS, NOTIFICATION_TYPE_ORDER } from './NotificationBell';
-import { Badge, Button, Input, Select, Spinner, Switch, Textarea, useConfirm } from './ui';
-import type { ApiItem, ChannelInfo, ChannelPush, Member, NotifyPrefs, Team } from '../types';
+import { Badge, Button, Checkbox, Dialog, Input, Select, Spinner, Switch, Textarea, useConfirm } from './ui';
+import type {
+  ApiItem,
+  ApiToken,
+  ChannelInfo,
+  ChannelPush,
+  Member,
+  NotifyPrefs,
+  Team,
+  WebhookDelivery,
+  WebhookItem,
+} from '../types';
 
 const PROVIDERS = ['deepseek', 'openai', 'anthropic', 'custom'];
 const ROLES = ['组长', '研究员', '文案', '程序员', '审核'];
@@ -490,6 +509,8 @@ export default function Settings() {
 
       <ChannelCard />
 
+      <OpenApiCard />
+
       <NotifyPrefsCard />
 
       <div className="card">
@@ -551,6 +572,280 @@ function HelpEntryCard() {
         <Button variant="gray" onClick={() => setFeedbackOpen(true)}>✉️ 意见反馈</Button>
       </div>
       {feedbackOpen && <FeedbackDialog onClose={() => setFeedbackOpen(false)} />}
+    </div>
+  );
+}
+
+/* ---------------- 开放 API（G-07）：Token 列表/新建/吊销 + Webhook 列表/新建/启停/测试投递 ---------------- */
+const WEBHOOK_EVENT_OPTIONS = [
+  { value: 'task.done', label: '任务完成（task.done）' },
+  { value: 'task.adjudication', label: '转待裁决（task.adjudication）' },
+  { value: 'task.failed', label: '任务终局失败（task.failed）' },
+] as const;
+
+function OpenApiCard() {
+  const { post, send, toast } = useApp();
+  const { ask, confirmNode } = useConfirm();
+  const [tokens, setTokens] = useState<ApiToken[]>([]);
+  const [hooks, setHooks] = useState<WebhookItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  // Token 新建表单
+  const [tokenName, setTokenName] = useState('');
+  const [scopeDispatch, setScopeDispatch] = useState(true);
+  const [scopeRead, setScopeRead] = useState(true);
+  const [plainOnce, setPlainOnce] = useState<string | null>(null);
+  // Webhook 新建弹窗
+  const [hookOpen, setHookOpen] = useState(false);
+  const [hookUrl, setHookUrl] = useState('');
+  const [hookSecret, setHookSecret] = useState('');
+  const [hookEvents, setHookEvents] = useState<string[]>(['task.done']);
+  // 某 Webhook 的最近投递
+  const [deliveries, setDeliveries] = useState<Record<string, WebhookDelivery[]>>({});
+
+  const load = useCallback(async () => {
+    try {
+      const [ts, hs] = await Promise.all([fetchApiTokens(), fetchWebhooks()]);
+      setTokens(ts);
+      setHooks(hs);
+    } catch {
+      /* 拉取失败保持旧状态 */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function createToken() {
+    if (!tokenName.trim()) return toast('先给 Token 起个名字（如：Zapier 集成）');
+    const scopes = [
+      ...(scopeDispatch ? ['dispatch'] : []),
+      ...(scopeRead ? ['read'] : []),
+    ];
+    if (!scopes.length) return toast('至少勾选一个权限');
+    let res: Record<string, unknown>;
+    try {
+      res = await post('/api/tokens', { name: tokenName.trim(), scopes });
+    } catch { return; }
+    const created = res.token as { token?: string } | undefined;
+    setPlainOnce(created?.token ?? '');
+    setTokenName('');
+    toast('Token 已创建：明文只显示这一次，请立即保存');
+    await load();
+  }
+
+  function revokeToken(t: ApiToken) {
+    ask({
+      title: '吊销 Token',
+      message: `吊销「${t.name}」（${t.tokenPrefix}…）？吊销后用它调用开放 API 立即返回 401，不可恢复。`,
+      confirmLabel: '吊销',
+      onConfirm: async () => {
+        try {
+          await send('DELETE', `/api/tokens/${t.id}`);
+        } catch { return; }
+        toast('Token 已吊销');
+        await load();
+      },
+    });
+  }
+
+  async function createWebhook() {
+    if (!hookUrl.trim()) return toast('先填 Webhook URL（须 https，内网/元数据地址会被拒绝）');
+    if (!hookEvents.length) return toast('至少订阅一个事件');
+    try {
+      await post('/api/webhooks', {
+        url: hookUrl.trim(),
+        secret: hookSecret.trim() || undefined,
+        events: hookEvents,
+        enabled: true,
+      });
+    } catch { return; }
+    toast('Webhook 已创建');
+    setHookOpen(false);
+    setHookUrl('');
+    setHookSecret('');
+    setHookEvents(['task.done']);
+    await load();
+  }
+
+  async function toggleWebhook(h: WebhookItem, enabled: boolean) {
+    try {
+      await send('PUT', `/api/webhooks/${h.id}`, { enabled });
+    } catch { return; }
+    toast(enabled ? 'Webhook 已启用' : 'Webhook 已停用（停用后不再生成投递）');
+    await load();
+  }
+
+  function deleteWebhook(h: WebhookItem) {
+    ask({
+      title: '删除 Webhook',
+      message: `删除 Webhook「${h.url}」及其投递记录？`,
+      confirmLabel: '删除',
+      onConfirm: async () => {
+        try {
+          await send('DELETE', `/api/webhooks/${h.id}`);
+        } catch { return; }
+        toast('Webhook 已删除');
+        await load();
+      },
+    });
+  }
+
+  async function testWebhook(h: WebhookItem) {
+    let res: Record<string, unknown>;
+    try {
+      res = await post(`/api/webhooks/${h.id}/test`, {});
+    } catch { return; }
+    const d = res.delivery as WebhookDelivery | undefined;
+    toast(
+      d?.status === 'success'
+        ? '测试投递成功：端点已收到 test 事件'
+        : `测试投递${d?.status === 'failed' ? '失败' : '已排队重试'}${d?.lastError ? `：${d.lastError}` : ''}`,
+    );
+    try {
+      const rows = await fetchWebhookDeliveries(h.id);
+      setDeliveries((m) => ({ ...m, [h.id]: rows }));
+    } catch {
+      /* 投递记录拉取失败不影响提示 */
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>
+        开放 API{' '}
+        <span className="tag">
+          用 Token 在外部系统发单/查状态/取成果；任务终态经 Webhook 推送（HMAC 签名）。接口文档见帮助中心「开放 API」章
+        </span>
+      </h2>
+      {!loaded && (
+        <p>
+          <Spinner label="加载中…" />
+        </p>
+      )}
+
+      <label>API Token（明文只在创建时显示一次，服务端只存哈希；吊销立即生效）</label>
+      {loaded && tokens.length === 0 && <p className="hint">还没有 Token。新建一个给你的外部系统用。</p>}
+      {tokens.map((t) => (
+        <div className="task" key={t.id}>
+          <span className="tt">{t.name}</span>{' '}
+          <Badge variant={t.revokedAt ? 'can' : 'run'}>{t.revokedAt ? '已吊销' : '有效'}</Badge>{' '}
+          <Badge>{t.scopes.join(' + ') || '无权限'}</Badge>
+          <div className="meta">
+            前缀 {t.tokenPrefix}… · 创建于 {t.createdAt.slice(0, 16).replace('T', ' ')}
+            {t.lastUsedAt ? ` · 最近使用 ${t.lastUsedAt.slice(0, 16).replace('T', ' ')}` : ' · 尚未使用'}
+            {t.revokedAt ? ` · 吊销于 ${t.revokedAt.slice(0, 16).replace('T', ' ')}` : ''}
+          </div>
+          {!t.revokedAt && (
+            <div style={{ marginTop: 6 }}>
+              <Button size="small" variant="gray" onClick={() => revokeToken(t)}>
+                吊销
+              </Button>
+            </div>
+          )}
+        </div>
+      ))}
+      <div className="row" style={{ marginTop: 8 }}>
+        <div>
+          <label>新 Token 名称</label>
+          <Input value={tokenName} placeholder="如：Zapier 集成" onChange={(e) => setTokenName(e.target.value)} />
+        </div>
+        <div>
+          <label>权限</label>
+          <div style={{ display: 'flex', gap: 14, paddingTop: 8 }}>
+            <Checkbox checked={scopeDispatch} onCheckedChange={setScopeDispatch} label="发单 dispatch" />
+            <Checkbox checked={scopeRead} onCheckedChange={setScopeRead} label="查询 read" />
+          </div>
+        </div>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <Button size="small" variant="blue" onClick={createToken}>
+          ＋ 新建 Token
+        </Button>
+      </div>
+
+      <label style={{ marginTop: 16 }}>Webhook（任务终态事件推送到你的服务；secret 加密保存、只显示掩码）</label>
+      {loaded && hooks.length === 0 && <p className="hint">还没有 Webhook。新建一个，把任务完成/待裁决/失败事件推到你的系统。</p>}
+      {hooks.map((h) => (
+        <div className="task" key={h.id}>
+          <span className="tt" style={{ overflowWrap: 'anywhere' }}>{h.url}</span>{' '}
+          <Badge variant={h.enabled ? 'run' : 'can'}>{h.enabled ? '启用中' : '已停用'}</Badge>
+          <div className="meta">
+            订阅：{h.events.join('、') || '（无）'} · 签名密钥 {h.hasSecret ? h.secretMasked : '（未设置）'} · 创建于{' '}
+            {h.createdAt.slice(0, 16).replace('T', ' ')}
+          </div>
+          <div style={{ marginTop: 6, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Switch checked={h.enabled} onCheckedChange={(on) => toggleWebhook(h, on)} ariaLabel="Webhook 启停" />
+            <span className="hint">{h.enabled ? '开' : '关'}</span>
+            <Button size="small" variant="gray" onClick={() => testWebhook(h)}>
+              测试投递
+            </Button>
+            <Button size="small" variant="gray" onClick={() => deleteWebhook(h)}>
+              删除
+            </Button>
+          </div>
+          {(deliveries[h.id] ?? []).length > 0 && (
+            <div className="meta" style={{ marginTop: 6 }}>
+              最近投递：
+              {(deliveries[h.id] ?? []).slice(0, 5).map((d) => (
+                <div key={d.id}>
+                  {d.createdAt.slice(0, 16).replace('T', ' ')} · {d.event} · {d.status}（尝试 {d.attempts} 次）
+                  {d.lastError ? ` · ${d.lastError}` : ''}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+      <div style={{ marginTop: 8 }}>
+        <Button size="small" variant="blue" onClick={() => setHookOpen(true)}>
+          ＋ 新建 Webhook
+        </Button>
+      </div>
+
+      <Dialog open={hookOpen} onClose={() => setHookOpen(false)} title="新建 Webhook">
+        <label>接收地址 URL（仅 https；本机/内网/云元数据地址会被 SSRF 守卫拒绝）</label>
+        <Input value={hookUrl} placeholder="https://hooks.example.com/swarm" onChange={(e) => setHookUrl(e.target.value)} />
+        <label style={{ marginTop: 10 }}>签名密钥 secret（留空自动生成；投递时用它算 HMAC 签名头 X-Swarm-Signature）</label>
+        <Input value={hookSecret} placeholder="留空自动生成" onChange={(e) => setHookSecret(e.target.value)} />
+        <label style={{ marginTop: 10 }}>订阅事件</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {WEBHOOK_EVENT_OPTIONS.map((o) => (
+            <Checkbox
+              key={o.value}
+              checked={hookEvents.includes(o.value)}
+              onCheckedChange={(on) =>
+                setHookEvents((es) => (on ? [...es, o.value] : es.filter((x) => x !== o.value)))
+              }
+              label={o.label}
+            />
+          ))}
+        </div>
+        <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>
+          <Button variant="blue" onClick={createWebhook}>
+            创建
+          </Button>
+          <Button variant="gray" onClick={() => setHookOpen(false)}>
+            取消
+          </Button>
+        </div>
+      </Dialog>
+
+      <Dialog open={plainOnce !== null} onClose={() => setPlainOnce(null)} title="Token 明文（只显示一次）">
+        <p className="hint">
+          这是新 Token 的明文，关闭后任何页面都不再显示（服务端只存哈希）。调用时放在请求头
+          Authorization: Bearer &lt;token&gt;。
+        </p>
+        <pre className="result" style={{ overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{plainOnce}</pre>
+        <div style={{ marginTop: 12 }}>
+          <Button variant="blue" onClick={() => setPlainOnce(null)}>
+            我已保存，关闭
+          </Button>
+        </div>
+      </Dialog>
+      {confirmNode}
     </div>
   );
 }

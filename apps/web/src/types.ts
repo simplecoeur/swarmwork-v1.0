@@ -2,6 +2,8 @@
 // 此处只做别名映射，保持各组件既有引用名不变；DTO 的唯一事实来源在 packages/shared。
 import type {
   ApiDto,
+  ApiTokenCreatedDto,
+  ApiTokenDto,
   AssetContentDto,
   AssetDto,
   AssetImportConfirmDto,
@@ -33,6 +35,8 @@ import type {
   RegistryRoleDto,
   RegistryTaskTypeDto,
   ReviewStandardsDto,
+  SearchResponseDto,
+  SearchResultItemDto,
   SkillDto,
   SkillInputFieldDto,
   SkillKbBindingDto,
@@ -41,6 +45,8 @@ import type {
   TaskStepDto,
   TaskTimelineDto,
   TeamDto,
+  WebhookDeliveryDto,
+  WebhookDto,
   WorkspaceDto,
 } from '@swarm/shared';
 
@@ -104,7 +110,7 @@ export interface TrialApi {
 
 export type Presets = Record<string, { baseUrl: string; model: string }>;
 
-export type TabKey = 'office' | 'cost' | 'settings' | 'kb' | 'admin' | 'skills' | 'assets' | 'help';
+export type TabKey = 'office' | 'cost' | 'settings' | 'kb' | 'admin' | 'skills' | 'assets' | 'help' | 'search';
 
 /* ---------- G-06 文件导入 ---------- */
 export type KbImportDraft = KbImportDraftDto;
@@ -112,6 +118,14 @@ export type KbImportPreview = KbImportPreviewDto;
 export type KbImportConfirm = KbImportConfirmDto;
 export type AssetImportPreview = AssetImportPreviewDto;
 export type AssetImportConfirm = AssetImportConfirmDto;
+
+/* ---------- G-07/G-09（v1.2.0 批次二） ---------- */
+export type ApiToken = ApiTokenDto;
+export type ApiTokenCreated = ApiTokenCreatedDto;
+export type WebhookItem = WebhookDto;
+export type WebhookDelivery = WebhookDeliveryDto;
+export type SearchItem = SearchResultItemDto;
+export type SearchResponse = SearchResponseDto;
 
 /* ---------- G-02/G-03/G-05/G-08（v1.2.0 批次一） ---------- */
 export type Capabilities = CapabilitiesDto;
