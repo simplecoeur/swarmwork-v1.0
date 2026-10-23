@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { KB_SCOPES, PROVIDERS } from '@swarm/shared';
+import { IMPORT_LIMITS, KB_SCOPES, PROVIDERS } from '@swarm/shared';
 
 /** 入参 zod 校验（设计 §7：校验失败不进 domain） */
 export const apiSaveSchema = z.object({
@@ -383,4 +383,44 @@ export const feedbackHandleSchema = z.object({
 /** 低余额阈值设置：以元提交（null = 清除显式设置，回落默认口径：最近一笔采购额/体验发放额的 20%） */
 export const costSettingsSchema = z.object({
   lowBalanceThresholdYuan: z.number().min(0).nullable(),
+});
+
+/* ---------- G-06 文件导入 confirm（preview 走 multipart，不经 zod） ---------- */
+
+/**
+ * KB 导入 confirm：drafts 上限 500 在此整体校验（超限 VALIDATION 且零落库）；
+ * 单条 title/body 不在此设 min —— 逐条走创建路径校验、逐条回成败（见 v120 路由）。
+ */
+export const kbImportConfirmSchema = z.object({
+  filename: z.string().max(300).optional(),
+  scope: z.enum(KB_SCOPES).default('company'),
+  scopeId: z.string().nullable().optional(),
+  drafts: z
+    .array(
+      z.object({
+        title: z.string().default(''),
+        body: z.string().default(''),
+        tags: z.array(z.string()).default([]),
+      }),
+    )
+    .min(1, '没有可导入的条目草案')
+    .max(IMPORT_LIMITS.MAX_KB_DRAFTS, 'KB 单次导入最多 500 条，请拆分文件分批导入'),
+});
+
+/** 资产导入 confirm：sections 上限 200 整体校验（超限 VALIDATION 且零落库）；资产为单行创建，字段在此收紧 */
+export const assetImportConfirmSchema = z.object({
+  filename: z.string().max(300).optional(),
+  name: z.string().trim().min(1, '资产名必填'),
+  typeId: z.string().trim().min(1, '资产类型必填'),
+  summary: z.string().default(''),
+  sections: z
+    .array(
+      z.object({
+        key: z.string().trim().min(1, '分段 key 必填'),
+        title: z.string().default(''),
+        body: z.string().default(''),
+      }),
+    )
+    .min(1, '没有可导入的分段草案')
+    .max(IMPORT_LIMITS.MAX_ASSET_SECTIONS, '资产单次导入最多 200 个分段，请拆分文件分批导入'),
 });

@@ -1,6 +1,43 @@
 import { KB_INJECTION} from '@swarm/shared';
 import { estimateTokens} from '../llm/parse';
-import type { KbRow} from '../store/repositories';
+import type { KbRow, Repos} from '../store/repositories';
+import { nowIso, uid} from '../util';
+
+/**
+ * 条目创建的统一落库口径（手建 POST /api/kb 与 G-06 文件导入 confirm 共用同一行形）：
+ * scope/scopeId/workspace/owner 的归一化由调用方按路由层口径完成，本函数只负责组行 + 落库。
+ */
+export interface CreateKbEntryInput {
+title: string;
+body: string;
+/** 已归一化的 scope（member 已折算为 personal） */
+scope: string;
+scopeId: string | null;
+tags: string[];
+enabled: boolean;
+/** platform 条目为 null，其余为当前空间 */
+workspaceId: string | null;
+ownerUserId: string | null;
+}
+
+export function createKbEntry(repos: Repos, input: CreateKbEntryInput): KbRow {
+const ts = nowIso();
+const row: KbRow = {
+id: uid('kb'),
+title: input.title,
+body: input.body,
+scope: input.scope,
+scope_id: input.scopeId,
+tags: JSON.stringify(input.tags),
+enabled: input.enabled? 1: 0,
+created_at: ts,
+updated_at: ts,
+workspace_id: input.workspaceId,
+owner_user_id: input.ownerUserId,
+};
+repos.insertKb(row);
+return row;
+}
 
 /**
 * 知识库检索与注入组装（设计 §10 + §15.1，一期关键词方案，向量检索在二期）：

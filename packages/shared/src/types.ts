@@ -440,6 +440,54 @@ export interface NotificationDto {
   createdAt: string;
 }
 
+/* ---------- G-06 知识 / 资产文件导入（两段式：先预览后落库） ---------- */
+
+/** KB 导入条目草案（preview 返回、confirm 入参共用）：tags 已解析为数组 */
+export interface KbImportDraftDto {
+  title: string;
+  body: string;
+  tags: string[];
+}
+
+/** POST /api/kb/import/preview 响应体（只解析、不落库） */
+export interface KbImportPreviewDto {
+  filename: string;
+  drafts: KbImportDraftDto[];
+}
+
+/** POST /api/kb/import/confirm 入参：逐条走现有 KB 创建路径，scope/scopeId 口径与手建一致 */
+export interface KbImportConfirmDto {
+  filename?: string;
+  scope: KbScope;
+  scopeId?: string | null;
+  drafts: KbImportDraftDto[];
+}
+
+/** KB 导入 confirm 的逐条结果（失败条目带原因，其余条目照常落库） */
+export interface KbImportItemResultDto {
+  index: number;
+  title: string;
+  ok: boolean;
+  id?: string;
+  error?: string;
+}
+
+/** POST /api/assets/import/preview 响应体：name 由文件名去扩展名推导，可在 confirm 时改 */
+export interface AssetImportPreviewDto {
+  filename: string;
+  name: string;
+  sections: AssetSectionDto[];
+}
+
+/** POST /api/assets/import/confirm 入参：走现有资产创建路径（生成资产 + v1 版本快照） */
+export interface AssetImportConfirmDto {
+  filename?: string;
+  name: string;
+  typeId: string;
+  summary?: string;
+  sections: AssetSectionDto[];
+}
+
 /* ---------- G-02 / G-03 用户偏好（user_preferences，GET/PUT /api/preferences） ---------- */
 
 /**

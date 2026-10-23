@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import fastifyMultipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import * as fs from 'fs';
 import { ErrorCode } from '@swarm/shared';
@@ -27,6 +28,12 @@ export async function buildApp(deps: ApiDeps, staticDir: string, logger: Logger)
     }
     logger.error('api', `未处理异常：${e.message}`);
     return reply.status(500).send({ ok: false, error: { code: ErrorCode.INTERNAL, message: e.message } });
+  });
+
+  // 文件上传（G-06 导入）：插件上限放宽到 16MB 以便路由层对 5MB 业务上限回统一的 VALIDATION
+  // 并说明（见 domain/importService 与 IMPORT_LIMITS）；单请求只收 1 个文件。
+  await app.register(fastifyMultipart, {
+    limits: { fileSize: 16 * 1024 * 1024, files: 1, fields: 16 },
   });
 
   registerRoutes(app, deps);

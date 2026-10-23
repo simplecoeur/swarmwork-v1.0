@@ -64,6 +64,13 @@ export type LedgerStage = (typeof LEDGER_STAGES)[number];
 export const KB_SCOPES = ['company', 'team', 'member', 'personal', 'platform'] as const;
 export type KbScope = string;
 
+/** 文件导入上限（G-06）：单文件字节数 / KB 单次条数 / 资产单次分段数；超限回 VALIDATION 且零落库 */
+export const IMPORT_LIMITS = {
+  MAX_FILE_BYTES: 5 * 1024 * 1024,
+  MAX_KB_DRAFTS: 500,
+  MAX_ASSET_SECTIONS: 200,
+} as const;
+
 /** 知识库注入护栏（§10 + §15.1 上下文裁剪口径） */
 export const KB_INJECTION = {
   /** 有单任务预算时：注入总量上限 = 剩余预算 × 此比例 */
