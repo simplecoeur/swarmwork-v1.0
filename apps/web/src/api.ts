@@ -119,14 +119,67 @@ export async function fetchAssets(): Promise<Asset[]> {
 export interface NotificationsResult {
   notifications: AppNotification[];
   unread: number;
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
-export async function fetchNotifications(): Promise<NotificationsResult> {
-  const j = await requestRaw('GET', '/api/notifications');
+/** G-03：通知分页 + 按 type 过滤；无参数 = 第一页（服务端默认 20 条） */
+export async function fetchNotifications(opts?: {
+  type?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<NotificationsResult> {
+  const qs = new URLSearchParams();
+  if (opts?.type) qs.set('type', opts.type);
+  if (opts?.page) qs.set('page', String(opts.page));
+  if (opts?.pageSize) qs.set('pageSize', String(opts.pageSize));
+  const s = qs.toString();
+  const j = await requestRaw('GET', '/api/notifications' + (s ? `?${s}` : ''));
   return {
     notifications: (j.notifications as AppNotification[]) ?? [],
     unread: Number(j.unread ?? 0),
+    total: Number(j.total ?? 0),
+    page: Number(j.page ?? 1),
+    pageSize: Number(j.pageSize ?? 20),
   };
+}
+
+/* ---------- G-02/G-03 偏好（onboarding / notifyPrefs 走 GET/PUT /api/preferences） ---------- */
+
+export async function fetchPreferences(): Promise<Record<string, unknown>> {
+  const j = await requestRaw('GET', '/api/preferences');
+  return (j.preferences as Record<string, unknown>) ?? {};
+}
+
+export async function putPreference(key: string, value: unknown): Promise<void> {
+  await requestRaw('PUT', '/api/preferences', { key, value });
+}
+
+/* ---------- G-08 预估 / 摘要 / 阈值 ---------- */
+
+export async function fetchCostEstimate(opts?: {
+  type?: string;
+  skillId?: string;
+}): Promise<import('./types').CostEstimate> {
+  const qs = new URLSearchParams();
+  if (opts?.type) qs.set('type', opts.type);
+  if (opts?.skillId) qs.set('skillId', opts.skillId);
+  const s = qs.toString();
+  const j = await requestRaw('GET', '/api/cost/estimate' + (s ? `?${s}` : ''));
+  return j.estimate as import('./types').CostEstimate;
+}
+
+export interface CostSettingsResult {
+  lowBalanceThresholdYuan: number | null;
+  effectiveThresholdYuan: number | null;
+  summary: import('./types').CostSummary;
+}
+
+export async function fetchCostSettings(): Promise<CostSettingsResult> {
+  const j = await requestRaw('GET', '/api/cost/settings');
+  const s = j.settings as { lowBalanceThresholdYuan: number | null; effectiveThresholdYuan: number | null };
+  return { ...s, summary: j.summary as import('./types').CostSummary };
 }
 
 /** 成果库（飞轮）：q 关键词 / verifiedOnly 只看已验证有效 */

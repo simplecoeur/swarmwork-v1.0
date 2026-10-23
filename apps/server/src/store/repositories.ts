@@ -334,6 +334,20 @@ export interface NotificationRow {
   created_at: string;
 }
 
+/* ----- G-05 用户反馈（feedback，迁移 009） ----- */
+export interface FeedbackRow {
+  id: number;
+  user_id: string;
+  workspace_id: string | null;
+  category: string;
+  content: string;
+  contact: string | null;
+  status: string;
+  admin_note: string | null;
+  created_at: string;
+  handled_at: string | null;
+}
+
 /* ----- G-04 任务步骤（task_steps，迁移 008） ----- */
 export interface TaskStepRow {
   id: number;
@@ -1277,6 +1291,23 @@ export class Repos {
       .prepare('SELECT * FROM notifications WHERE workspace_id = ? ORDER BY id DESC LIMIT ?')
       .all(workspaceId, limit) as unknown as NotificationRow[];
   }
+  /** G-03：通知分页 + 按 type 过滤（page 从 1 起）；返回当页行与过滤后总数 */
+  listNotificationsPaged(
+    workspaceId: string,
+    opts: { type?: string; page?: number; pageSize?: number } = {},
+  ): { rows: NotificationRow[]; total: number } {
+    const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 20));
+    const page = Math.max(1, opts.page ?? 1);
+    const where = opts.type ? 'workspace_id = ? AND type = ?' : 'workspace_id = ?';
+    const args: Array<string | number> = opts.type ? [workspaceId, opts.type] : [workspaceId];
+    const total = (
+      this.db.prepare(`SELECT COUNT(*) AS c FROM notifications WHERE ${where}`).get(...args) as { c: number }
+    ).c;
+    const rows = this.db
+      .prepare(`SELECT * FROM notifications WHERE ${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
+      .all(...args, pageSize, (page - 1) * pageSize) as unknown as NotificationRow[];
+    return { rows, total };
+  }
   countUnreadNotifications(workspaceId: string): number {
     const r = this.db
       .prepare('SELECT COUNT(*) AS c FROM notifications WHERE workspace_id = ? AND read_at IS NULL')
@@ -1359,6 +1390,82 @@ export class Repos {
         id,
       );
   }
+  /* ----- 反馈（G-05，迁移 009）：只落库 + 管理台可见，不做工单流转 ----- */
+  insertFeedback(row: Omit<FeedbackRow, 'id'>): number {
+    const r = this.db
+      .prepare(
+        `INSERT INTO feedback (user_id, workspace_id, category, content, contact, status, admin_note, created_at, handled_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.user_id, row.workspace_id, row.category, row.content, row.contact, row.status,
+        row.admin_note, row.created_at, row.handled_at,
+      );
+    return Number(r.lastInsertRowid);
+  }
+  getFeedback(id: number): FeedbackRow | undefined {
+    return this.db.prepare('SELECT * FROM feedback WHERE id = ?').get(id) as unknown as FeedbackRow | undefined;
+  }
+  /** 管理台列表：分页 + 按 status 过滤 */
+  listFeedback(opts: { status?: string; page?: number; pageSize?: number } = {}): { rows: FeedbackRow[]; total: number } {
+    const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 20));
+    const page = Math.max(1, opts.page ?? 1);
+    const where = opts.status ? 'status = ?' : '1 = 1';
+    const args: Array<string | number> = opts.status ? [opts.status] : [];
+    const total = (
+      this.db.prepare(`SELECT COUNT(*) AS c FROM feedback WHERE ${where}`).get(...args) as { c: number }
+    ).c;
+    const rows = this.db
+      .prepare(`SELECT * FROM feedback WHERE ${where} ORDER BY id DESC LIMIT ? OFFSET ?`)
+      .all(...args, pageSize, (page - 1) * pageSize) as unknown as FeedbackRow[];
+    return { rows, total };
+  }
+  /** 频率限制口径：同用户 since 之后提交的反馈条数（POST /api/feedback 10 分钟 ≤5 条） */
+  countFeedbackSince(userId: string, sinceIso: string): number {
+    const r = this.db
+      .prepare('SELECT COUNT(*) AS c FROM feedback WHERE user_id = ? AND created_at >= ?')
+      .get(userId, sinceIso) as { c: number };
+    return r.c;
+  }
+  markFeedbackHandled(id: number, adminNote: string | null): void {
+    this.db
+      .prepare("UPDATE feedback SET status = 'handled', admin_note = ?, handled_at = ? WHERE id = ?")
+      .run(adminNote, now(), id);
+  }
+
+  /**
+   * G-08 预估聚合：近 since 后 ledger 按任务汇总成本（仅真实任务行；
+   * 记在项目 id 上的拆单行无 tasks 行、不计入单均口径）。
+   */
+  ledgerTaskCosts(
+    workspaceId: string,
+    sinceIso: string,
+  ): Array<{ taskId: string; skillId: string | null; type: string; costMilli: number }> {
+    return this.db
+      .prepare(
+        `SELECT l.task_id AS taskId, t.skill_id AS skillId, t.type AS type,
+           COALESCE(SUM(l.cost_milli),0) AS costMilli
+         FROM ledger_entries l JOIN tasks t ON t.id = l.task_id
+         WHERE l.workspace_id = ? AND l.created_at >= ?
+         GROUP BY l.task_id`,
+      )
+      .all(workspaceId, sinceIso) as unknown as Array<{
+      taskId: string;
+      skillId: string | null;
+      type: string;
+      costMilli: number;
+    }>;
+  }
+  /** 最近一笔自有采购额（厘，type='purchase'，按 id 倒序）；无采购史返回 null（G-08 默认阈值口径） */
+  latestPurchaseMilli(workspaceId: string): number | null {
+    const r = this.db
+      .prepare(
+        "SELECT amount_milli AS s FROM purchases WHERE workspace_id = ? AND type = 'purchase' ORDER BY id DESC LIMIT 1",
+      )
+      .get(workspaceId) as { s: number } | undefined;
+    return r ? r.s : null;
+  }
+
   /** 按插入顺序（id 升序 = 时间顺序）取某任务全部步骤 */
   listTaskSteps(taskId: string): TaskStepRow[] {
     return this.db

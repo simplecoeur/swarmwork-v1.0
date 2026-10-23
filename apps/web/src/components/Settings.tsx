@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { fetchChannelPushes, fetchChannels, requestRaw } from '../api';
+import { fetchChannelPushes, fetchChannels, fetchPreferences, putPreference, requestRaw } from '../api';
 import RegistryCard from './RegistryCard';
-import { Badge, Button, Input, Select, Spinner, Textarea, useConfirm } from './ui';
-import type { ApiItem, ChannelInfo, ChannelPush, Member, Team } from '../types';
+import FeedbackDialog from './FeedbackDialog';
+import { NOTIFICATION_TYPE_LABELS, NOTIFICATION_TYPE_ORDER } from './NotificationBell';
+import { Badge, Button, Input, Select, Spinner, Switch, Textarea, useConfirm } from './ui';
+import type { ApiItem, ChannelInfo, ChannelPush, Member, NotifyPrefs, Team } from '../types';
 
 const PROVIDERS = ['deepseek', 'openai', 'anthropic', 'custom'];
 const ROLES = ['组长', '研究员', '文案', '程序员', '审核'];
@@ -488,6 +490,8 @@ export default function Settings() {
 
       <ChannelCard />
 
+      <NotifyPrefsCard />
+
       <div className="card">
         <h2>运行参数</h2>
         <div className="row">
@@ -529,7 +533,88 @@ export default function Settings() {
           </a>
         </div>
       </div>
+
+      <HelpEntryCard />
     </>
+  );
+}
+
+/* ---------------- 帮助与反馈入口（G-05：设置页进帮助中心/反馈） ---------------- */
+function HelpEntryCard() {
+  const { setTab } = useApp();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  return (
+    <div className="card">
+      <h2>帮助与反馈 <span className="tag">使用说明、高频问题都在帮助中心；意见与问题可直接留言给平台</span></h2>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button variant="blue" onClick={() => setTab('help')}>打开帮助中心</Button>
+        <Button variant="gray" onClick={() => setFeedbackOpen(true)}>✉️ 意见反馈</Button>
+      </div>
+      {feedbackOpen && <FeedbackDialog onClose={() => setFeedbackOpen(false)} />}
+    </div>
+  );
+}
+
+/* ---------------- 通知偏好（G-03）：notifyPrefs 站内逐类型开关（邮件开关暂缓，不展示） ---------------- */
+function NotifyPrefsCard() {
+  const { toast } = useApp();
+  const [prefs, setPrefs] = useState<NotifyPrefs>({ inapp: {} });
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const all = await fetchPreferences();
+      const raw = all.notifyPrefs as NotifyPrefs | undefined;
+      setPrefs({ inapp: raw?.inapp ?? {}, mail: raw?.mail });
+    } catch {
+      /* 保持默认全开 */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function toggle(type: string, on: boolean) {
+    const next: NotifyPrefs = {
+      inapp: { ...prefs.inapp, [type]: on },
+      // mail 字段位原样保留（邮件通道暂缓，本卡不展示邮件开关）
+      mail: prefs.mail,
+    };
+    setPrefs(next);
+    try {
+      await putPreference('notifyPrefs', next);
+      toast(on ? '该类通知已开启' : '该类通知已关闭（之后同类事件不再生成站内通知）');
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+      load();
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>通知偏好 <span className="tag">站内通知逐类型开关，关掉后同类事件不再落通知；邮件通知待邮箱通道接入后开放</span></h2>
+      {!loaded && <p><Spinner label="加载中…" /></p>}
+      {NOTIFICATION_TYPE_ORDER.map((t) => (
+        <div
+          key={t}
+          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderTop: '2px dashed var(--line)' }}
+        >
+          <span style={{ flex: 1, fontSize: 13.5, fontWeight: 700 }}>
+            {NOTIFICATION_TYPE_LABELS[t] ?? t}
+            <span className="hint" style={{ marginLeft: 8 }}>{t}</span>
+          </span>
+          <Switch
+            checked={prefs.inapp[t] !== false}
+            onCheckedChange={(on) => toggle(t, on)}
+            ariaLabel={`${NOTIFICATION_TYPE_LABELS[t] ?? t}站内通知开关`}
+          />
+          <span className="hint">{prefs.inapp[t] !== false ? '开' : '关'}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
