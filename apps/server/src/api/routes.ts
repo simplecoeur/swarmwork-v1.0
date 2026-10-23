@@ -1176,6 +1176,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
         type: body.type,
         brief,
         references: body.references,
+        assetRefs: body.assetRefs,
         teamId: body.teamId,
         projectId: body.projectId ?? null,
       });

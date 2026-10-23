@@ -108,6 +108,8 @@ export const taskBatchSchema = z.object({
   type: z.string().trim().min(1).default('文案'),
   briefSuffix: z.string().default(''),
   references: z.string().optional(),
+  /** 资产引用（M8 §11.4）：批量各单共用同一组引用，逐单发单时按当前版本落快照 */
+  assetRefs: z.array(assetRefSchema).optional(),
   teamId: z.string().min(1),
   projectId: z.string().nullable().optional(),
 });

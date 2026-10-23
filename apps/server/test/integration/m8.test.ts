@@ -246,6 +246,60 @@ content: { sections: [{ key: 'ep1', title: '第1集', body: 'EP1BODYZZQ 第三�
 const again = (await clientF.get(`/api/tasks/${task.json.id}`)).json.task;
 expect(again.injectedAssets).toContain(`${assetId}@2`);
 });
+
+it('批量发单带 assetRefs：每单落快照、版本锁定、按快照注入', async () => {
+/* 独立资产（v1），不与前一用例的版本状态耦合 */
+const created = await clientF.post('/api/assets', {
+asset: {
+typeId: '剧本',
+name: '批量测试剧本',
+content: {
+sections: [
+{ key: 'ep1', title: '第1集', body: 'BATCHEPZZQ 批量剧本第一集正文'},
+{ key: 'ep2', title: '第2集', body: 'BATCHEP2ZZQ 批量剧本第二集正文'},
+],
+},
+},
+});
+expect(created.json.ok).toBe(true);
+const batchAssetId = created.json.id as string;
+expect(created.json.asset.version).toBe(1);
+
+const batch = await clientF.post('/api/tasks/batch', {
+items: [{ title: '批量钩子一'}, { title: '批量钩子二'}],
+type: '文案',
+briefSuffix: '依据剧本第一集写钩子',
+teamId: teamF,
+assetRefs: [{ assetId: batchAssetId, sections: ['ep1']}],
+});
+expect(batch.json.ok).toBe(true);
+expect(batch.json.count).toBe(2);
+const ids = batch.json.ids as string[];
+expect(ids).toHaveLength(2);
+
+/* 每单都落了 task_asset_refs 快照并按 @1 注入（只含 ep1、不含 ep2） */
+for (const id of ids) {
+const done = await waitTaskDone(clientF, id);
+expect(done.injectedAssets).toContain(`${batchAssetId}@1`);
+}
+const reqs = await mockRequests();
+const hits = reqs.filter((r) => r.kind === 'chat' && r.user.includes('BATCHEPZZQ'));
+expect(hits.length).toBeGreaterThanOrEqual(2);
+for (const h of hits) expect(h.user).not.toContain('BATCHEP2ZZQ');
+
+/* 资产升 v2 后，批量历史单的注入记录仍锁定 @1 */
+await clientF.put(`/api/assets/${batchAssetId}`, {
+asset: {
+typeId: '剧本',
+name: '批量测试剧本',
+content: { sections: [{ key: 'ep1', title: '第1集', body: 'BATCHEPZZQ 批量剧本修订版'}]},
+},
+});
+for (const id of ids) {
+const t = (await clientF.get(`/api/tasks/${id}`)).json.task;
+expect(t.injectedAssets).toContain(`${batchAssetId}@1`);
+}
+});
 });
 
 describe('M8 数据飞轮 + 成果库', () => {
