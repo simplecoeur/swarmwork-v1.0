@@ -422,7 +422,8 @@ header{ flex-wrap:wrap; }
 
   /* ---- 通用单列：.row 子项全宽堆叠、.kv 两列 ---- */
   .row{ flex-wrap:wrap; }
-  .row > *{ flex:1 1 100%; }
+  /* !important：压过 PublishForm/Standards 卡片上的内联 flex（桌面配比），仅移动端 */
+  .row > *{ flex:1 1 100% !important; }
   .kv div{ flex:1 1 42%; min-width:0; }
 
   /* ---- 顶栏：桌面 nav 隐藏；品牌行 + 第二行空间切换 ---- */
