@@ -221,7 +221,18 @@ export default function KnowledgeBase() {
           </div>
         );
       })}
-      {!visible.length && <EmptyState>暂无知识条目。点「新建条目」添加公司标准、小组资料，或在成果列表把已完成成果一键存入。</EmptyState>}
+      {!visible.length && (
+        <EmptyState
+          example={<>示例条目：《频道标题公式》公司级 · 标签：标题，钩子 · 正文写清可复用的公式与禁忌</>}
+          action={
+            <Button size="small" onClick={startCreate}>
+              ＋ 新建条目
+            </Button>
+          }
+        >
+          暂无知识条目。添加公司标准、小组资料后，成员干活时会自动参考命中的条目；也可以在成果库把已完成成果一键存入。
+        </EmptyState>
+      )}
       {confirmNode}
     </div>
   );

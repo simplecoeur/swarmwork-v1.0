@@ -139,7 +139,18 @@ export default function Assets() {
           <Button onClick={startCreate}>＋ 新建资产</Button>{' '}
           <Button variant="gray" onClick={load}>刷新</Button>
         </div>
-        {loaded && assets.length === 0 && <EmptyState>暂无资产。新建一份（如剧目档案、品牌手册），发单时引用给干活的成员当参考。</EmptyState>}
+        {loaded && assets.length === 0 && (
+          <EmptyState
+            example={<>示例资产：《龙王归来》剧目档案 v1 · 分段：ep1 梗概 / ep2 梗概 / 人物小传</>}
+            action={
+              <Button size="small" onClick={startCreate}>
+                ＋ 新建资产
+              </Button>
+            }
+          >
+            暂无资产。新建一份（如剧目档案、品牌手册），发单时引用给干活的成员当参考，引用会按当时版本落快照。
+          </EmptyState>
+        )}
         {assets.map((a) => (
           <div className="task" key={a.id}>
             <span className="tt">{a.name}</span>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../context';
 import PixelOffice from './PixelOffice';
+import { CapabilitiesShelf, OnboardingCard } from './Onboarding';
 import { Button, Input, Textarea } from './ui';
 
 function MemberEditor({ memberId, onClose }: { memberId: string; onClose: () => void }) {
@@ -61,7 +62,10 @@ export default function Office() {
     document.getElementById('taskwall-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
   return (
-    <div className="card office-card">
+    <>
+      {/* G-02：新手三步卡（顶部）+ 能力货架（画布下方新区块，画布本身不碰） */}
+      <OnboardingCard />
+      <div className="card office-card">
       <h2>
         🐝 办公室实况{' '}
         <span className="tag">像素办公室 · 小人状态由真实任务驱动 · 点小人可改他的专属提示词</span>
@@ -80,6 +84,8 @@ export default function Office() {
         </button>
       </div>
       {editingId && <MemberEditor memberId={editingId} onClose={() => setEditingId(null)} />}
-    </div>
+      </div>
+      <CapabilitiesShelf />
+    </>
   );
 }

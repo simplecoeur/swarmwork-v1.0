@@ -407,6 +407,49 @@ header{ flex-wrap:wrap; }
 .ui-field{ display:block; }
 .ui-field-label{ font-size:12.5px; color:var(--ink-soft); font-weight:700; display:block; margin:8px 0 4px; }
 .ui-field-error{ color:var(--accent); font-size:12.5px; font-weight:800; margin-top:4px; line-height:1.6; }
+/* Stepper（G-02 组件层补建）：横排步骤条，完成= teal、当前=品牌红描边、待办=灰字 */
+.ui-stepper{ display:flex; gap:6px; list-style:none; margin:0 0 10px; padding:0; flex-wrap:wrap; }
+.ui-stepper-item{ flex:1; min-width:150px; }
+.ui-stepper-btn{
+  width:100%; display:flex; gap:8px; align-items:flex-start; text-align:left; font:inherit;
+  background:var(--panel2); color:var(--ink); border:2px solid var(--line); padding:8px 10px;
+  cursor:pointer; border-radius:0; box-shadow:var(--shadow-sm);
+}
+.ui-stepper-btn:active{ transform:translate(2px,2px); box-shadow:none; }
+.ui-stepper-item--current .ui-stepper-btn{ border:3px solid var(--accent); background:var(--panel); }
+.ui-stepper-item--todo .ui-stepper-btn{ opacity:.75; }
+.ui-stepper-dot{
+  flex:0 0 auto; width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center;
+  border:2px solid var(--line); background:var(--panel); font-size:12px; font-weight:900;
+}
+.ui-stepper-item--done .ui-stepper-dot{ background:var(--teal); color:#fff; }
+.ui-stepper-item--current .ui-stepper-dot{ background:var(--accent); color:var(--accent-ink); }
+.ui-stepper-text{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+.ui-stepper-label{ font-size:13px; font-weight:900; }
+.ui-stepper-desc{ font-size:12px; color:var(--ink-soft); line-height:1.5; overflow-wrap:anywhere; }
+/* EmptyState 示例预览（G-02 三件套） */
+.ui-empty-example{
+  margin-top:8px; border:2px solid var(--line); background:var(--panel); padding:8px 10px;
+  font-size:12.5px; color:var(--ink); overflow-wrap:anywhere;
+}
+/* G-02 能力货架：成员/技能卡网格（画布下方区块，桌面多列、移动单列见移动段） */
+.shelf-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; }
+.shelf-card{ border:2px solid var(--line); background:var(--panel2); padding:10px 12px; box-shadow:var(--shadow-sm); }
+.shelf-card .tt{ font-weight:900; font-size:13.5px; overflow-wrap:anywhere; }
+.shelf-card .meta{ font-size:12.5px; color:var(--ink-soft); line-height:1.6; margin-top:4px; overflow-wrap:anywhere; }
+/* G-05 帮助中心：章节排版（MarkdownView 最小渲染的块级样式） */
+.help-md h1{ font-size:19px; margin:6px 0 10px; }
+.help-md h2{ font-size:16px; margin:16px 0 8px; }
+.help-md h3{ font-size:14px; margin:12px 0 6px; }
+.help-md p{ font-size:13.5px; line-height:1.75; margin:6px 0; overflow-wrap:anywhere; }
+.help-md ul, .help-md ol{ font-size:13.5px; line-height:1.75; margin:6px 0; padding-left:22px; }
+.help-md pre{
+  background:var(--panel2); border:2px solid var(--line); padding:10px 12px; overflow-x:auto;
+  font-size:12.5px; line-height:1.6; margin:8px 0;
+}
+.help-md code{ background:var(--panel2); border:1px solid var(--line); padding:0 4px; font-size:12.5px; }
+.help-md pre code{ background:none; border:none; padding:0; }
+.help-toc{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
 
 /* ============ v1.1.0 移动端适配（≤768px） ============
    铁律：桌面（>768px）布局与视觉零变化——除以下三条「默认隐藏/无样式」声明外，
@@ -495,6 +538,12 @@ header{ flex-wrap:wrap; }
   /* ---- 任务墙：全宽单列（.task 本就是块级全宽）、操作按钮已由上方触控基线放大 ---- */
   .task{ padding:10px; }
   .task .tt{ font-size:13.5px; overflow-wrap:anywhere; }
+
+  /* ---- G-02 三步卡/货架、G-03 通知、G-05 帮助：单列堆叠、无整页横滚 ---- */
+  .ui-stepper{ flex-direction:column; }
+  .ui-stepper-item{ min-width:0; }
+  .shelf-grid{ grid-template-columns:1fr; }
+  .help-md pre{ max-width:100%; }
 
   /* ---- G-04 时间线/计划卡：单列纵排、长名单任意断行、无整页横滚 ---- */
   .tl-row{ gap:6px; }

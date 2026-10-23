@@ -37,7 +37,7 @@ import {
   sessionCookieHeader,
   verifyPassword,
 } from '../auth/auth';
-import { balanceMilli, buildReport, trialBalanceMilli } from '../domain/costService';
+import { balanceMilli, buildReport, checkLowBalance, trialBalanceMilli } from '../domain/costService';
 import { createProject } from '../domain/projectService';
 import { cancelTask, deleteTask, refreshProjectStatus, retryTask, transitionTask } from '../domain/taskService';
 import { recordTaskStep } from '../domain/taskSteps';
@@ -63,6 +63,7 @@ import { nowIso, uid } from '../util';
 import { attachAssetRefs } from '../domain/assetService';
 import { registerM7Routes } from './m7';
 import { registerM8Routes } from './m8';
+import { registerV120Routes } from './v120';
 import {
   adjudicateSchema,
   apiDeleteSchema,
@@ -253,8 +254,45 @@ function buildState(repos: Repos, workspaceId: string): StateDto {
     amountYuan: milliToYuan(p.amount_milli),
     type: p.type ?? 'purchase',
   }));
+  // G-02 能力摘要段：成员能力卡（名/工种/skill_tags/人设首行，工种名取注册表）+
+  // 官方 skill 推荐位（平台库 published 前 6，含是否已安装）——全部来自现有表，state 聚合处拼装。
+  // 衔接口径（G-02 设计 + §12.5）：不选包开局零行业词不变——无行业包的空间推荐位只出已装项，
+  // 不把行业官方 skill 的名称/说明推给通用空间（装过即已在本空间出现，不算新增行业词注入）。
+  const packId = ws?.industry_pack_id ?? null;
+  const roleNameById = new Map(
+    repos.listRolesVisible(workspaceId, packId).map((r) => [r.role_id, r.name] as const),
+  );
+  const memberRows = repos.listMembers(workspaceId);
+  const capabilities = {
+    members: memberRows.map((m) => ({
+      memberId: m.id,
+      name: m.name,
+      role: m.role,
+      roleName: roleNameById.get(m.role) ?? m.role,
+      skillTags: parseIdList(m.skill_tags),
+      personaFirstLine: (m.persona || '').split('\n')[0] ?? '',
+      teamId: m.team_id,
+    })),
+    recommendedSkills: repos
+      .listLibrarySkills()
+      .filter((s) => s.owner_type === 'platform')
+      .filter((s) => packId !== null || !!repos.findInstalledCopy(workspaceId, s.id))
+      .slice(0, 6)
+      .map((s) => {
+        const copy = repos.findInstalledCopy(workspaceId, s.id);
+        return {
+          skillId: s.id,
+          name: s.name,
+          description: s.description,
+          role: s.role,
+          installed: !!copy,
+          installedCopyId: copy?.id ?? null,
+        };
+      }),
+  };
   return {
     workspace: ws ? { id: ws.id, name: ws.name } : undefined,
+    capabilities,
     apis: repos.listApis(workspaceId).map((a) => apiDto(repos, a, workspaceId)),
     defaultApiId: repos.getSetting<string | null>('defaultApiId', null, workspaceId),
     teams: repos
@@ -1355,6 +1393,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const api = repos.getApi(apiId, ctx.workspaceId);
     if (!api) fail(ErrorCode.NOT_FOUND, 'API 不存在', 404);
     repos.insertPurchase(apiId, yuanToMilli(amountYuan), ctx.workspaceId, 'purchase');
+    // G-08 旁路：采购后检查低余额预警（余额回阈值上清标记，失败吞掉记日志）
+    checkLowBalance(repos, ctx.workspaceId, logger);
     audit(req, ctx, 'purchase', 'api', apiId, `充值 ${amountYuan} 元`);
     return { ok: true, balanceYuan: milliToYuan(balanceMilli(repos, apiId, ctx.workspaceId)) };
   };
@@ -1461,6 +1501,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       );
     }
     repos.insertPurchase(trial!.id, yuanToMilli(body.amountYuan), body.workspaceId, 'trial_grant');
+    // G-08 旁路：体验额度发放后同步预警标记（余额回到阈值上清标记）
+    checkLowBalance(repos, body.workspaceId, logger);
     audit(req, ctx, 'trial_grant', 'workspace', body.workspaceId, `发放体验额度 ${body.amountYuan} 元`);
     return {
       ok: true,
@@ -1571,4 +1613,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
 
   /* ================= M8 路由组（资产库 / 飞轮 / 成果库 / 台账 / 流水线 / 提醒） ================= */
   registerM8Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit });
+
+  /* ================= v1.2.0 批次一路由组（G-05 反馈 / G-08 预估与阈值设置） ================= */
+  registerV120Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit });
 }

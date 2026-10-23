@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { fetchDeliveries, fetchResults } from '../api';
 import { yuan } from '../utils';
-import { Badge, Button, Checkbox, Dialog, Input, useConfirm } from './ui';
+import { Badge, Button, Checkbox, Dialog, EmptyState, Input, useConfirm } from './ui';
 import type { Delivery, ResultItem } from '../types';
 
 /** 标记成果渠道表现的弹窗状态：指标三件套（播放 / 点击率 / 完播率）+ 备注 */
@@ -180,7 +180,23 @@ export default function Results() {
         </div>
 
         {!loaded && <p className="hint">加载中…</p>}
-        {loaded && results.length === 0 && <p className="hint">暂无符合条件的成果。</p>}
+        {loaded && results.length === 0 && (
+          <EmptyState
+            example={<>示例成果：《新剧第 1 集》英文标题 ×10 · 已交付 · 可导出/生成交付页/标记有效后沉淀</>}
+            action={
+              <Button
+                size="small"
+                onClick={() =>
+                  document.getElementById('publish-anchor')?.scrollIntoView({ behavior: 'smooth' })
+                }
+              >
+                去发一单出成果
+              </Button>
+            }
+          >
+            暂无符合条件的成果。任务完成后，成果会自动汇到这里，可导出、生成交付页、标记渠道表现并沉淀回知识库。
+          </EmptyState>
+        )}
         {results.map((r) => {
           const effective = r.mark?.verdict === 'effective';
           return (

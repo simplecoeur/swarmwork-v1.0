@@ -24,4 +24,5 @@ export {
 } from './Overlays';
 export { Tabs, type TabDef, type TabsProps } from './Tabs';
 export { Badge, Card, EmptyState, Spinner, type BadgeVariant } from './Display';
+export { Stepper, type StepperProps, type StepperStep } from './Stepper';
 export { Field, type FieldProps } from './Field';

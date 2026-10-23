@@ -145,7 +145,21 @@ export default function TaskWall() {
             </div>
           ))
         ) : (
-          <EmptyState>还没有任务，去上面发布第一单真活。</EmptyState>
+          <EmptyState
+            example={<>示例：《新剧第 1 集》英文标题 · 文案 · 已完成 · 全程 12,300 token / ¥0.025</>}
+            action={
+              <Button
+                size="small"
+                onClick={() =>
+                  document.getElementById('publish-anchor')?.scrollIntoView({ behavior: 'smooth' })
+                }
+              >
+                去发布第一单
+              </Button>
+            }
+          >
+            还没有任务。发布一单真活，团队就会自动领取、执行、审核并交付到这里。
+          </EmptyState>
         )}
       </div>
       {confirmNode}

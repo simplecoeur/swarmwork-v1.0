@@ -130,9 +130,44 @@ export interface PurchaseDto {
   type?: string;
 }
 
+/** G-02 能力货架：成员能力卡（数据来自 members 行 + 工种注册表名） */
+export interface CapabilityMemberDto {
+  memberId: string;
+  name: string;
+  /** 工种 id（members.role） */
+  role: string;
+  /** 工种显示名（注册表 roles 的 name，查不到时回退 role id） */
+  roleName: string;
+  skillTags: string[];
+  /** 人设首行（persona 第一行） */
+  personaFirstLine: string;
+  teamId: string;
+}
+
+/**
+ * G-02 能力货架：官方 skill 推荐位（平台库 published 前 6，含本空间安装状态）。
+ * 衔接口径：无行业包的空间只出已装项（§12.5 不选包开局零行业词不变）。
+ */
+export interface CapabilitySkillDto {
+  skillId: string;
+  name: string;
+  description: string;
+  role: string;
+  installed: boolean;
+  installedCopyId: string | null;
+}
+
+/** G-02：GET /api/state 的 capabilities 摘要段（办公室能力货架数据源，不新建查询通道） */
+export interface CapabilitiesDto {
+  members: CapabilityMemberDto[];
+  recommendedSkills: CapabilitySkillDto[];
+}
+
 export interface StateDto {
   /** 当前会话空间（M6 多租户） */
   workspace?: { id: string; name: string };
+  /** G-02 能力摘要段（成员能力卡 + 官方 skill 推荐位） */
+  capabilities?: CapabilitiesDto;
   apis: ApiDto[];
   defaultApiId: string | null;
   teams: TeamDto[];
@@ -214,6 +249,8 @@ export interface CostReportDto {
   adjudication: { pending: number; passed: number };
   /** 按发单人（登录用户）维度聚合（M6 §8）；存量无发单人任务归入 userId=null */
   byUser?: Array<{ userId: string | null; totalTokens: number; costYuan: number; tasks: number }>;
+  /** G-08 人话用量摘要（余额/单均成本/约可跑单数/日均燃烧/约可用天数） */
+  summary?: CostSummaryDto;
 }
 
 /* ---------- M6 多用户平台 DTO ---------- */
@@ -401,6 +438,96 @@ export interface NotificationDto {
   taskId: string | null;
   readAt: string | null;
   createdAt: string;
+}
+
+/* ---------- G-02 / G-03 用户偏好（user_preferences，GET/PUT /api/preferences） ---------- */
+
+/**
+ * G-02 新手引导进度（偏好 key = `onboarding`，值为按空间 id 分键的对象，实现用户 × 空间维度）：
+ * step = 当前步（0 认识团队 / 1 试跑一单 / 2 查看成果 / 3 已完成）；skipped = 已跳过（不再展示三步卡）；
+ * doneAt = 完成时间（未完成为 null）。帮助页可重置（删该空间键或 step 回 0）重新走引导。
+ */
+export interface OnboardingDto {
+  step: number;
+  skipped: boolean;
+  doneAt: string | null;
+}
+
+/**
+ * G-03 通知偏好（偏好 key = `notifyPrefs`）：inapp 为站内逐类型开关（缺省全开）。
+ * mail 字段仅预留位（邮件通道暂缓，notifyConfig.mailChannel='reserved-not-implemented'），
+ * 本版 UI 不展示邮件开关、分发时 mail channel 未启用即跳过。
+ */
+export interface NotifyPrefsDto {
+  inapp: { [type: string]: boolean };
+  mail?: { [type: string]: boolean };
+}
+
+/** G-03 通知类型全集（既有 4 类 + v1.2.0 扩展 5 类；新类型的触发点在各自 G 条目内注册） */
+export const NOTIFICATION_TYPES = [
+  'adjudication',
+  'balance',
+  'trial_exhausted',
+  'reject_max',
+  'balance_low',
+  'schedule_result',
+  'webhook_failed',
+  'impersonation',
+  'transfer',
+] as const;
+export type NotificationTypeName = (typeof NOTIFICATION_TYPES)[number];
+
+/* ---------- G-05 帮助与反馈 ---------- */
+
+export type FeedbackCategory = 'bug' | 'suggestion' | 'question' | 'other';
+export type FeedbackStatus = 'open' | 'handled';
+
+export interface FeedbackDto {
+  id: number;
+  userId: string;
+  workspaceId: string | null;
+  category: FeedbackCategory;
+  content: string;
+  contact: string | null;
+  status: FeedbackStatus;
+  adminNote: string | null;
+  createdAt: string;
+  handledAt: string | null;
+}
+
+/* ---------- G-08 用量预估与人话摘要 ---------- */
+
+/** GET /api/cost/estimate：近 30 天 ledger 按任务聚合的同类成本分布（金额双口径：厘 + 元） */
+export interface CostEstimateDto {
+  avgMilli: number;
+  p25Milli: number;
+  p75Milli: number;
+  avgYuan: number;
+  p25Yuan: number;
+  p75Yuan: number;
+  sampleCount: number;
+  /** 退级链：同 skill（样本 ≥5）→ 同 type（样本 ≥5）→ 全空间均值 → 无历史 */
+  basis: 'skill' | 'type' | 'workspace' | 'none';
+}
+
+/** G-08：GET /api/cost/report 的 summary 段（全部由 purchases/ledger 推导，不新增统计表） */
+export interface CostSummaryDto {
+  /** 自有余额合计（各空间自有 API 的 Σpurchases − Σledger，厘） */
+  balanceMilli: number;
+  balanceYuan: number;
+  /** 体验额度余额（厘） */
+  trialBalanceMilli: number;
+  trialBalanceYuan: number;
+  /** 近 30 天单均成本（厘/单，无历史为 0） */
+  avgCostPerTaskMilli: number;
+  avgCostPerTaskYuan: number;
+  /** 约可跑单数 = floor((自有余额 + 体验余额) / 单均成本)；无单均成本时为 null */
+  approxTasksRemaining: number | null;
+  /** 近 30 天日均燃烧（厘/天） */
+  burnPerDayMilli: number;
+  burnPerDayYuan: number;
+  /** 约可用天数 = floor((自有余额 + 体验余额) / 日均燃烧)；无燃烧时为 null */
+  approxDaysRemaining: number | null;
 }
 
 export interface PipelineTemplateDto {

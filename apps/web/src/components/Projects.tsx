@@ -3,7 +3,7 @@ import { useApp } from '../context';
 import { fetchPipelineTemplates, fetchTaskTimeline } from '../api';
 import { yuan } from '../utils';
 import TaskTimeline from './TaskTimeline';
-import { Badge, Button, Input, Select, type BadgeVariant } from './ui';
+import { Badge, Button, EmptyState, Input, Select, type BadgeVariant } from './ui';
 import type { PipelineTemplate } from '../types';
 
 const projChipCls: Record<string, BadgeVariant> = {
@@ -221,7 +221,30 @@ function ProjectList() {
   const [openId, setOpenId] = useState<string | null>(null);
   // G-04：子任务行展开各自时间线（按任务 id，同一时刻只展开一条）
   const [openTlId, setOpenTlId] = useState<string | null>(null);
-  if (!S || !S.projects.length) return null;
+  if (!S) return null;
+  // G-02 空态三件套：无项目时渲染带示例与 CTA 的空态卡（原口径为整段不渲染）
+  if (!S.projects.length) {
+    return (
+      <div className="card">
+        <h2>项目 <span className="tag">方案下发 · 组长拆单 · 进度与总账按子任务聚合</span></h2>
+        <EmptyState
+          example={<>示例项目：《新剧上线包》· 子任务进度 3/5 完成 · 组长已按计划拆成 5 步</>}
+          action={
+            <Button
+              size="small"
+              onClick={() =>
+                document.getElementById('publish-anchor')?.scrollIntoView({ behavior: 'smooth' })
+              }
+            >
+              去下发第一个方案
+            </Button>
+          }
+        >
+          还没有项目。把一整套活写成方案下发，组长会自动拆成子任务排队执行；或用上方流水线一键生成整套项目。
+        </EmptyState>
+      </div>
+    );
+  }
 
   return (
     <div className="card">
