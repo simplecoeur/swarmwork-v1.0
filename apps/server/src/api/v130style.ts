@@ -50,7 +50,7 @@ export interface StyleTemplateDto {
   updatedAt: string;
 }
 
-function styleTemplateDto(r: StyleTemplateRow): StyleTemplateDto {
+export function styleTemplateDto(r: StyleTemplateRow): StyleTemplateDto {
   const config = normalizeOfficeStyle(safeParse(r.config));
   return {
     id: r.id,

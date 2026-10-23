@@ -11,6 +11,7 @@ import { nowIso, uid } from '../util';
 import { contributorOf, skillDto } from './m7';
 import type { M7Helpers } from './m7';
 import { skillFeatureSchema, templateCreateSchema } from './schemas';
+import { styleTemplateDto } from './v130style';
 
 function fail(code: string, message: string, status = 400): never {
   throw Object.assign(new Error(message), { code, statusCode: status });
@@ -171,6 +172,13 @@ export function registerV130Routes(
     }
     logger.info('skill', `管理员${body.featured ? '精选' : '取消精选'} skill ${id}（${cur!.name}）`);
     return { ok: true, skill: skillDto(repos, next) };
+  });
+
+  /* ================= F 补点：管理员风格模板待审列表（DTO 与一期 library 同口径） ================= */
+  app.get('/api/admin/style-templates/pending', async (req) => {
+    requireAdmin(req);
+    const templates = repos.listPendingStyleTemplates().map(styleTemplateDto);
+    return { ok: true, templates };
   });
 
   app.get('/api/skills/activity', async (req) => {

@@ -41,7 +41,7 @@ export const TYPE_ROLE: Readonly<Record<string, string>> = {
   代码: '程序员',
 };
 
-export const PROVIDERS = ['deepseek', 'openai', 'anthropic', 'custom'] as const;
+export const PROVIDERS = ['deepseek', 'openai', 'anthropic', 'tongyi', 'zhipu', 'custom'] as const;
 export type ProviderKind = (typeof PROVIDERS)[number];
 
 export const PROVIDER_PRESETS: Readonly<
@@ -50,6 +50,8 @@ export const PROVIDER_PRESETS: Readonly<
   deepseek: { baseUrl: 'https://api.deepseek.com', model: 'deepseek-chat' },
   openai: { baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
   anthropic: { baseUrl: 'https://api.anthropic.com', model: 'claude-sonnet-4-5' },
+  tongyi: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+  zhipu: { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus' },
   custom: { baseUrl: '', model: '' },
 };
 

@@ -39,12 +39,15 @@ import {
   sessionCookieHeader,
   verifyPassword,
 } from '../auth/auth';
+import { testApiConnection } from '../domain/apiTest';
+import { saveDailySettings } from '../domain/dailySettings';
+import type { ForgeSummary } from '../domain/teamForge';
 import { balanceMilli, buildReport, checkLowBalance, trialBalanceMilli } from '../domain/costService';
 import { notifyOwner } from '../domain/notify';
 import { createProject } from '../domain/projectService';
 import { cancelTask, deleteTask, refreshProjectStatus, retryTask, transitionTask } from '../domain/taskService';
 import { recordTaskStep } from '../domain/taskSteps';
-import { createProvider, LlmGateway } from '../llm/gateway';
+import { LlmGateway } from '../llm/gateway';
 import type { Logger } from '../logger';
 import { decryptKey, encryptKey, maskKey } from '../store/crypto';
 import { provisionWorkspace } from '../store/bootstrap';
@@ -64,8 +67,16 @@ import {
 } from '../store/repositories';
 import { nowIso, uid } from '../util';
 import { attachAssetRefs } from '../domain/assetService';
+import { registerDailyRoutes } from './daily';
 import { registerM7Routes } from './m7';
 import { registerM8Routes } from './m8';
+import {
+  maskedQuestionnaireAnswers,
+  registerQuestionnaireRoutes,
+  reminderPatchFromQuestionnaire,
+  storeQuestionnaire,
+  type QuestionnaireInput,
+} from './questionnaire';
 import { registerV120Routes } from './v120';
 import { registerV130Routes } from './v130';
 import { registerV130StyleRoutes } from './v130style';
@@ -100,9 +111,6 @@ import {
   trialGrantSchema,
   workspaceCreateSchema,
 } from './schemas';
-
-/** API 测试连接的探活超时（M5）：比正式调用的 120s 短，快速回失败原因 */
-const API_TEST_TIMEOUT_MS = 15_000;
 
 /** 体验额度专用停工文案（§8.1，与 engine 口径一致） */
 export const TRIAL_EXHAUSTED_REASON = '体验额度已用完，请到设置后台填自己的 API Key';
@@ -709,15 +717,82 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.post('/api/workspaces', async (req) => {
     const ctx = auth(req);
     const body = workspaceCreateSchema.parse(req.body ?? {});
+    const q = body.questionnaire;
     let ws: WorkspaceRow;
+    const forgeBox: {
+      info: { summary: ForgeSummary | null; fellBack: boolean; error?: string } | null;
+    } = { info: null };
     try {
-      ws = provisionWorkspace(repos, ctx.user.id, body.name, body.industryPackId ?? null);
+      ws = provisionWorkspace(
+        repos,
+        ctx.user.id,
+        body.name,
+        body.industryPackId ?? null,
+        q
+          ? {
+              questionnaire: {
+                industry: q.industry,
+                job: q.job,
+                uses: q.uses,
+                problems: q.problems,
+              },
+              onForge: (info) => {
+                forgeBox.info = info;
+              },
+            }
+          : undefined,
+      );
     } catch (e) {
       fail(ErrorCode.VALIDATION, e instanceof Error ? e.message : String(e));
     }
     // 建空间后自动切换到新空间
     repos.updateSession({ ...ctx.session, current_workspace_id: ws!.id, last_seen_at: nowIso() });
+    // onRequest 钩子已把 authCtx 缓存在 req 上（仍是旧空间）：同步刷新，否则本请求内
+    // 后续走 wsAuth 的共用写路径（如 C2 的 saveApi）会落到旧空间
+    (req as AuthedRequest).authCtx = {
+      ...ctx,
+      workspaceId: ws!.id,
+      session: { ...ctx.session, current_workspace_id: ws!.id },
+    };
     audit(req, { ...ctx, workspaceId: ws!.id }, 'create_workspace', 'workspace', ws!.id, body.name);
+    if (q) {
+      // C2 问卷后续（团队已在 provision 内由 teamForge 锻造/降级）：建 API 并设默认 → 存档（脱敏）→ 提醒写 dailySettings
+      const qq = q as QuestionnaireInput;
+      let apiId: string | null = null;
+      let apiNote = '';
+      if (qq.api && qq.api.apiKey) {
+        try {
+          const saved = await saveApi(req, {
+            api: {
+              name: `${qq.api.provider}（问卷接入）`,
+              provider: qq.api.provider,
+              baseUrl: qq.api.baseUrl,
+              model: qq.api.model,
+              pricePerM: 0,
+              apiKey: qq.api.apiKey,
+            },
+          });
+          apiId = saved.id;
+          // 问卷接入的 API 明确设为空间默认（saveApi 的无默认才设口径之外再钉一次）
+          repos.setSetting('defaultApiId', apiId, ws!.id);
+        } catch (e) {
+          apiNote = `；API 创建失败：${e instanceof Error ? e.message : String(e)}`;
+        }
+      }
+      storeQuestionnaire(repos, ctx.user.id, ws!.id, maskedQuestionnaireAnswers(qq, apiId));
+      const patch = reminderPatchFromQuestionnaire(qq);
+      if (Object.keys(patch).length) saveDailySettings(repos, ws!.id, patch);
+      audit(
+        req,
+        { ...ctx, workspaceId: ws!.id },
+        'create_workspace_with_questionnaire',
+        'workspace',
+        ws!.id,
+        forgeBox.info?.fellBack
+          ? `团队锻造失败已降级默认种子：${forgeBox.info.error ?? ''}${apiNote}`
+          : `团队锻造 ${forgeBox.info?.summary?.teams ?? 0} 组/${forgeBox.info?.summary?.members ?? 0} 人${apiNote}`,
+      );
+    }
     return { ok: true, workspace: workspaceDto(ctx.user, ws!) };
   });
 
@@ -1040,43 +1115,22 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const provider = body.api?.provider ?? stored!.provider;
     const baseUrl = body.api?.baseUrl ?? stored!.base_url;
     const model = body.api?.model ?? stored!.model;
-    const done = (ok: boolean, latencyMs: number, message: string) => ({
-      ok: true,
-      test: { ok, latencyMs, message },
-    });
-    if (!apiKey) return done(false, 0, '未填写 API Key（先填 Key 再测连接）');
-    if (!baseUrl) return done(false, 0, '未填写 Base URL');
-    if (!model) return done(false, 0, '未填写模型名');
-    const probeRow: ApiRow = {
-      id: stored?.id ?? 'api_test_probe',
-      name: stored?.name ?? 'test',
-      provider,
-      base_url: baseUrl,
-      api_key_enc: encryptKey(apiKey),
-      model,
-      price_per_m_milli: 0,
-      created_at: stored?.created_at ?? nowIso(),
-      workspace_id: ctx.workspaceId,
-    };
-    const t0 = Date.now();
-    try {
-      await createProvider(probeRow).chat({
-        model,
-        system: '',
-        messages: [{ role: 'user', content: 'ping' }],
-        temperature: 0,
-        maxTokens: 1,
-        timeoutMs: API_TEST_TIMEOUT_MS,
-      });
-      const latencyMs = Date.now() - t0;
-      logger.info('api', `API 测试连接成功 ${provider}/${model} ${latencyMs}ms`, { apiId: probeRow.id });
-      return done(true, latencyMs, `连接成功，模型「${model}」已响应`);
-    } catch (e) {
-      const latencyMs = Date.now() - t0;
-      const message = e instanceof Error ? e.message : String(e);
-      logger.warn('api', `API 测试连接失败：${message}`, { apiId: probeRow.id });
-      return done(false, latencyMs, message);
+    // 探活本体与 C2 的 /api/apis/test-connection 共用 domain/apiTest（不许写第二套）
+    const test = await testApiConnection(
+      { provider, baseUrl, model, apiKey },
+      {
+        workspaceId: ctx.workspaceId,
+        apiId: stored?.id,
+        name: stored?.name,
+        createdAt: stored?.created_at,
+      },
+    );
+    if (test.ok) {
+      logger.info('api', `API 测试连接成功 ${provider}/${model} ${test.latencyMs}ms`, { apiId: stored?.id ?? 'api_test_probe' });
+    } else {
+      logger.warn('api', `API 测试连接失败：${test.message}`, { apiId: stored?.id ?? 'api_test_probe' });
     }
+    return { ok: true, test };
   });
   app.post('/api/settings/default-api', async (req) => {
     const ctx = wsAuth(req);
@@ -1819,6 +1873,18 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     { auth, wsAuth, requireAdmin, audit },
   );
   registerV130StyleRoutes(
+    app,
+    { repos, logger, dataDir: path.dirname(deps.dbPath) },
+    { auth, wsAuth, requireAdmin, audit },
+  );
+
+  /* ================= v1.3.0 路由组（G 晨报/签到 + C2 问卷/裸配置测试连接） ================= */
+  registerDailyRoutes(
+    app,
+    { repos, logger, dataDir: path.dirname(deps.dbPath) },
+    { auth, wsAuth, requireAdmin, audit },
+  );
+  registerQuestionnaireRoutes(
     app,
     { repos, logger, dataDir: path.dirname(deps.dbPath) },
     { auth, wsAuth, requireAdmin, audit },

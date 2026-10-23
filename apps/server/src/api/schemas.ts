@@ -171,9 +171,67 @@ export const switchWorkspaceSchema = z.object({
   workspaceId: z.string().min(1),
 });
 
+const hhmmSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, '时间须为 HH:MM');
+
+/** C2 问卷（建空间时可选携带；apiKey 只在本请求内用于建 API，存档时脱敏，绝不落 questionnaire_responses） */
+export const questionnaireApiSchema = z.object({
+  provider: z.string().trim().min(1).default('custom'),
+  baseUrl: z.string().default(''),
+  model: z.string().default(''),
+  apiKey: z.string().optional(),
+});
+
+export const workspaceQuestionnaireSchema = z.object({
+  api: questionnaireApiSchema.nullable().optional(),
+  industry: z.string().trim().max(100).optional(),
+  job: z.string().trim().max(200).optional(),
+  uses: z.array(z.string().trim().min(1)).max(20).optional(),
+  problems: z.string().max(2000).optional(),
+  checkinReminderEnabled: z.boolean().optional(),
+  checkinReminderTime: hhmmSchema.optional(),
+  briefingEnabled: z.boolean().optional(),
+  briefingTime: hhmmSchema.optional(),
+  supervisionItems: z.string().max(2000).optional(),
+});
+
 export const workspaceCreateSchema = z.object({
   name: z.string().trim().min(1, '空间名必填'),
   industryPackId: z.string().nullable().optional(),
+  questionnaire: workspaceQuestionnaireSchema.optional(),
+});
+
+/* ---------- v1.3.0 G 每日设置 / 签到 / C2 问卷存档 ---------- */
+
+export const dailySettingsPutSchema = z.object({
+  briefingEnabled: z.boolean().optional(),
+  briefingTime: hhmmSchema.optional(),
+  checkinReminderEnabled: z.boolean().optional(),
+  checkinReminderTime: hhmmSchema.optional(),
+  newsTopic: z.enum(['short_drama', 'film', 'ai', 'general']).optional(),
+  supervisionItems: z.string().max(2000).optional(),
+});
+
+/** 问卷存档更新：只许档案字段 + 提醒字段；api/apiKey 即使传入也由路由层忽略（zod 默认剥离未声明键） */
+export const questionnairePutSchema = z.object({
+  industry: z.string().trim().max(100).optional(),
+  job: z.string().trim().max(200).optional(),
+  uses: z.array(z.string().trim().min(1)).max(20).optional(),
+  problems: z.string().max(2000).optional(),
+  supervisionItems: z.string().max(2000).optional(),
+  checkinReminderEnabled: z.boolean().optional(),
+  checkinReminderTime: hhmmSchema.optional(),
+  briefingEnabled: z.boolean().optional(),
+  briefingTime: hhmmSchema.optional(),
+});
+
+/** C2 裸配置测试连接（仅登录态，不要求空间）：与 /api/apis/test 共用 domain/apiTest 本体 */
+export const apiTestConnectionSchema = z.object({
+  provider: z.string().trim().min(1).default('custom'),
+  baseUrl: z.string().default(''),
+  model: z.string().default(''),
+  apiKey: z.string().optional(),
 });
 
 export const registryRoleSchema = z.object({
