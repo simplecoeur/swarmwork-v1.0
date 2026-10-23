@@ -301,10 +301,16 @@ export const visitLinkCreateSchema = z.object({
 
 export const channelBindSchema = z.object({
   channelType: z.string().trim().min(1).default('mj'),
-  baseUrl: z.string().trim().min(1, '渠道地址必填'),
+  /** MJ 渠道必填；G-17 通用 Webhook 走 url 字段（按渠道类型在路由层分别校验） */
+  baseUrl: z.string().trim().optional().default(''),
   token: z.string().optional(),
   clearToken: z.boolean().optional(),
   account: z.string().optional(),
+  /** G-17 通用 Webhook：接收端 URL / 签名密钥 / 订阅事件 */
+  url: z.string().trim().optional(),
+  secret: z.string().optional(),
+  clearSecret: z.boolean().optional(),
+  events: z.array(z.string().trim().min(1)).optional(),
 });
 
 export const channelPushSchema = z.object({

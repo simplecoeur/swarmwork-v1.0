@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import {
   ErrorCode,
+  milliToYuan,
   TaskStatus,
   type ChannelPushDto,
   type DeliveryLinkDto,
@@ -9,6 +10,7 @@ import {
 import { verifyPassword } from '../auth/auth';
 import { attachAssetRefs } from '../domain/assetService';
 import { getChannelAdapter, type ChannelConfig } from '../domain/channels';
+import { assertSafeOutboundUrl } from '../domain/ssrf';
 import {
   createDeliveryLink,
   deliveryTokenHash,
@@ -29,7 +31,7 @@ import {
   skillVisibleToWorkspace,
 } from '../domain/skillService';
 import type { Logger } from '../logger';
-import { decryptKey, encryptKey } from '../store/crypto';
+import { decryptKey, encryptKey, maskKey } from '../store/crypto';
 import type {
   DeliveryLinkRow,
   Repos,
@@ -133,6 +135,8 @@ const tokenHash = deliveryTokenHash;
 
 interface ChannelsSetting {
   mj?: { baseUrl: string; tokenEnc: string; account: string };
+  /** G-17 通用 Webhook：secret 与 MJ token 同加密口径（encryptKey）存 settings.channels */
+  generic_webhook?: { url: string; secretEnc: string; events: string[] };
 }
 
 export function registerM7Routes(
@@ -610,33 +614,57 @@ export function registerM7Routes(
     );
   });
 
-  /* ================= 渠道适配器（§12.4）+ MJ 直推（§11.2） ================= */
-  const channelConfig = (ctx: RouteCtx & { workspaceId: string }): { cfg: ChannelConfig; raw: ChannelsSetting } => {
-    const raw = repos.getSetting<ChannelsSetting>('channels', {}, ctx.workspaceId);
+  /* ================= 渠道适配器（§12.4）+ MJ 直推（§11.2）+ 通用 Webhook（G-17） ================= */
+  const readChannels = (workspaceId: string): ChannelsSetting =>
+    repos.getSetting<ChannelsSetting>('channels', {}, workspaceId);
+  /** 按渠道类型取配置（G-17 起多渠道并存；MJ 口径与原实现一致） */
+  const channelConfigFor = (raw: ChannelsSetting, type: string): ChannelConfig => {
+    if (type === 'generic_webhook') {
+      const g = raw.generic_webhook;
+      return {
+        baseUrl: '',
+        token: '',
+        url: g?.url ?? '',
+        secret: g ? decryptKey(g.secretEnc) : '',
+        events: g?.events ?? ['delivered'],
+      };
+    }
     const mj = raw.mj;
     return {
-      raw,
-      cfg: {
-        baseUrl: mj?.baseUrl ?? '',
-        token: mj ? decryptKey(mj.tokenEnc) : '',
-        account: mj?.account ?? '',
-      },
+      baseUrl: mj?.baseUrl ?? '',
+      token: mj ? decryptKey(mj.tokenEnc) : '',
+      account: mj?.account ?? '',
     };
   };
 
   app.get('/api/channels', async (req) => {
     const ctx = wsAuth(req);
-    const { cfg } = channelConfig(ctx);
+    const raw = readChannels(ctx.workspaceId);
+    const mj = channelConfigFor(raw, 'mj');
+    const gw = channelConfigFor(raw, 'generic_webhook');
     return {
       ok: true,
       channels: [
         {
           type: 'mj',
           name: 'MJ 平台',
-          baseUrl: cfg.baseUrl,
-          account: cfg.account ?? '',
-          hasToken: !!cfg.token,
-          bound: !!(cfg.baseUrl && cfg.token),
+          baseUrl: mj.baseUrl,
+          account: mj.account ?? '',
+          hasToken: !!mj.token,
+          bound: !!(mj.baseUrl && mj.token),
+        },
+        {
+          type: 'generic_webhook',
+          name: '通用 Webhook',
+          baseUrl: '',
+          account: '',
+          hasToken: !!gw.secret,
+          bound: !!(gw.url && gw.secret),
+          url: gw.url ?? '',
+          hasSecret: !!gw.secret,
+          secretMasked: gw.secret ? maskKey(gw.secret) : '',
+          events: gw.events ?? ['delivered'],
+          supportsMetrics: false,
         },
       ],
     };
@@ -647,14 +675,38 @@ export function registerM7Routes(
     const body = channelBindSchema.parse(req.body ?? {});
     const adapter = getChannelAdapter(body.channelType);
     if (!adapter) fail(ErrorCode.VALIDATION, `未知渠道类型「${body.channelType}」`);
-    const { raw, cfg } = channelConfig(ctx);
+    const raw = readChannels(ctx.workspaceId);
+    if (body.channelType === 'generic_webhook') {
+      // G-17：url/secret 表单；保存前先过共用 SSRF 守卫（不安全直接 400，不落配置）
+      const prev = channelConfigFor(raw, 'generic_webhook');
+      const url = (body.url ?? body.baseUrl ?? prev.url ?? '').trim();
+      if (!url) fail(ErrorCode.VALIDATION, 'Webhook URL 必填');
+      await assertSafeOutboundUrl(url);
+      const secret = body.clearSecret
+        ? ''
+        : body.secret && body.secret !== ''
+          ? body.secret
+          : (prev.secret ?? '');
+      if (!secret) fail(ErrorCode.VALIDATION, '签名密钥（secret）必填');
+      const events = body.events && body.events.length ? body.events : (prev.events ?? ['delivered']);
+      const next: ChannelsSetting = {
+        ...raw,
+        generic_webhook: { url, secretEnc: encryptKey(secret), events },
+      };
+      repos.setSetting('channels', next, ctx.workspaceId);
+      const result = await adapter!.authBind({ baseUrl: '', token: '', url, secret, events });
+      audit(req, ctx, 'bind_channel', 'channel', body.channelType, result.bound ? '绑定成功' : result.message);
+      return { ok: true, bind: result };
+    }
+    const cfg = channelConfigFor(raw, 'mj');
+    if (!body.baseUrl) fail(ErrorCode.VALIDATION, '渠道地址必填');
     const token = body.clearToken ? '' : body.token && body.token !== '' ? body.token : cfg.token;
     const next: ChannelsSetting = {
       ...raw,
       mj: { baseUrl: body.baseUrl, tokenEnc: encryptKey(token), account: body.account ?? cfg.account ?? '' },
     };
     repos.setSetting('channels', next, ctx.workspaceId);
-    const result = await adapter.authBind({ baseUrl: body.baseUrl, token, account: body.account });
+    const result = await adapter!.authBind({ baseUrl: body.baseUrl, token, account: body.account });
     audit(req, ctx, 'bind_channel', 'channel', body.channelType, result.bound ? '绑定成功' : result.message);
     return { ok: true, bind: result };
   });
@@ -664,22 +716,45 @@ export function registerM7Routes(
     const body = channelPushSchema.parse(req.body ?? {});
     const adapter = getChannelAdapter(body.channelType);
     if (!adapter) fail(ErrorCode.VALIDATION, `未知渠道类型「${body.channelType}」`);
-    const { cfg } = channelConfig(ctx);
+    const cfg = channelConfigFor(readChannels(ctx.workspaceId), body.channelType);
     let title = '';
     let content = '';
+    let totalTokens = 0;
+    let totalCostMilli = 0;
     if (body.taskId) {
       const t = repos.getTask(body.taskId, ctx.workspaceId);
       if (!t) fail(ErrorCode.NOT_FOUND, '任务不存在', 404);
       if (t!.status !== TaskStatus.DONE) fail(ErrorCode.VALIDATION, '只有已完成的成果可推送');
       title = t!.title;
       content = t!.result;
+      totalTokens = t!.total_tokens;
+      totalCostMilli = t!.total_cost_milli;
     } else if (body.projectId) {
       const p = repos.getProject(body.projectId, ctx.workspaceId);
       if (!p) fail(ErrorCode.NOT_FOUND, '项目不存在', 404);
       title = p!.name;
       content = projectToMarkdown(repos, p!);
+      for (const t of repos.listTasks(ctx.workspaceId).filter((x) => x.project_id === p!.id)) {
+        totalTokens += t.total_tokens;
+        totalCostMilli += t.total_cost_milli;
+      }
     } else {
       fail(ErrorCode.VALIDATION, '需要提供 taskId 或 projectId');
+    }
+    // G-17：通用 Webhook 的 payload 需带可打开的交付页链接——为本次推送新建一条交付链接
+    // （交付链接只存 token 哈希，存量链接无法反推 URL，故按推送新建，口径同手动建交付页）。
+    let deliveryUrl: string | undefined;
+    if (body.channelType === 'generic_webhook') {
+      const link = await createDeliveryLink(repos, {
+        workspaceId: ctx.workspaceId,
+        kind: 'delivery',
+        scope: body.taskId ? 'task' : 'project',
+        taskId: body.taskId ?? null,
+        projectId: body.projectId ?? null,
+        title,
+        createdBy: ctx.user.id,
+      });
+      deliveryUrl = link.path;
     }
     const ts = nowIso();
     const pushId = repos.insertChannelPush({
@@ -698,6 +773,10 @@ export function registerM7Routes(
       content,
       kind: body.taskId ? 'task_result' : 'project_bundle',
       localRef: body.taskId ?? body.projectId ?? '',
+      deliveryUrl,
+      usageSummary: `共 ${totalTokens} tokens，成本 ¥${milliToYuan(totalCostMilli)}`,
+      totalTokens,
+      totalCostYuan: milliToYuan(totalCostMilli),
     });
     repos.updateChannelPush(pushId, result.status, result.remoteRef, result.message);
     const row = repos.getChannelPush(pushId, ctx.workspaceId)!;
@@ -740,7 +819,7 @@ export function registerM7Routes(
     if (!row) fail(ErrorCode.NOT_FOUND, '推送记录不存在', 404);
     const adapter = getChannelAdapter(row!.channel_type);
     if (!adapter) fail(ErrorCode.VALIDATION, `未知渠道类型「${row!.channel_type}」`);
-    const { cfg } = channelConfig(ctx);
+    const cfg = channelConfigFor(readChannels(ctx.workspaceId), row!.channel_type);
     const metrics = await adapter.fetchMetrics(cfg, row!.remote_ref);
     if (metrics.ok) {
       repos.updateChannelPush(row!.id, row!.status, row!.remote_ref, `回查：${metrics.message}；指标 ${JSON.stringify(metrics.metrics)}`);

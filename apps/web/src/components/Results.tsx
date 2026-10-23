@@ -81,6 +81,16 @@ export default function Results() {
     toast(`推送 MJ：${push?.status ?? ''}${push?.message ? ` · ${push.message}` : ''}`);
   }
 
+  /** G-17 通用 Webhook 推送（payload 含成果全文 + 交付页链接 + 用量摘要，HMAC 签名） */
+  async function pushWebhook(r: ResultItem) {
+    let res: Record<string, unknown>;
+    try {
+      res = await post('/api/channels/push', { channelType: 'generic_webhook', taskId: r.taskId });
+    } catch { return; }
+    const push = res.push as { status?: string; message?: string } | undefined;
+    toast(`推送 Webhook：${push?.status ?? ''}${push?.message ? ` · ${push.message}` : ''}`);
+  }
+
   async function submitOutcome() {
     if (!outcome) return;
     const metrics: Record<string, number> = {};
@@ -243,6 +253,7 @@ export default function Results() {
                 生成交付页
               </Button>{' '}
               <Button size="small" variant="blue" onClick={() => pushMj(r)}>推送 MJ</Button>{' '}
+              <Button size="small" variant="blue" onClick={() => pushWebhook(r)}>推送 Webhook</Button>{' '}
               <Button
                 size="small"
                 variant="green"
