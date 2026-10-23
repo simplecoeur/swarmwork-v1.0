@@ -27,6 +27,8 @@ import type {
   SkillKbBindingDto,
   StateDto,
   TaskDto,
+  TaskStepDto,
+  TaskTimelineDto,
   TeamDto,
   WorkspaceDto,
 } from '@swarm/shared';
@@ -108,6 +110,9 @@ export type AssetSection = AssetSectionDto;
 export type OutcomeMark = OutcomeMarkDto;
 export type AppNotification = NotificationDto;
 export type PipelineTemplate = PipelineTemplateDto;
+/** G-04 任务过程时间线 */
+export type TaskStep = TaskStepDto;
+export type TaskTimelineData = TaskTimelineDto;
 
 /** 资产引用（发单 / skill 发单共用，M8 §11.4） */
 export interface AssetRef {

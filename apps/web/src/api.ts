@@ -16,6 +16,7 @@ import type {
   RegistryTaskType,
   ResultItem,
   SkillListItem,
+  TaskTimelineData,
   Workspace,
 } from './types';
 
@@ -161,4 +162,13 @@ export async function fetchPipelineTemplates(): Promise<PipelineTemplate[]> {
 export async function fetchLedgerView(): Promise<LedgerViewItem[]> {
   const j = await requestRaw('GET', '/api/ledger-view');
   return (j.timeline as LedgerViewItem[]) ?? [];
+}
+
+/** G-04 任务过程时间线：步骤流 + 状态流水（执行中轮询增量刷新、已完成即回放，同一接口） */
+export async function fetchTaskTimeline(taskId: string): Promise<TaskTimelineData> {
+  const j = await requestRaw('GET', `/api/tasks/${taskId}/timeline`);
+  return {
+    steps: (j.steps as TaskTimelineData['steps']) ?? [],
+    events: (j.events as TaskTimelineData['events']) ?? [],
+  };
 }

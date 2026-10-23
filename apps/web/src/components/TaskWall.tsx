@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { fetchKb } from '../api';
 import { yuan } from '../utils';
+import TaskTimeline from './TaskTimeline';
 import { Badge, Button, EmptyState, useConfirm, type BadgeVariant } from './ui';
 
 const chipCls: Record<string, BadgeVariant> = {
@@ -16,6 +17,8 @@ const chipCls: Record<string, BadgeVariant> = {
 export default function TaskWall() {
   const { S, post, refresh, toast, teamName, memberName } = useApp();
   const { ask, confirmNode } = useConfirm();
+  // G-04：过程时间线展开态（按任务 id）；执行中随组件内 2s 轮询增量刷新，已完成打开即回放
+  const [openTl, setOpenTl] = useState<Record<string, boolean>>({});
   // 注入审计展示：把任务记录的 injectedKbIds 映射成条目标题（ids 变化时才重拉）
   const [kbTitles, setKbTitles] = useState<Record<string, string>>({});
   const injectedSig = S ? S.tasks.map((t) => t.injectedKbIds.join(',')).join('|') : '';
@@ -101,6 +104,18 @@ export default function TaskWall() {
               </div>
               {t.rejectReason ? <div className="reject">打回/裁决原因：{t.rejectReason}</div> : null}
               {t.blockedReason ? <div className="blocked">停工原因：{t.blockedReason}</div> : null}
+              <div style={{ marginTop: 6 }}>
+                <Button
+                  size="small"
+                  variant="gray"
+                  onClick={() => setOpenTl((m) => ({ ...m, [t.id]: !m[t.id] }))}
+                >
+                  {openTl[t.id] ? '收起过程时间线' : '过程时间线'}
+                </Button>
+              </div>
+              {openTl[t.id] ? (
+                <TaskTimeline taskId={t.id} live={t.status !== '已完成' && t.status !== '已取消'} />
+              ) : null}
               {(() => {
                 // 后悔药按钮按状态出（M5）：口径与后端 domain 一致，前端只做显隐、后端兜底校验
                 const canCancel =

@@ -126,6 +126,28 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 .subtask{ border-top:2px dashed var(--line); padding:6px 2px; cursor:pointer; font-size:13px; }
 .subtask:hover{ background:var(--panel2); }
 .task.flash{ outline:3px solid var(--amber); outline-offset:2px; }
+/* G-04 任务过程时间线：纵向步骤流（左轨图标 + 右侧内容），步骤为主、状态流水为弱化辅行 */
+.timeline{ border-top:2px dashed var(--line); margin-top:8px; padding-top:6px; }
+.tl-row{ display:flex; gap:8px; padding:5px 0; border-bottom:1px dashed var(--panel2); }
+.tl-row:last-child{ border-bottom:none; }
+.tl-icon{ flex:0 0 22px; text-align:center; font-size:13px; line-height:1.6; }
+.tl-body{ flex:1; min-width:0; }
+.tl-head{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.tl-head .ui-badge{ margin-left:0; }
+.tl-summary{ font-size:13px; font-weight:700; overflow-wrap:anywhere; }
+.tl-meta{ font-size:11.5px; color:var(--ink-soft); margin-top:2px; line-height:1.6; overflow-wrap:anywhere; }
+.tl-detail{ font-size:12.5px; margin-top:3px; line-height:1.7; overflow-wrap:anywhere; }
+.tl-row--event .tl-meta{ margin-top:0; }
+.tl-link{
+  font:inherit; font-size:12.5px; font-weight:700; color:var(--blue);
+  background:none; border:none; box-shadow:none; padding:0 2px; cursor:pointer;
+  text-decoration:underline; min-height:0;
+}
+.tl-link:active{ transform:none; box-shadow:none; }
+/* G-04 计划卡：项目头区的 split 摘要 */
+.plan-card{ border:2px solid var(--line); background:var(--panel2); padding:8px 11px; margin:6px 0 8px; }
+.plan-card-title{ font-weight:900; font-size:13px; margin-bottom:4px; }
+.plan-card-row{ font-size:12.5px; line-height:1.7; overflow-wrap:anywhere; }
 /* a 标签版按钮（下载备份等直链动作，M5） */
 a.btn{
   display:inline-block; text-decoration:none; font:inherit; background:var(--accent); color:var(--accent-ink);
@@ -473,6 +495,12 @@ header{ flex-wrap:wrap; }
   /* ---- 任务墙：全宽单列（.task 本就是块级全宽）、操作按钮已由上方触控基线放大 ---- */
   .task{ padding:10px; }
   .task .tt{ font-size:13.5px; overflow-wrap:anywhere; }
+
+  /* ---- G-04 时间线/计划卡：单列纵排、长名单任意断行、无整页横滚 ---- */
+  .tl-row{ gap:6px; }
+  .tl-icon{ flex-basis:18px; }
+  .tl-link{ min-height:32px; display:inline-flex; align-items:center; }
+  .plan-card{ padding:8px; }
 
   /* ---- 宽表格：容器内横向滚动，整页不横滚 ---- */
   .table-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; }

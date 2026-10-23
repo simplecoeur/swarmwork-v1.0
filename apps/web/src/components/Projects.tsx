@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { fetchPipelineTemplates } from '../api';
+import { fetchPipelineTemplates, fetchTaskTimeline } from '../api';
 import { yuan } from '../utils';
+import TaskTimeline from './TaskTimeline';
 import { Badge, Button, Input, Select, type BadgeVariant } from './ui';
 import type { PipelineTemplate } from '../types';
 
@@ -177,9 +178,49 @@ function PipelineCard() {
   );
 }
 
+/**
+ * 计划卡（G-04）：项目头区呈现 split 步摘要——拆了 N 步、顺序与每步类型，
+ * 数据取自首个子任务时间线的 split 步（与子任务时间线同源同数据）。
+ */
+function ProjectPlanCard({ firstChildId }: { firstChildId: string | null }) {
+  const [split, setSplit] = useState<{ summary: string; subtasks: Array<{ index?: number; title?: string; type?: string }> } | null>(null);
+  useEffect(() => {
+    if (!firstChildId) return;
+    let stop = false;
+    fetchTaskTimeline(firstChildId)
+      .then((d) => {
+        if (stop) return;
+        const s = d.steps.find((x) => x.kind === 'split');
+        if (s) {
+          const subs = Array.isArray(s.detail.subtasks)
+            ? (s.detail.subtasks as Array<{ index?: number; title?: string; type?: string }>)
+            : [];
+          setSplit({ summary: s.summary, subtasks: subs });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stop = true;
+    };
+  }, [firstChildId]);
+  if (!split) return null;
+  return (
+    <div className="plan-card">
+      <div className="plan-card-title">🧩 执行计划 · {split.summary}</div>
+      {split.subtasks.map((s, i) => (
+        <div className="plan-card-row" key={i}>
+          {s.index ?? i + 1}. 《{s.title ?? ''}》{s.type ? `（${s.type}）` : ''}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ProjectList() {
-  const { S, teamName } = useApp();
+  const { S, teamName, memberName } = useApp();
   const [openId, setOpenId] = useState<string | null>(null);
+  // G-04：子任务行展开各自时间线（按任务 id，同一时刻只展开一条）
+  const [openTlId, setOpenTlId] = useState<string | null>(null);
   if (!S || !S.projects.length) return null;
 
   return (
@@ -212,18 +253,36 @@ function ProjectList() {
               </div>
               {open && (
                 <div style={{ marginTop: 4 }}>
+                  <ProjectPlanCard firstChildId={children[0]?.id ?? null} />
                   {children.length ? (
                     children.map((t) => (
-                      <div
-                        className="subtask"
-                        key={t.id}
-                        onClick={() => jumpToTask(t.id)}
-                        title="点击定位到任务墙卡片"
-                      >
-                        <span style={{ fontWeight: 700 }}>{t.title}</span>
-                        <Badge variant={taskChipCls[t.status] ?? 'default'}>{t.status}</Badge>
-                        <Badge>{t.type}</Badge>
-                        <span className="meta">{` · ${t.totalTokens || 0} token / ${yuan(t.totalCost)}`}</span>
+                      <div key={t.id}>
+                        <div
+                          className="subtask"
+                          onClick={() => jumpToTask(t.id)}
+                          title="点击定位到任务墙卡片"
+                        >
+                          <span style={{ fontWeight: 700 }}>{t.title}</span>
+                          <Badge variant={taskChipCls[t.status] ?? 'default'}>{t.status}</Badge>
+                          <Badge>{t.type}</Badge>
+                          <span className="meta">{` · ${t.totalTokens || 0} token / ${yuan(t.totalCost)} · 负责人：${memberName(t.assigneeId)}`}</span>
+                          <Button
+                            size="small"
+                            variant="gray"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenTlId((cur) => (cur === t.id ? null : t.id));
+                            }}
+                          >
+                            {openTlId === t.id ? '收起时间线' : '时间线'}
+                          </Button>
+                        </div>
+                        {openTlId === t.id ? (
+                          <TaskTimeline
+                            taskId={t.id}
+                            live={t.status !== '已完成' && t.status !== '已取消'}
+                          />
+                        ) : null}
                       </div>
                     ))
                   ) : (
