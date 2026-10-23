@@ -72,6 +72,12 @@ export const apiTestSchema = z.object({
     .optional(),
 });
 
+/** 资产引用（M8 §11.4，发单/skill 发单共用） */
+export const assetRefSchema = z.object({
+  assetId: z.string().min(1),
+  sections: z.array(z.string()).optional(),
+});
+
 export const taskCreateSchema = z.object({
   title: z.string().trim().min(1, '标题必填'),
   /** 任务类型为注册表 type_id（M6 起放宽为任意字符串，存在性在路由层查注册表） */
@@ -79,6 +85,8 @@ export const taskCreateSchema = z.object({
   brief: z.string().default(''),
   /** 参考资料文本（链接/附件说明，P1）：非空时以【参考资料】段拼入 brief */
   references: z.string().optional(),
+  /** 资产引用（M8 §11.4）：发单时按资产当前版本落快照 */
+  assetRefs: z.array(assetRefSchema).optional(),
   teamId: z.string().min(1),
   projectId: z.string().nullable().optional(),
   idempotencyKey: z.string().min(1).optional(),
@@ -261,6 +269,8 @@ export const skillDispatchSchema = z.object({
   teamId: z.string().min(1, '必须指定小组'),
   projectId: z.string().nullable().optional(),
   title: z.string().trim().min(1).optional(),
+  /** 资产引用（M8 §11.4） */
+  assetRefs: z.array(assetRefSchema).optional(),
 });
 
 export const skillTestRunSchema = z.object({
@@ -293,4 +303,65 @@ export const channelPushSchema = z.object({
   channelType: z.string().trim().min(1).default('mj'),
   taskId: z.string().nullable().optional(),
   projectId: z.string().nullable().optional(),
+});
+
+/* ---------- M8 资产 / 飞轮 / 流水线 / 提醒 ---------- */
+
+export const assetSaveSchema = z.object({
+  asset: z.object({
+    id: z.string().optional(),
+    typeId: z.string().trim().min(1, '资产类型必填'),
+    name: z.string().trim().min(1, '资产名必填'),
+    content: z
+      .object({
+        summary: z.string().optional(),
+        sections: z
+          .array(
+            z.object({
+              key: z.string().trim().min(1),
+              title: z.string().default(''),
+              body: z.string().default(''),
+            }),
+          )
+          .default([]),
+      })
+      .default({ sections: [] }),
+  }),
+});
+
+export const assetTypeSaveSchema = z.object({
+  assetType: z.object({
+    typeId: z.string().trim().min(1).optional(),
+    name: z.string().trim().min(1, '类型名必填'),
+    structureSchema: z.record(z.string(), z.unknown()).default({}),
+  }),
+});
+
+export const outcomeSchema = z.object({
+  verdict: z.enum(['effective', 'ineffective']),
+  metrics: z.record(z.string(), z.number()).default({}),
+  note: z.string().default(''),
+});
+
+export const sedimentSchema = z.object({
+  target: z.enum(['kb', 'skill']),
+  note: z.string().default(''),
+});
+
+export const redispatchSchema = z.object({
+  teamId: z.string().min(1).optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
+  title: z.string().trim().min(1).optional(),
+});
+
+export const pipelineRunSchema = z.object({
+  templateId: z.string().min(1),
+  teamId: z.string().min(1),
+  name: z.string().trim().min(1).optional(),
+  params: z.record(z.string(), z.unknown()).default({}),
+});
+
+export const notifyConfigSchema = z.object({
+  emailEnabled: z.boolean().default(false),
+  email: z.string().default(''),
 });

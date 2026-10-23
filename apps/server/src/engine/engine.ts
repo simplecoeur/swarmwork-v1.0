@@ -6,10 +6,13 @@ TaskStatus,
 TEMPERATURES,
 TYPE_ROLE,
 } from '@swarm/shared';
+import { resolveAssetSections } from '../domain/assetService';
 import { balanceMilli, trialBalanceMilli} from '../domain/costService';
+import { notifyOwner } from '../domain/notify';
 import { kbCapTokens, selectKbForInjection} from '../domain/kbService';
 import { DomainError, refreshProjectStatus, transitionTask, type TaskGuards} from '../domain/taskService';
 import { CircuitOpenError, LlmGateway} from '../llm/gateway';
+import { estimateTokens } from '../llm/parse';
 import type { Logger} from '../logger';
 import { decryptKey} from '../store/crypto';
 import {
@@ -136,6 +139,18 @@ for (const task of tasks) {
 if (inFlightHere >= limit) break;
 if (this.inFlight.has(task.id)) continue;
 if (task.status === TaskStatus.PENDING || task.status === TaskStatus.REJECTED) {
+/* 流水线顺序门控（§11.1）：同项目内 seq 更小者未终结（已完成/已取消）时，本单不领取 */
+if (task.seq != null && task.project_id) {
+const blockedBySibling = tasks.some(
+(x) =>
+x.project_id === task.project_id &&
+x.seq != null &&
+x.seq < task.seq! &&
+x.status !== TaskStatus.DONE &&
+x.status !== TaskStatus.CANCELLED,
+);
+if (blockedBySibling) continue;
+}
 if (this.circuitBlocks(task)) continue;
 inFlightHere++;
 void this.processClaim(task.id);
@@ -199,6 +214,7 @@ blocked_code: null,
 blocked_reason: '',
 });
 refreshProjectStatus(this.repos, fresh.project_id);
+notifyOwner(this.repos, wsOf(fresh), 'adjudication', '任务待裁决', `《${fresh.title}》：${note}，请到任务墙裁决`, fresh.id);
 this.logger.warn('engine', `任务转待裁决：${note}`, { taskId: task.id});
 }
 
@@ -252,7 +268,16 @@ this.toAdjudication(task, `单任务累计 token 已达预算上限 ${this.param
 return;
 }
 if (e.code === BlockedCode.INSUFFICIENT_BALANCE) {
-this.repos.setBlocked(taskId, e.code as BlockedCode, this.insufficientReason(task, api));
+const reason = this.insufficientReason(task, api);
+this.repos.setBlocked(taskId, e.code as BlockedCode, reason);
+notifyOwner(
+this.repos,
+ws,
+reason === TRIAL_EXHAUSTED_REASON ? 'trial_exhausted' : 'balance',
+reason === TRIAL_EXHAUSTED_REASON ? '体验额度已用完' : '余额不足，任务停工',
+`《${task.title}》：${reason}`,
+taskId,
+);
 return;
 }
 this.repos.setBlocked(taskId, e.code as BlockedCode, this.blockedMessage(e.code, api));
@@ -275,6 +300,7 @@ kbBinding = null;
 }
 }
 }
+const assetSections = resolveAssetSections(this.repos, taskId);
 const kbSel = selectKbForInjection(
 this.repos.listKb(ws),
 {
@@ -283,9 +309,14 @@ memberId: worker.id,
 userId: task.created_by_user_id?? null,
 queryText: `${task.title}\n${task.type}\n${task.brief}`,
 binding: kbBinding,
+assetSections,
 },
 kbCapTokens(this.params(ws).taskBudgetTokens || 0, task.total_tokens),
 );
+if (kbSel.assetIds.length) {
+this.repos.addTaskInjectedAssets(taskId, kbSel.assetIds);
+this.logger.info('engine', `资产注入 ${kbSel.assetIds.length} 份：${kbSel.assetIds.join(', ')}`, { taskId});
+}
 if (kbSel.entries.length) {
 this.repos.addTaskInjectedKb(
 taskId,
@@ -306,8 +337,27 @@ if (personalPrompt) {
 personalSection = `\n发单人个人要求（个人偏好，与任务说明冲突时以任务说明为准）：${personalPrompt}`;
 }
 }
+/* 项目内已完成成果（§11.1 流水线上下游衔接）：同项目已交付成果作为上下文注入，估算上限 4000 token */
+let projectSection = '';
+if (task.project_id) {
+const siblings = this.repos
+.listTasks(ws)
+.filter((t) => t.project_id === task.project_id && t.id !== taskId && t.status === TaskStatus.DONE && t.result)
+.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0) || (a.created_at < b.created_at ? -1 : 1));
+const chunks: string[] = [];
+let used = 0;
+for (const sib of siblings) {
+const chunk = `## 项目内已完成成果：《${sib.title}》\n${sib.result}`;
+const cost = estimateTokens(chunk);
+if (used + cost > 4000) break;
+chunks.push(chunk);
+used += cost;
+}
+if (chunks.length) projectSection = '\n以下为同项目已完成的成果，请在产出时衔接引用：\n\n' + chunks.join('\n\n') + '\n\n';
+}
 let workerUser =
 kbSel.section +
+projectSection +
 `任务标题：${task.title}\n任务类型：${task.type}\n任务说明：\n${task.brief || '（无补充说明）'}` +
 personalSection +
 '\n请直接产出完整成果正文，不要输出与成果无关的解释。';
@@ -492,6 +542,7 @@ undefined,
 { type: 'ai_member', id: reviewer.id, note: '审核打回满次转裁决'},
 );
 refreshProjectStatus(this.repos, fresh.project_id);
+notifyOwner(this.repos, ws, 'reject_max', '任务打回满次待裁决', `《${fresh.title}》已被审核打回 ${rejectCount} 次，转待裁决，请到任务墙处理`, taskId);
 this.logger.warn('engine', `打回满 ${MAX_REJECTS_BEFORE_ADJUDICATION} 次，转待裁决`, { taskId});
 } else {
 transitionTask(

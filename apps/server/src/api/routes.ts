@@ -59,7 +59,9 @@ import {
   type WorkspaceRow,
 } from '../store/repositories';
 import { nowIso, uid } from '../util';
+import { attachAssetRefs } from '../domain/assetService';
 import { registerM7Routes } from './m7';
+import { registerM8Routes } from './m8';
 import {
   adjudicateSchema,
   apiDeleteSchema,
@@ -203,6 +205,7 @@ function taskDto(row: TaskRow): TaskDto {
       }
     })(),
     isSkillTest: row.is_skill_test === 1,
+    injectedAssets: parseIdList(row.injected_assets ?? '[]'),
     totalTokens: row.total_tokens,
     totalCost: milliToYuan(row.total_cost_milli),
     createdAt: row.created_at,
@@ -1083,6 +1086,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       idempotencyKey?: string;
       skillId?: string | null;
       skillVersion?: number | null;
+      assetRefs?: Array<{ assetId: string; sections?: string[] }>;
     },
   ): { id: string; duplicated?: boolean } => {
     const team = repos.getTeam(body.teamId, ctx.workspaceId) ?? repos.listTeams(ctx.workspaceId)[0];
@@ -1131,6 +1135,14 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       skill_id: body.skillId ?? null,
       skill_version: body.skillVersion ?? null,
     };
+    // 资产引用先校验归属再落快照（M8 §11.4），避免任务建好后才发现资产不存在
+    if (body.assetRefs?.length) {
+      for (const ref of body.assetRefs) {
+        if (!repos.getAsset(ref.assetId, ctx.workspaceId)) {
+          fail(ErrorCode.NOT_FOUND, `资产「${ref.assetId}」不存在`, 404);
+        }
+      }
+    }
     repos.insertTask(row);
     repos.insertTaskEvent({
       task_id: id,
@@ -1141,6 +1153,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       to_status: TaskStatus.PENDING,
       note: '发单',
     });
+    if (body.assetRefs?.length) attachAssetRefs(repos, id, ctx.workspaceId, body.assetRefs);
     return { id };
   };
 
@@ -1492,4 +1505,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
 
   /* ================= M7 路由组（skill 系统 / 交付闭环 / 渠道适配器） ================= */
   registerM7Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit });
+
+  /* ================= M8 路由组（资产库 / 飞轮 / 成果库 / 台账 / 流水线 / 提醒） ================= */
+  registerM8Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit });
 }

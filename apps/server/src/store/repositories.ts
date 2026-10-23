@@ -83,6 +83,8 @@ export interface TaskRow {
   skill_version?: number | null;
   skill_params?: string;
   is_skill_test?: number;
+  injected_assets?: string;
+  seq?: number | null;
 }
 
 export interface LedgerRow {
@@ -275,6 +277,63 @@ export interface ChannelPushRow {
   updated_at: string;
 }
 
+/* ----- M8 新增行类型 ----- */
+export interface AssetTypeRow {
+  id: string;
+  type_id: string;
+  name: string;
+  structure_schema: string;
+  industry: string | null;
+  pack_id: string | null;
+  workspace_id: string | null;
+  created_at: string;
+}
+
+export interface AssetRow {
+  id: string;
+  workspace_id: string;
+  type_id: string;
+  name: string;
+  version: number;
+  content: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskAssetRefRow {
+  id: number;
+  task_id: string;
+  workspace_id: string;
+  asset_id: string;
+  asset_version: number;
+  sections: string;
+  created_at: string;
+}
+
+export interface OutcomeMarkRow {
+  id: number;
+  task_id: string;
+  workspace_id: string;
+  verdict: string;
+  metrics: string;
+  note: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface NotificationRow {
+  id: number;
+  workspace_id: string;
+  user_id: string | null;
+  type: string;
+  title: string;
+  body: string;
+  task_id: string | null;
+  read_at: string | null;
+  created_at: string;
+}
+
 const now = () => new Date().toISOString();
 const wsOf = (v: string | null | undefined): string => v ?? DEFAULT_WORKSPACE_ID;
 
@@ -461,8 +520,8 @@ export class Repos {
         `INSERT INTO tasks (id, project_id, team_id, assignee_id, title, type, brief, status, result,
           review_note, reject_reason, reject_count, blocked_reason, blocked_code, adjudicated,
           idempotency_key, total_tokens, total_cost_milli, heartbeat_at, injected_kb_ids, created_at, claimed_at, finished_at,
-          workspace_id, created_by_user_id, skill_id, skill_version, skill_params, is_skill_test)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          workspace_id, created_by_user_id, skill_id, skill_version, skill_params, is_skill_test, injected_assets, seq)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id, row.project_id, row.team_id, row.assignee_id, row.title, row.type, row.brief, row.status,
@@ -470,7 +529,7 @@ export class Repos {
         row.adjudicated, row.idempotency_key, row.total_tokens, row.total_cost_milli, row.heartbeat_at,
         row.injected_kb_ids, row.created_at, row.claimed_at, row.finished_at,
         wsOf(row.workspace_id), row.created_by_user_id ?? null, row.skill_id ?? null, row.skill_version ?? null,
-        row.skill_params ?? '{}', row.is_skill_test ?? 0,
+        row.skill_params ?? '{}', row.is_skill_test ?? 0, row.injected_assets ?? '[]', row.seq ?? null,
       );
   }
   /** 状态迁移专用写入口（domain 层 transitionTask 调用），同时更新心跳 */
@@ -1058,5 +1117,149 @@ export class Repos {
     return this.db
       .prepare('SELECT * FROM channel_pushes WHERE id = ? AND workspace_id = ?')
       .get(id, workspaceId) as unknown as ChannelPushRow | undefined;
+  }
+
+  /* ----- 资产库（M8 §11.4/§12.3） ----- */
+  listAssetTypesVisible(workspaceId: string, packId: string | null): AssetTypeRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM asset_types WHERE workspace_id = ?
+           OR (workspace_id IS NULL AND pack_id IS NULL)
+           OR (workspace_id IS NULL AND pack_id IS NOT NULL AND pack_id = ?)
+         ORDER BY created_at, id`,
+      )
+      .all(workspaceId, packId ?? '') as unknown as AssetTypeRow[];
+  }
+  insertAssetType(row: AssetTypeRow): void {
+    this.db
+      .prepare(
+        'INSERT INTO asset_types (id, type_id, name, structure_schema, industry, pack_id, workspace_id, created_at) VALUES (?,?,?,?,?,?,?,?)',
+      )
+      .run(row.id, row.type_id, row.name, row.structure_schema, row.industry, row.pack_id, row.workspace_id, row.created_at);
+  }
+  insertAsset(row: AssetRow): void {
+    this.db
+      .prepare(
+        'INSERT INTO assets (id, workspace_id, type_id, name, version, content, created_by, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
+      )
+      .run(row.id, row.workspace_id, row.type_id, row.name, row.version, row.content, row.created_by, row.created_at, row.updated_at);
+    this.insertAssetVersion(row.id, row.version, row.content);
+  }
+  insertAssetVersion(assetId: string, version: number, content: string): void {
+    this.db
+      .prepare('INSERT INTO asset_versions (asset_id, version, content, created_at) VALUES (?,?,?,?)')
+      .run(assetId, version, content, now());
+  }
+  updateAsset(row: AssetRow): void {
+    this.db
+      .prepare('UPDATE assets SET type_id=?, name=?, version=?, content=?, updated_at=? WHERE id=?')
+      .run(row.type_id, row.name, row.version, row.content, row.updated_at, row.id);
+  }
+  getAsset(id: string, workspaceId?: string): AssetRow | undefined {
+    if (workspaceId !== undefined) {
+      return this.db
+        .prepare('SELECT * FROM assets WHERE id = ? AND workspace_id = ?')
+        .get(id, workspaceId) as unknown as AssetRow | undefined;
+    }
+    return this.db.prepare('SELECT * FROM assets WHERE id = ?').get(id) as unknown as AssetRow | undefined;
+  }
+  listAssets(workspaceId: string): AssetRow[] {
+    return this.db
+      .prepare('SELECT * FROM assets WHERE workspace_id = ? ORDER BY created_at, id')
+      .all(workspaceId) as unknown as AssetRow[];
+  }
+  getAssetVersion(assetId: string, version: number): string | undefined {
+    const r = this.db
+      .prepare('SELECT content FROM asset_versions WHERE asset_id = ? AND version = ?')
+      .get(assetId, version) as { content: string } | undefined;
+    return r?.content;
+  }
+  insertTaskAssetRef(row: Omit<TaskAssetRefRow, 'id'>): void {
+    this.db
+      .prepare(
+        'INSERT INTO task_asset_refs (task_id, workspace_id, asset_id, asset_version, sections, created_at) VALUES (?,?,?,?,?,?)',
+      )
+      .run(row.task_id, row.workspace_id, row.asset_id, row.asset_version, row.sections, row.created_at);
+  }
+  listTaskAssetRefs(taskId: string): TaskAssetRefRow[] {
+    return this.db
+      .prepare('SELECT * FROM task_asset_refs WHERE task_id = ? ORDER BY id')
+      .all(taskId) as unknown as TaskAssetRefRow[];
+  }
+  /** 记录本单实际注入的资产（id@version 列表，多次执行尝试取并集） */
+  addTaskInjectedAssets(id: string, assetRefs: string[]): void {
+    if (!assetRefs.length) return;
+    const cur = this.getTask(id);
+    if (!cur) return;
+    let existing: string[] = [];
+    try {
+      existing = JSON.parse(cur.injected_assets || '[]') as string[];
+    } catch {
+      existing = [];
+    }
+    const merged = [...new Set([...existing, ...assetRefs])];
+    this.db.prepare('UPDATE tasks SET injected_assets=? WHERE id=?').run(JSON.stringify(merged), id);
+  }
+
+  /* ----- 成果标记 / 提醒 / 台账视图（M8） ----- */
+  insertOutcomeMark(row: Omit<OutcomeMarkRow, 'id'>): number {
+    const r = this.db
+      .prepare(
+        'INSERT INTO outcome_marks (task_id, workspace_id, verdict, metrics, note, created_by, created_at) VALUES (?,?,?,?,?,?,?)',
+      )
+      .run(row.task_id, row.workspace_id, row.verdict, row.metrics, row.note, row.created_by, row.created_at);
+    return Number(r.lastInsertRowid);
+  }
+  latestOutcomeMark(taskId: string): OutcomeMarkRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM outcome_marks WHERE task_id = ? ORDER BY id DESC LIMIT 1')
+      .get(taskId) as unknown as OutcomeMarkRow | undefined;
+  }
+  insertNotification(row: Omit<NotificationRow, 'id'>): number {
+    const r = this.db
+      .prepare(
+        'INSERT INTO notifications (workspace_id, user_id, type, title, body, task_id, read_at, created_at) VALUES (?,?,?,?,?,?,?,?)',
+      )
+      .run(row.workspace_id, row.user_id, row.type, row.title, row.body, row.task_id, row.read_at, row.created_at);
+    return Number(r.lastInsertRowid);
+  }
+  hasUnreadNotification(workspaceId: string, type: string, taskId: string | null): boolean {
+    const r = this.db
+      .prepare(
+        'SELECT COUNT(*) AS c FROM notifications WHERE workspace_id = ? AND type = ? AND task_id IS ? AND read_at IS NULL',
+      )
+      .get(workspaceId, type, taskId) as { c: number };
+    return r.c > 0;
+  }
+  listNotifications(workspaceId: string, limit = 50): NotificationRow[] {
+    return this.db
+      .prepare('SELECT * FROM notifications WHERE workspace_id = ? ORDER BY id DESC LIMIT ?')
+      .all(workspaceId, limit) as unknown as NotificationRow[];
+  }
+  countUnreadNotifications(workspaceId: string): number {
+    const r = this.db
+      .prepare('SELECT COUNT(*) AS c FROM notifications WHERE workspace_id = ? AND read_at IS NULL')
+      .get(workspaceId) as { c: number };
+    return r.c;
+  }
+  markNotificationRead(id: number, workspaceId: string): void {
+    this.db
+      .prepare('UPDATE notifications SET read_at = ? WHERE id = ? AND workspace_id = ? AND read_at IS NULL')
+      .run(now(), id, workspaceId);
+  }
+  markAllNotificationsRead(workspaceId: string): void {
+    this.db
+      .prepare('UPDATE notifications SET read_at = ? WHERE workspace_id = ? AND read_at IS NULL')
+      .run(now(), workspaceId);
+  }
+  listTaskEventsByWorkspace(workspaceId: string, limit = 200): Array<Record<string, unknown>> {
+    return this.db
+      .prepare('SELECT * FROM task_events WHERE workspace_id = ? ORDER BY id DESC LIMIT ?')
+      .all(workspaceId, limit) as unknown as Array<Record<string, unknown>>;
+  }
+  listAuditByWorkspace(workspaceId: string, limit = 200): Array<Record<string, unknown>> {
+    return this.db
+      .prepare('SELECT * FROM audit_logs WHERE workspace_id = ? ORDER BY id DESC LIMIT ?')
+      .all(workspaceId, limit) as unknown as Array<Record<string, unknown>>;
   }
 }

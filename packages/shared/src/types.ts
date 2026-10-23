@@ -349,3 +349,65 @@ export interface ChannelPushDto {
   createdAt: string;
   updatedAt: string;
 }
+
+/* ---------- M8 资产 / 飞轮 / 流水线 / 提醒 DTO ---------- */
+
+export interface AssetSectionDto {
+  key: string;
+  title: string;
+  body: string;
+}
+
+export interface AssetContentDto {
+  summary?: string;
+  sections: AssetSectionDto[];
+}
+
+export interface AssetDto {
+  id: string;
+  typeId: string;
+  name: string;
+  version: number;
+  content: AssetContentDto;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AssetTypeDto {
+  typeId: string;
+  name: string;
+  structureSchema: Record<string, unknown>;
+  industry: string | null;
+  packId: string | null;
+  workspaceId: string | null;
+}
+
+export interface OutcomeMarkDto {
+  id: number;
+  taskId: string;
+  verdict: 'effective' | 'ineffective';
+  metrics: Record<string, number>;
+  note: string;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+export interface NotificationDto {
+  id: number;
+  type: string;
+  title: string;
+  body: string;
+  taskId: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface PipelineTemplateDto {
+  id: string;
+  name: string;
+  industry: string | null;
+  description: string;
+  commonParams: Array<{ key: string; label: string; required: boolean }>;
+  steps: Array<{ skillSlug: string; title: string; available: boolean }>;
+}

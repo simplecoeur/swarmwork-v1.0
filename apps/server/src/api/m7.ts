@@ -8,6 +8,7 @@ import {
   type SkillDto,
 } from '@swarm/shared';
 import { hashPassword, verifyPassword } from '../auth/auth';
+import { attachAssetRefs } from '../domain/assetService';
 import { getChannelAdapter, type ChannelConfig } from '../domain/channels';
 import {
   projectToCsv,
@@ -373,6 +374,13 @@ export function registerM7Routes(
     if (body.projectId && !repos.getProject(body.projectId, ctx.workspaceId)) {
       fail(ErrorCode.NOT_FOUND, '项目不存在', 404);
     }
+    if (body.assetRefs?.length) {
+      for (const ref of body.assetRefs) {
+        if (!repos.getAsset(ref.assetId, ctx.workspaceId)) {
+          fail(ErrorCode.NOT_FOUND, `资产「${ref.assetId}」不存在`, 404);
+        }
+      }
+    }
     const task = createTaskFromSkill(repos, {
       skill,
       params: body.params,
@@ -382,6 +390,7 @@ export function registerM7Routes(
       userId: ctx.user.id,
       titleOverride: body.title,
     });
+    if (body.assetRefs?.length) attachAssetRefs(repos, task.id, ctx.workspaceId, body.assetRefs);
     audit(req, ctx, 'skill_dispatch', 'skill', id, `任务 ${task.id}`);
     return { ok: true, id: task.id, taskId: task.id };
   });
