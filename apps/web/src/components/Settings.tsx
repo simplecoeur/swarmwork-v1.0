@@ -14,6 +14,7 @@ import {
 } from '../api';
 import RegistryCard from './RegistryCard';
 import FeedbackDialog from './FeedbackDialog';
+import { ReopenGuideButton } from './Onboarding';
 import { NOTIFICATION_TYPE_LABELS, NOTIFICATION_TYPE_ORDER } from './NotificationBell';
 import { Badge, Button, Checkbox, Dialog, Field, Input, Select, Spinner, Switch, Textarea, useConfirm } from './ui';
 import type {
@@ -585,6 +586,7 @@ function HelpEntryCard() {
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Button variant="blue" onClick={() => setTab('help')}>打开帮助中心</Button>
         <Button variant="gray" onClick={() => setFeedbackOpen(true)}>✉️ 意见反馈</Button>
+        <ReopenGuideButton />
       </div>
       {feedbackOpen && <FeedbackDialog onClose={() => setFeedbackOpen(false)} />}
     </div>
