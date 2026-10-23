@@ -125,10 +125,14 @@ function Shell() {
 
   /* ----- Hash 深链：dialog → hash（写入时置抑制旗，避免 hashchange 回环） ----- */
   const suppressHashRef = useRef(false);
+  // 冷开修复（v1.3.0 验收发现）：初始 hash 必须先被 hash→dialog 应用一次，
+  // 否则 dialog=null 的首轮写入会把 #/skills 等深链冲成 #/（两 effect 同批执行的竞态）。
+  const hashInitRef = useRef(false);
   const dialogRef = useRef<ActiveDialog | null>(null);
   dialogRef.current = dialog;
   useEffect(() => {
     if (authStatus !== 'authed') return;
+    if (!hashInitRef.current) return;
     const target = hashForDialog(dialog);
     if (window.location.hash !== target) {
       suppressHashRef.current = true;
@@ -148,6 +152,7 @@ function Shell() {
         if (parsed) openDialog(parsed.name, { memberId: parsed.memberId, section: parsed.section });
         else closeDialog();
       }
+      hashInitRef.current = true;
     };
     apply();
     window.addEventListener('hashchange', apply);
