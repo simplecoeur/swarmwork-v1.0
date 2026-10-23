@@ -152,6 +152,7 @@ onChange={(e) => setTitle(e.target.value)}
 {typeTeamRow}
 <label>说明（越具体产出越好）</label>
 <Textarea
+className="brief-input"
 rows={4}
 placeholder="题材、受众、长度、风格、必须包含的内容……"
 value={brief}
@@ -202,6 +203,7 @@ onChange={(e) => setClientName(e.target.value)}
 </div>
 <label>方案说明（目标、范围、交付要求，组长据此拆子任务）</label>
 <Textarea
+className="brief-input"
 rows={4}
 placeholder="想达成什么、包含哪几块工作、每块的交付标准……"
 value={pBrief}
