@@ -3,7 +3,9 @@ import * as path from 'path';
 import { generateTempPassword, hashPassword } from '../auth/auth';
 import type { Logger } from '../logger';
 import { nowIso, uid } from '../util';
+import { copySkillSnapshot } from '../domain/skillService';
 import { ensureShortDramaPack, parseManifest, registerPackExtensions } from './industry';
+import { ensureOfficialSkills } from './officialSkills';
 import {
   DEFAULT_WORKSPACE_ID,
   type IndustryPackRow,
@@ -28,6 +30,7 @@ export async function ensurePlatform(
   ensureShortDramaPack(repos);
   const pack = repos.getIndustryPack('pack_short_drama');
   if (pack) registerPackExtensions(repos, pack);
+  ensureOfficialSkills(repos);
 
   if (repos.getUser(ADMIN_USER_ID)) return;
   const email = (process.env.SWARM_ADMIN_EMAIL || 'admin@swarm.local').toLowerCase();
@@ -80,6 +83,19 @@ export function seedGenericWorkspace(repos: Repos, workspaceId: string): void {
   });
   for (const m of makeMemberRows(teamId, '通用小组', true, workspaceId)) {
     repos.insertMember({ ...m, id: uid('member') });
+  }
+}
+
+/** 按行业包 manifest.skillSlugs 快照装入官方 skill（M7 §11.3：快照装入、装后脱钩；官方种子缺失时先补种） */
+export function installPackSkills(repos: Repos, workspaceId: string, ownerUserId: string, pack: IndustryPackRow): void {
+  const manifest = parseManifest(pack);
+  if (!manifest.skillSlugs.length) return;
+  ensureOfficialSkills(repos);
+  for (const slug of manifest.skillSlugs) {
+    const src = repos.getSkillBySlugPlatform(slug);
+    if (!src) continue;
+    if (repos.findInstalledCopy(workspaceId, src.id)) continue;
+    copySkillSnapshot(repos, src, workspaceId, ownerUserId);
   }
 }
 
@@ -160,8 +176,10 @@ export function provisionWorkspace(
       joined_at: nowIso(),
     });
     seedWorkspaceSettings(repos, ws.id);
-    if (pack) applyIndustryPack(repos, ws.id, pack);
-    else seedGenericWorkspace(repos, ws.id);
+    if (pack) {
+      applyIndustryPack(repos, ws.id, pack);
+      installPackSkills(repos, ws.id, ownerUserId, pack);
+    } else seedGenericWorkspace(repos, ws.id);
   });
   return ws;
 }

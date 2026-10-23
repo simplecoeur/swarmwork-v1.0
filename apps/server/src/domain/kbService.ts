@@ -12,6 +12,16 @@ import type { KbRow} from '../store/repositories';
 * 按优先级逐条纳入（整条计入，超限跳过该条继续看后续更小的条），token 按 llm/parse 同口径估算。
 */
 
+/** skill 知识绑定（§7.2）：执行时并入注入候选集——entryIds/tags 命中者强制入选并提优先，scopes 限定候选层级 */
+export interface KbBindingFilter {
+scopes?: string[];
+tags?: string[];
+entryIds?: string[];
+}
+
+/** 飞轮已验证规律标签（§11.5）：带此标签的条目在注入排序中高于未验证的历史成果 */
+export const VERIFIED_RULE_TAG = '爆款规律';
+
 export interface KbContext {
 teamId: string;
 /** 执行成员 id（成员级范围按此匹配） */
@@ -20,6 +30,10 @@ memberId: string | null;
 userId?: string | null;
 /** 检索文本：任务标题 + 类型 + 说明拼接 */
 queryText: string;
+/** 任务引用的 skill 的 kb_binding（M7） */
+binding?: KbBindingFilter | null;
+/** 任务显式引用的资产分段（M8 §11.4）：强制入选、优先级仅次于平台公共 */
+assetSections?: Array<{ id: string; text: string }> | null;
 }
 
 /** 关键词抽取：英文/数字词（≥2 字符，小写）+ 中文连续片段及其 2 字 bigram */
@@ -79,6 +93,8 @@ return `## ${entry.title}\n${entry.body}`;
 
 export interface KbSelection {
 entries: KbRow[];
+/** 实际注入的资产 id 列表（M8，按引用顺序、受上限裁剪后的结果） */
+assetIds: string[];
 /** 注入文本总估算 token（各条 formatKbEntry 之和） */
 totalTokens: number;
 /** 拼好的知识库 prompt 片段（无入选条目时为空串） */
@@ -98,11 +114,26 @@ return KB_INJECTION.NO_BUDGET_CAP_TOKENS;
 
 export function selectKbForInjection(entries: KbRow[], ctx: KbContext, capTokens: number): KbSelection {
 const keywords = extractKeywords(ctx.queryText);
+const binding = ctx.binding ?? null;
+const boundIds = new Set(binding?.entryIds ?? []);
+const boundTags = new Set(binding?.tags ?? []);
+const boundScopes = binding?.scopes?.length ? new Set(binding.scopes) : null;
 const candidates = entries
 .filter((e) => e.enabled === 1)
-.map((e) => ({ e, rank: kbScopeRank(e, ctx)}))
-.filter(({ e, rank}) => rank !== -1 && (rank <= 0 || kbMatches(e, keywords)))
-.sort((a, b) => a.rank - b.rank || (a.e.created_at < b.e.created_at? -1: a.e.created_at > b.e.created_at? 1: a.e.id < b.e.id? -1: 1));
+.filter((e) => !boundScopes || boundScopes.has(e.scope))
+.map((e) => {
+const rank = kbScopeRank(e, ctx);
+const tags = parseTags(e.tags);
+const forced = boundIds.has(e.id) || tags.some((t) => boundTags.has(t));
+// 排序档：平台公共 -3 < skill 绑定强制 -2 < 已验证规律 -1（§11.5：高于未验证历史成果）< 原 scope 档
+let sortRank = rank;
+if (forced) sortRank = -2;
+else if (tags.includes(VERIFIED_RULE_TAG)) sortRank = Math.min(rank, -1);
+return { e, rank, sortRank, forced};
+})
+.filter(({ rank, forced}) => rank !== -1 || forced)
+.filter(({ e, rank, forced}) => forced || rank <= 0 || kbMatches(e, keywords))
+.sort((a, b) => a.sortRank - b.sortRank || (a.e.created_at < b.e.created_at? -1: a.e.created_at > b.e.created_at? 1: a.e.id < b.e.id? -1: 1));
 
 const picked: KbRow[] = [];
 let total = 0;
@@ -113,10 +144,24 @@ picked.push(e);
 total += cost;
 }
 
-const section = picked.length
-? '\n以下资料来自公司知识库，请在产出时参考（与任务说明冲突时以任务说明为准）：\n\n' +
-picked.map(formatKbEntry).join('\n\n') +
-'\n\n'
-: '';
-return { entries: picked, totalTokens: total, section};
+// 资产分段（M8 §11.4）：整份引用、与知识条目共用同一注入上限，点名引用的部分优先（排在知识段之前组装）
+const assetTexts: string[] = [];
+const assetIds: string[] = [];
+for (const s of ctx.assetSections ?? []) {
+const cost = estimateTokens(s.text);
+if (total + cost > capTokens) continue;
+assetTexts.push(s.text);
+assetIds.push(s.id);
+total += cost;
+}
+
+const parts: string[] = [];
+if (assetTexts.length) {
+parts.push('\n以下为本任务引用的资产内容，请在产出时严格依据（与任务说明冲突时以任务说明为准）：\n\n' + assetTexts.join('\n\n'));
+}
+if (picked.length) {
+parts.push('\n以下资料来自公司知识库，请在产出时参考（与任务说明冲突时以任务说明为准）：\n\n' + picked.map(formatKbEntry).join('\n\n'));
+}
+const section = parts.length ? parts.join('\n') + '\n\n' : '';
+return { entries: picked, assetIds, totalTokens: total, section};
 }

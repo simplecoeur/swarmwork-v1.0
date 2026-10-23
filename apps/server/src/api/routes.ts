@@ -59,6 +59,7 @@ import {
   type WorkspaceRow,
 } from '../store/repositories';
 import { nowIso, uid } from '../util';
+import { registerM7Routes } from './m7';
 import {
   adjudicateSchema,
   apiDeleteSchema,
@@ -82,6 +83,7 @@ import {
   registryTaskTypeSchema,
   reviewStandardsSchema,
   switchWorkspaceSchema,
+  taskBatchSchema,
   taskCreateSchema,
   teamDeleteSchema,
   teamSaveSchema,
@@ -192,6 +194,15 @@ function taskDto(row: TaskRow): TaskDto {
     createdByUserId: row.created_by_user_id ?? null,
     skillId: row.skill_id ?? null,
     skillVersion: row.skill_version ?? null,
+    skillParams: (() => {
+      try {
+        const v = JSON.parse(row.skill_params || '{}') as unknown;
+        return v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+      } catch {
+        return {};
+      }
+    })(),
+    isSkillTest: row.is_skill_test === 1,
     totalTokens: row.total_tokens,
     totalCost: milliToYuan(row.total_cost_milli),
     createdAt: row.created_at,
@@ -1054,9 +1065,26 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   });
 
   /* ----- 任务 ----- */
-  app.post('/api/tasks', async (req) => {
-    const ctx = wsAuth(req);
-    const body = taskCreateSchema.parse(req.body ?? {});
+  /** 参考资料拼装（P1）：非空 references 以【参考资料】段追加到 brief 末尾 */
+  const withReferences = (brief: string, references?: string): string =>
+    references && references.trim()
+      ? `${brief}${brief ? '\n\n' : ''}【参考资料】\n${references.trim()}`
+      : brief;
+
+  const createOneTask = (
+    ctx: AuthCtx & { workspaceId: string },
+    body: {
+      title: string;
+      type: string;
+      brief: string;
+      references?: string;
+      teamId: string;
+      projectId?: string | null;
+      idempotencyKey?: string;
+      skillId?: string | null;
+      skillVersion?: number | null;
+    },
+  ): { id: string; duplicated?: boolean } => {
     const team = repos.getTeam(body.teamId, ctx.workspaceId) ?? repos.listTeams(ctx.workspaceId)[0];
     if (!team) fail(ErrorCode.VALIDATION, '还没有小组');
     const wsRow = repos.getWorkspace(ctx.workspaceId);
@@ -1068,7 +1096,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       const dup = repos
         .listTasks(ctx.workspaceId)
         .find((t) => t.idempotency_key === body.idempotencyKey);
-      if (dup) return { ok: true, id: dup.id, duplicated: true };
+      if (dup) return { id: dup.id, duplicated: true };
     }
     const role =
       repos.resolveRoleForType(body.type, ctx.workspaceId, packId) ?? TYPE_ROLE[body.type] ?? '文案';
@@ -1081,7 +1109,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       assignee_id: worker?.id ?? null,
       title: body.title,
       type: body.type,
-      brief: body.brief,
+      brief: withReferences(body.brief, body.references),
       status: TaskStatus.PENDING,
       result: '',
       review_note: '',
@@ -1113,7 +1141,35 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       to_status: TaskStatus.PENDING,
       note: '发单',
     });
-    return { ok: true, id };
+    return { id };
+  };
+
+  app.post('/api/tasks', async (req) => {
+    const ctx = wsAuth(req);
+    const body = taskCreateSchema.parse(req.body ?? {});
+    const r = createOneTask(ctx, body);
+    return { ok: true, id: r.id, ...(r.duplicated ? { duplicated: true } : {}) };
+  });
+
+  /** 批量发单（P1：一行一单；前端按行拆标题，共用类型/小组/说明后缀/参考资料） */
+  app.post('/api/tasks/batch', async (req) => {
+    const ctx = wsAuth(req);
+    const body = taskBatchSchema.parse(req.body ?? {});
+    const ids: string[] = [];
+    for (const item of body.items) {
+      const brief = [item.brief ?? '', body.briefSuffix].filter((s) => s && s.trim()).join('\n');
+      const r = createOneTask(ctx, {
+        title: item.title,
+        type: body.type,
+        brief,
+        references: body.references,
+        teamId: body.teamId,
+        projectId: body.projectId ?? null,
+      });
+      ids.push(r.id);
+    }
+    audit(req, ctx, 'batch_tasks', 'task', '', `批量发单 ${ids.length} 单`);
+    return { ok: true, ids, count: ids.length };
   });
 
   /** 任务详情（回传注入审计等全量字段，§10） */
@@ -1433,4 +1489,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     audit(req, ctx, 'create_industry_pack', 'industry_pack', row.id);
     return { ok: true, id: row.id };
   });
+
+  /* ================= M7 路由组（skill 系统 / 交付闭环 / 渠道适配器） ================= */
+  registerM7Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit });
 }

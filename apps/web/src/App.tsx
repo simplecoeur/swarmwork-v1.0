@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { AppProvider, useApp } from './context';
 import Office from './components/Office';
 import PublishForm from './components/PublishForm';
@@ -8,67 +9,142 @@ import Results from './components/Results';
 import CostCenter from './components/CostCenter';
 import KnowledgeBase from './components/KnowledgeBase';
 import Settings from './components/Settings';
+import Admin from './components/Admin';
+import NewWorkspaceModal from './components/NewWorkspace';
+import { AuthGate, ChangePasswordGate } from './components/AuthGate';
 import type { TabKey } from './types';
 
 function Shell() {
-  const { S, tab, setTab } = useApp();
+  const {
+    S, tab, setTab,
+    authStatus, user, workspaces, currentWorkspace, switchWorkspace, logout, toast,
+  } = useApp();
+  const [showNewWs, setShowNewWs] = useState(false);
+
+  // 鉴权门（M6）：探活中 / 未登录 / 强制改密，三种状态都不渲染主界面
+  if (authStatus === 'loading') {
+    return (
+      <div className="auth-wrap">
+        <div className="card">
+          <p className="hint" style={{ textAlign: 'center' }}>正在确认登录状态…</p>
+        </div>
+      </div>
+    );
+  }
+  if (authStatus === 'anon') return <AuthGate />;
+  if (user?.mustChangePassword) return <ChangePasswordGate />;
+
   const usable = S?.apis.some((a) => a.hasKey);
+  const wsName = currentWorkspace?.name ?? S?.workspace?.name ?? '';
 
   const navBtn = (t: TabKey, label: string) => (
     <button className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</button>
   );
 
+  async function onSwitch(id: string) {
+    if (!id || id === currentWorkspace?.id) return;
+    try {
+      await switchWorkspace(id);
+      toast('已切换空间');
+    } catch (e) {
+      toast('切换失败：' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
   return (
     <>
       <header>
-        <span className="logo">🐝 MJ 蜂群</span>
+        <span className="logo">🐝 干活蜂群</span>
         <div>
-          <h1>干活蜂群</h1>
+          <h1>干活蜂群{wsName ? ` · ${wsName}` : ''}</h1>
           <div className="sub">真干活的 AI 办公室 · 数据存储在服务器 · Key 加密保存</div>
+        </div>
+        <div className="wsbar">
+          <select
+            value={currentWorkspace?.id ?? ''}
+            onChange={(e) => onSwitch(e.target.value)}
+            title="切换空间（公司）"
+          >
+            {workspaces.length === 0 && <option value="">（暂无空间）</option>}
+            {workspaces.map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
+          <button className="mini-btn" onClick={() => setShowNewWs(true)}>＋开新公司</button>
         </div>
         <nav>
           {navBtn('office', '办公室')}
           {navBtn('kb', '知识库')}
           {navBtn('cost', '成本中心')}
           {navBtn('settings', '设置后台')}
+          {user?.isPlatformAdmin && navBtn('admin', '管理台')}
         </nav>
+        <div className="userinfo">
+          <span>
+            {user?.displayName}（{user?.email}）{user?.isPlatformAdmin ? ' · 平台管理员' : ''}
+          </span>
+          <button className="mini-btn" onClick={logout}>退出登录</button>
+        </div>
       </header>
 
-      {S && !usable && (
-        <div className="banner">
-          <b>还没有可用的 API：</b>请先到「设置后台」给至少一条 API 填上 Key，并到「成本中心」采购充值（余额大于 0 才能开工）。在此之前发布的任务会停在待分配。
-        </div>
-      )}
+      {showNewWs && <NewWorkspaceModal onClose={() => setShowNewWs(false)} />}
 
-      <main>
-        {tab === 'office' && (
-          <section>
-            <Office />
-            <div className="row" style={{ alignItems: 'flex-start' }}>
-              <PublishForm />
-              <Standards />
+      {!currentWorkspace ? (
+        <main>
+          <div className="card">
+            <h2>还没有公司空间</h2>
+            <p className="hint">
+              你的账号还没有加入任何空间。开一家新公司（选个行业包开局），就能进办公室给 AI 团队派活了。
+            </p>
+            <div style={{ marginTop: 10 }}>
+              <button className="btn" onClick={() => setShowNewWs(true)}>＋ 开新公司</button>
             </div>
-            <Projects />
-            <TaskWall />
-            <Results />
-          </section>
-        )}
-        {tab === 'kb' && (
-          <section>
-            <KnowledgeBase />
-          </section>
-        )}
-        {tab === 'cost' && (
-          <section>
-            <CostCenter />
-          </section>
-        )}
-        {tab === 'settings' && (
-          <section>
-            <Settings />
-          </section>
-        )}
-      </main>
+          </div>
+        </main>
+      ) : (
+        <>
+          {S && !usable && (
+            <div className="banner">
+              <b>还没有可用的 API：</b>请先到「设置后台」给至少一条 API 填上 Key，并到「成本中心」采购充值（余额大于 0 才能开工）。在此之前发布的任务会停在待分配。
+            </div>
+          )}
+
+          <main>
+            {tab === 'office' && (
+              <section>
+                <Office />
+                <div className="row" style={{ alignItems: 'flex-start' }}>
+                  <PublishForm />
+                  <Standards />
+                </div>
+                <Projects />
+                <TaskWall />
+                <Results />
+              </section>
+            )}
+            {tab === 'kb' && (
+              <section>
+                <KnowledgeBase />
+              </section>
+            )}
+            {tab === 'cost' && (
+              <section>
+                <CostCenter />
+              </section>
+            )}
+            {tab === 'settings' && (
+              <section>
+                <Settings />
+              </section>
+            )}
+            {tab === 'admin' && user?.isPlatformAdmin && (
+              <section>
+                <Admin />
+              </section>
+            )}
+          </main>
+        </>
+      )}
     </>
   );
 }

@@ -1,7 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AppState, Presets, TabKey } from './types';
-import { fetchPresets, fetchState, requestRaw } from './api';
+import type { AppState, AuthUser, Presets, TabKey, Workspace } from './types';
+import { fetchMe, fetchPresets, fetchState, requestRaw } from './api';
+
+export type AuthStatus = 'loading' | 'anon' | 'authed';
 
 interface AppContextValue {
   S: AppState | null;
@@ -17,6 +19,18 @@ interface AppContextValue {
   apiName: (id: string | null | undefined) => string;
   teamName: (id: string) => string;
   memberName: (id: string | null | undefined) => string;
+  /* ----- M6 多用户 ----- */
+  authStatus: AuthStatus;
+  user: AuthUser | null;
+  workspaces: Workspace[];
+  currentWorkspace: Workspace | null;
+  /** 重新拉 /api/auth/me 刷新登录态（登录/注册/改密/开公司后调用） */
+  refreshAuth: () => Promise<void>;
+  /** 登录：失败抛错（message 为后端原文），由登录页红字展示，不走 toast */
+  login: (email: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+  /** 切换当前空间：服务端切换 session 后整页数据 refresh */
+  switchWorkspace: (workspaceId: string) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -35,6 +49,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const toastTimer = useRef<number | undefined>(undefined);
   const tabRef = useRef(tab);
   tabRef.current = tab;
+
+  /* ----- M6 登录态 ----- */
+  const [authStatus, setAuthStatus] = useState<AuthStatus>('loading');
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
 
   const toast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -74,7 +94,60 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [toast],
   );
 
+  const refreshAuth = useCallback(async () => {
+    try {
+      const me = await fetchMe();
+      setUser(me.user);
+      setWorkspaces(me.workspaces);
+      setCurrentWorkspace(me.workspace);
+      setAuthStatus('authed');
+    } catch {
+      setUser(null);
+      setWorkspaces([]);
+      setCurrentWorkspace(null);
+      setAuthStatus('anon');
+    }
+  }, []);
+
+  const login = useCallback(
+    async (email: string, password: string) => {
+      await requestRaw('POST', '/api/auth/login', { email, password });
+      await refreshAuth();
+    },
+    [refreshAuth],
+  );
+
+  const logout = useCallback(async () => {
+    try {
+      await requestRaw('POST', '/api/auth/logout');
+    } catch {
+      /* 会话已失效也照常回登录页 */
+    }
+    setS(null);
+    setUser(null);
+    setWorkspaces([]);
+    setCurrentWorkspace(null);
+    setTab('office');
+    setAuthStatus('anon');
+  }, []);
+
+  const switchWorkspace = useCallback(
+    async (workspaceId: string) => {
+      await requestRaw('POST', '/api/auth/switch-workspace', { workspaceId });
+      setS(null);
+      await refreshAuth();
+      await refresh();
+    },
+    [refreshAuth, refresh],
+  );
+
+  // 启动先探登录态；未登录不拉 /api/state、不启动轮询
   useEffect(() => {
+    refreshAuth();
+  }, [refreshAuth]);
+
+  useEffect(() => {
+    if (authStatus !== 'authed') return;
     fetchPresets().then(setPresets).catch(() => {});
     refresh();
     // 每 2 秒轮询；在设置后台时不刷新，避免冲掉正在编辑的表单（与原生版一致）
@@ -82,7 +155,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (tabRef.current !== 'settings') refresh();
     }, 2000);
     return () => window.clearInterval(iv);
-  }, [refresh]);
+  }, [authStatus, refresh]);
 
   const apiName = useCallback(
     (id: string | null | undefined) => S?.apis.find((a) => a.id === id)?.name || '（已删除）',
@@ -99,7 +172,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   return (
     <AppContext.Provider
-      value={{ S, presets, tab, setTab, toast, refresh, post, send, apiName, teamName, memberName }}
+      value={{
+        S, presets, tab, setTab, toast, refresh, post, send, apiName, teamName, memberName,
+        authStatus, user, workspaces, currentWorkspace, refreshAuth, login, logout, switchWorkspace,
+      }}
     >
       {children}
       {toastMsg && <div className="toast" style={{ display: 'block' }}>{toastMsg}</div>}

@@ -84,6 +84,12 @@ export interface TaskDto {
   /** 引用的 skill（M7 落地，本轮仅数据位） */
   skillId?: string | null;
   skillVersion?: number | null;
+  /** skill 发单时的参数快照（M7 §5.1：一键再发/改参数再发的数据来源） */
+  skillParams?: Record<string, unknown>;
+  /** 是否 skill 试运行单（M7 §7.3：照常记账，任务上单列标记） */
+  isSkillTest?: boolean;
+  /** 本单实际注入的资产引用（M8 §11.4：资产 id@版本号，可追溯到版本） */
+  injectedAssets?: string[];
   totalTokens: number;
   totalCost: number;
   createdAt: string;
@@ -261,4 +267,85 @@ export interface IndustryPackDto {
   status: string;
   /** 包 manifest（JSON）：company_template/kb_seeds/skill_slugs/role_extensions 等 */
   content: Record<string, unknown>;
+}
+
+/* ---------- M7 skill 系统 DTO（方案 §7） ---------- */
+
+export interface SkillInputFieldDto {
+  key: string;
+  label: string;
+  type: 'text' | 'textarea' | 'select' | 'number' | 'checkbox';
+  required: boolean;
+  default?: string | number | boolean;
+  options?: string[];
+  placeholder?: string;
+}
+
+export interface SkillKbBindingDto {
+  scopes?: string[];
+  tags?: string[];
+  entryIds?: string[];
+}
+
+export type SkillStatus = 'draft' | 'published' | 'archived';
+export type SkillVisibility = 'private' | 'workspace' | 'public' | 'pending_review';
+
+export interface SkillDto {
+  id: string;
+  slug: string;
+  /** user 个人 / workspace 空间 / platform 平台官方 */
+  ownerType: string;
+  workspaceId: string | null;
+  name: string;
+  description: string;
+  role: string;
+  promptTemplate: string;
+  inputSchema: SkillInputFieldDto[];
+  kbBinding: SkillKbBindingDto;
+  outputSpec: string;
+  exampleInput: Record<string, unknown>;
+  exampleOutput: string;
+  version: number;
+  changelog: string;
+  status: SkillStatus;
+  visibility: SkillVisibility;
+  sourceSkillId: string | null;
+  sourceVersion: number | null;
+  installCount: number;
+  /** 快照来源有新版（源 version > 本副本 source_version） */
+  hasNewerSource: boolean;
+  /** 飞轮沉淀的已验证做法备注（M8 追加，渲染时拼入 brief） */
+  verifiedNotes: string;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 只读交付页（§11.2）：管理视图（token 明文仅创建时返回一次） */
+export interface DeliveryLinkDto {
+  id: string;
+  scope: 'task' | 'project';
+  taskId: string | null;
+  projectId: string | null;
+  title: string;
+  hasPassword: boolean;
+  expiresAt: string | null;
+  revoked: boolean;
+  viewCount: number;
+  createdAt: string;
+  /** 仅创建响应里带完整访问路径（含明文 token），之后不再返回 */
+  path?: string;
+}
+
+/** 渠道推送记录（§11.2/§12.4） */
+export interface ChannelPushDto {
+  id: number;
+  channelType: string;
+  taskId: string | null;
+  projectId: string | null;
+  status: string;
+  remoteRef: string;
+  message: string;
+  createdAt: string;
+  updatedAt: string;
 }

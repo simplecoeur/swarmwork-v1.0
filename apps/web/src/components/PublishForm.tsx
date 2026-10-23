@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../context';
+import { fetchRegistry } from '../api';
+import type { RegistryTaskType } from '../types';
+
+const FALLBACK_TYPES = ['文案', '调研', '代码'];
 
 export default function PublishForm() {
   const { S, post, refresh, toast } = useApp();
@@ -12,6 +16,21 @@ export default function PublishForm() {
   const [pName, setPName] = useState('');
   const [pBrief, setPBrief] = useState('');
   const [clientName, setClientName] = useState('');
+  // 任务类型改注册表驱动（M6）：拉 GET /api/registry 的 taskTypes，typeId 即提交值；拉不到回退默认三项
+  const [regTypes, setRegTypes] = useState<RegistryTaskType[]>([]);
+
+  useEffect(() => {
+    fetchRegistry()
+      .then((r) => setRegTypes(r.taskTypes))
+      .catch(() => setRegTypes([]));
+  }, []);
+
+  // 注册表就绪后，若当前选中值不在注册表内，切到第一项
+  useEffect(() => {
+    if (regTypes.length && !regTypes.some((t) => t.typeId === type)) {
+      setType(regTypes[0].typeId);
+    }
+  }, [regTypes, type]);
 
   // 与原生版一致：小组下拉跟随最新数据，尽量保留当前选择
   useEffect(() => {
@@ -81,9 +100,11 @@ export default function PublishForm() {
             <div>
               <label>类型</label>
               <select value={type} onChange={(e) => setType(e.target.value)}>
-                <option>文案</option>
-                <option>调研</option>
-                <option>代码</option>
+                {regTypes.length
+                  ? regTypes.map((t) => (
+                      <option key={t.typeId} value={t.typeId}>{t.name}</option>
+                    ))
+                  : FALLBACK_TYPES.map((t) => <option key={t}>{t}</option>)}
               </select>
             </div>
             <div>

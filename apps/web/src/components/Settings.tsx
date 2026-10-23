@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../context';
+import RegistryCard from './RegistryCard';
 import type { ApiItem, Member, Team } from '../types';
 
 const PROVIDERS = ['deepseek', 'openai', 'anthropic', 'custom'];
@@ -458,6 +459,8 @@ export default function Settings() {
           })}
         </div>
       </div>
+
+      <RegistryCard />
 
       <div className="card">
         <h2>运行参数</h2>

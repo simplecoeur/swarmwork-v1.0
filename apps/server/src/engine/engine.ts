@@ -263,6 +263,18 @@ throw e;
 if (!api) return; // transitionTask 守卫已保证 api 存在
 
 /* —— 知识库注入（§10 + §3.3）：候选集在空间层过滤，personal 仅发单人本人 —— */
+/* skill 任务并入该 skill 的 kb_binding（§7.2：entryIds/tags 强制入选、scopes 限定层级，仍受同一上限约束） */
+let kbBinding: { scopes?: string[]; tags?: string[]; entryIds?: string[]} | null = null;
+if (task.skill_id) {
+const skillRow = this.repos.getSkill(task.skill_id);
+if (skillRow) {
+try {
+kbBinding = JSON.parse(skillRow.kb_binding || '{}') as typeof kbBinding;
+} catch {
+kbBinding = null;
+}
+}
+}
 const kbSel = selectKbForInjection(
 this.repos.listKb(ws),
 {
@@ -270,6 +282,7 @@ teamId: task.team_id,
 memberId: worker.id,
 userId: task.created_by_user_id?? null,
 queryText: `${task.title}\n${task.type}\n${task.brief}`,
+binding: kbBinding,
 },
 kbCapTokens(this.params(ws).taskBudgetTokens || 0, task.total_tokens),
 );

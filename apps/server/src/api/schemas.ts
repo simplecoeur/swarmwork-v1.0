@@ -77,11 +77,31 @@ export const taskCreateSchema = z.object({
   /** 任务类型为注册表 type_id（M6 起放宽为任意字符串，存在性在路由层查注册表） */
   type: z.string().trim().min(1).default('文案'),
   brief: z.string().default(''),
+  /** 参考资料文本（链接/附件说明，P1）：非空时以【参考资料】段拼入 brief */
+  references: z.string().optional(),
   teamId: z.string().min(1),
   projectId: z.string().nullable().optional(),
   idempotencyKey: z.string().min(1).optional(),
   skillId: z.string().nullable().optional(),
   skillVersion: z.number().int().nullable().optional(),
+});
+
+/** 批量发单（P1：一行一单）：items 为标题行数组，共用 type/team/brief 后缀与参考资料 */
+export const taskBatchSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        title: z.string().trim().min(1, '标题必填'),
+        brief: z.string().optional(),
+      }),
+    )
+    .min(1, '至少一行标题')
+    .max(100, '单次批量最多 100 单'),
+  type: z.string().trim().min(1).default('文案'),
+  briefSuffix: z.string().default(''),
+  references: z.string().optional(),
+  teamId: z.string().min(1),
+  projectId: z.string().nullable().optional(),
 });
 
 export const adjudicateSchema = z.object({ taskId: z.string().min(1) });
@@ -198,4 +218,79 @@ export const trialApiSaveSchema = z.object({
     apiKey: z.string().optional(),
     clearKey: z.boolean().optional(),
   }),
+});
+
+/* ---------- M7 skill / 交付 / 渠道 ---------- */
+
+export const skillInputFieldSchema = z.object({
+  key: z.string().trim().min(1, '参数 key 必填'),
+  label: z.string().default(''),
+  type: z.enum(['text', 'textarea', 'select', 'number', 'checkbox']).default('text'),
+  required: z.boolean().default(false),
+  default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+  options: z.array(z.string()).optional(),
+  placeholder: z.string().optional(),
+});
+
+export const skillSaveSchema = z.object({
+  skill: z.object({
+    id: z.string().optional(),
+    slug: z.string().trim().min(1).optional(),
+    name: z.string().trim().min(1, '名称必填'),
+    description: z.string().default(''),
+    role: z.string().trim().min(1, '适用工种必填'),
+    promptTemplate: z.string().default(''),
+    inputSchema: z.array(skillInputFieldSchema).default([]),
+    kbBinding: z
+      .object({
+        scopes: z.array(z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+        entryIds: z.array(z.string()).optional(),
+      })
+      .default({}),
+    outputSpec: z.string().default(''),
+    exampleInput: z.record(z.string(), z.unknown()).default({}),
+    exampleOutput: z.string().default(''),
+    changelog: z.string().default(''),
+    visibility: z.enum(['private', 'workspace']).optional(),
+  }),
+});
+
+export const skillDispatchSchema = z.object({
+  params: z.record(z.string(), z.unknown()).default({}),
+  teamId: z.string().min(1, '必须指定小组'),
+  projectId: z.string().nullable().optional(),
+  title: z.string().trim().min(1).optional(),
+});
+
+export const skillTestRunSchema = z.object({
+  params: z.record(z.string(), z.unknown()).optional(),
+  teamId: z.string().min(1, '必须指定小组'),
+});
+
+export const skillInstallSchema = z.object({
+  upgrade: z.boolean().default(false),
+});
+
+export const deliveryCreateSchema = z.object({
+  scope: z.enum(['task', 'project']),
+  taskId: z.string().nullable().optional(),
+  projectId: z.string().nullable().optional(),
+  title: z.string().trim().min(1).optional(),
+  password: z.string().min(4, '口令至少 4 位').optional(),
+  expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
+});
+
+export const channelBindSchema = z.object({
+  channelType: z.string().trim().min(1).default('mj'),
+  baseUrl: z.string().trim().min(1, '渠道地址必填'),
+  token: z.string().optional(),
+  clearToken: z.boolean().optional(),
+  account: z.string().optional(),
+});
+
+export const channelPushSchema = z.object({
+  channelType: z.string().trim().min(1).default('mj'),
+  taskId: z.string().nullable().optional(),
+  projectId: z.string().nullable().optional(),
 });

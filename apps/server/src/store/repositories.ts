@@ -81,6 +81,8 @@ export interface TaskRow {
   created_by_user_id?: string | null;
   skill_id?: string | null;
   skill_version?: number | null;
+  skill_params?: string;
+  is_skill_test?: number;
 }
 
 export interface LedgerRow {
@@ -211,6 +213,64 @@ export interface IndustryPackRow {
   author: string;
   content: string;
   status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/* ----- M7 新增行类型 ----- */
+export interface SkillRow {
+  id: string;
+  slug: string;
+  owner_type: string;
+  owner_id: string | null;
+  workspace_id: string | null;
+  name: string;
+  description: string;
+  role: string;
+  prompt_template: string;
+  input_schema: string;
+  kb_binding: string;
+  output_spec: string;
+  example_input: string;
+  example_output: string;
+  version: number;
+  changelog: string;
+  status: string;
+  visibility: string;
+  source_skill_id: string | null;
+  source_version: number | null;
+  install_count: number;
+  verified_notes: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DeliveryLinkRow {
+  id: string;
+  token_hash: string;
+  workspace_id: string;
+  scope: string;
+  task_id: string | null;
+  project_id: string | null;
+  title: string;
+  password_hash: string;
+  expires_at: string | null;
+  revoked: number;
+  view_count: number;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface ChannelPushRow {
+  id: number;
+  workspace_id: string;
+  channel_type: string;
+  task_id: string | null;
+  project_id: string | null;
+  status: string;
+  remote_ref: string;
+  message: string;
   created_at: string;
   updated_at: string;
 }
@@ -401,8 +461,8 @@ export class Repos {
         `INSERT INTO tasks (id, project_id, team_id, assignee_id, title, type, brief, status, result,
           review_note, reject_reason, reject_count, blocked_reason, blocked_code, adjudicated,
           idempotency_key, total_tokens, total_cost_milli, heartbeat_at, injected_kb_ids, created_at, claimed_at, finished_at,
-          workspace_id, created_by_user_id, skill_id, skill_version)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          workspace_id, created_by_user_id, skill_id, skill_version, skill_params, is_skill_test)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id, row.project_id, row.team_id, row.assignee_id, row.title, row.type, row.brief, row.status,
@@ -410,6 +470,7 @@ export class Repos {
         row.adjudicated, row.idempotency_key, row.total_tokens, row.total_cost_milli, row.heartbeat_at,
         row.injected_kb_ids, row.created_at, row.claimed_at, row.finished_at,
         wsOf(row.workspace_id), row.created_by_user_id ?? null, row.skill_id ?? null, row.skill_version ?? null,
+        row.skill_params ?? '{}', row.is_skill_test ?? 0,
       );
   }
   /** 状态迁移专用写入口（domain 层 transitionTask 调用），同时更新心跳 */
@@ -869,5 +930,133 @@ export class Repos {
         'UPDATE industry_packs SET industry=?, name=?, version=?, description=?, author=?, content=?, status=?, updated_at=? WHERE id=?',
       )
       .run(row.industry, row.name, row.version, row.description, row.author, row.content, row.status, row.updated_at, row.id);
+  }
+
+  /* ----- skills（M7，方案 §7） ----- */
+  insertSkill(row: SkillRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO skills (id, slug, owner_type, owner_id, workspace_id, name, description, role,
+          prompt_template, input_schema, kb_binding, output_spec, example_input, example_output,
+          version, changelog, status, visibility, source_skill_id, source_version, install_count,
+          verified_notes, created_by, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.id, row.slug, row.owner_type, row.owner_id, row.workspace_id, row.name, row.description,
+        row.role, row.prompt_template, row.input_schema, row.kb_binding, row.output_spec,
+        row.example_input, row.example_output, row.version, row.changelog, row.status, row.visibility,
+        row.source_skill_id, row.source_version, row.install_count, row.verified_notes, row.created_by,
+        row.created_at, row.updated_at,
+      );
+  }
+  updateSkill(row: SkillRow): void {
+    this.db
+      .prepare(
+        `UPDATE skills SET slug=?, owner_type=?, owner_id=?, workspace_id=?, name=?, description=?, role=?,
+          prompt_template=?, input_schema=?, kb_binding=?, output_spec=?, example_input=?, example_output=?,
+          version=?, changelog=?, status=?, visibility=?, source_skill_id=?, source_version=?, install_count=?,
+          verified_notes=?, updated_at=? WHERE id=?`,
+      )
+      .run(
+        row.slug, row.owner_type, row.owner_id, row.workspace_id, row.name, row.description, row.role,
+        row.prompt_template, row.input_schema, row.kb_binding, row.output_spec, row.example_input,
+        row.example_output, row.version, row.changelog, row.status, row.visibility, row.source_skill_id,
+        row.source_version, row.install_count, row.verified_notes, row.updated_at, row.id,
+      );
+  }
+  getSkill(id: string): SkillRow | undefined {
+    return this.db.prepare('SELECT * FROM skills WHERE id = ?').get(id) as unknown as SkillRow | undefined;
+  }
+  getSkillBySlugPlatform(slug: string): SkillRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM skills WHERE slug = ? AND owner_type = 'platform'")
+      .get(slug) as unknown as SkillRow | undefined;
+  }
+  /** 平台库：官方（owner_type=platform）+ 上架审核通过（visibility=public），均为 published 且未归档 */
+  listLibrarySkills(): SkillRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM skills WHERE status = 'published' AND (owner_type = 'platform' OR visibility = 'public') ORDER BY install_count DESC, created_at, id",
+      )
+      .all() as unknown as SkillRow[];
+  }
+  /** 本空间 skill 全量（含自己的草稿/私有、空间共享、已装副本） */
+  listWorkspaceSkills(workspaceId: string): SkillRow[] {
+    return this.db
+      .prepare('SELECT * FROM skills WHERE workspace_id = ? ORDER BY created_at, id')
+      .all(workspaceId) as unknown as SkillRow[];
+  }
+  listPendingReviewSkills(): SkillRow[] {
+    return this.db
+      .prepare("SELECT * FROM skills WHERE visibility = 'pending_review' ORDER BY updated_at, id")
+      .all() as unknown as SkillRow[];
+  }
+  findInstalledCopy(workspaceId: string, sourceSkillId: string): SkillRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM skills WHERE workspace_id = ? AND source_skill_id = ?')
+      .get(workspaceId, sourceSkillId) as unknown as SkillRow | undefined;
+  }
+  bumpSkillInstallCount(id: string): void {
+    this.db.prepare('UPDATE skills SET install_count = install_count + 1 WHERE id = ?').run(id);
+  }
+
+  /* ----- 交付页 / 渠道推送（M7 §11.2） ----- */
+  insertDeliveryLink(row: DeliveryLinkRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO delivery_links (id, token_hash, workspace_id, scope, task_id, project_id, title,
+          password_hash, expires_at, revoked, view_count, created_by, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.id, row.token_hash, row.workspace_id, row.scope, row.task_id, row.project_id, row.title,
+        row.password_hash, row.expires_at, row.revoked, row.view_count, row.created_by, row.created_at,
+      );
+  }
+  getDeliveryByTokenHash(tokenHash: string): DeliveryLinkRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM delivery_links WHERE token_hash = ?')
+      .get(tokenHash) as unknown as DeliveryLinkRow | undefined;
+  }
+  getDelivery(id: string, workspaceId: string): DeliveryLinkRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM delivery_links WHERE id = ? AND workspace_id = ?')
+      .get(id, workspaceId) as unknown as DeliveryLinkRow | undefined;
+  }
+  listDeliveries(workspaceId: string): DeliveryLinkRow[] {
+    return this.db
+      .prepare('SELECT * FROM delivery_links WHERE workspace_id = ? ORDER BY created_at DESC, id')
+      .all(workspaceId) as unknown as DeliveryLinkRow[];
+  }
+  revokeDelivery(id: string): void {
+    this.db.prepare('UPDATE delivery_links SET revoked = 1 WHERE id = ?').run(id);
+  }
+  bumpDeliveryView(id: string): void {
+    this.db.prepare('UPDATE delivery_links SET view_count = view_count + 1 WHERE id = ?').run(id);
+  }
+  insertChannelPush(row: Omit<ChannelPushRow, 'id'>): number {
+    const r = this.db
+      .prepare(
+        `INSERT INTO channel_pushes (workspace_id, channel_type, task_id, project_id, status, remote_ref, message, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(row.workspace_id, row.channel_type, row.task_id, row.project_id, row.status, row.remote_ref, row.message, row.created_at, row.updated_at);
+    return Number(r.lastInsertRowid);
+  }
+  updateChannelPush(id: number, status: string, remoteRef: string, message: string): void {
+    this.db
+      .prepare('UPDATE channel_pushes SET status=?, remote_ref=?, message=?, updated_at=? WHERE id=?')
+      .run(status, remoteRef, message, now(), id);
+  }
+  listChannelPushes(workspaceId: string): ChannelPushRow[] {
+    return this.db
+      .prepare('SELECT * FROM channel_pushes WHERE workspace_id = ? ORDER BY id DESC')
+      .all(workspaceId) as unknown as ChannelPushRow[];
+  }
+  getChannelPush(id: number, workspaceId: string): ChannelPushRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM channel_pushes WHERE id = ? AND workspace_id = ?')
+      .get(id, workspaceId) as unknown as ChannelPushRow | undefined;
   }
 }
