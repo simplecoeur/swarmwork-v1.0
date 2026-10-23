@@ -21,6 +21,7 @@ import type { SearchItem } from './types';
 import FeedbackDialog from './components/FeedbackDialog';
 import NotificationBell, { NotificationCenterDialog } from './components/NotificationBell';
 import NewWorkspaceModal from './components/NewWorkspace';
+import StylePanel from './components/StylePanel';
 import { AuthGate, ChangePasswordGate } from './components/AuthGate';
 import { Button, Card, Dialog, DropdownMenu, Select, Spinner } from './components/ui';
 import type { TabKey } from './types';
@@ -41,6 +42,7 @@ function hashForDialog(d: ActiveDialog | null): string {
     case 'cost': return '#/cost';
     case 'schedules': return '#/schedules';
     case 'settings': return '#/settings';
+    case 'style': return '#/style';
     case 'member': return `#/member/${encodeURIComponent(d.memberId ?? '')}`;
   }
 }
@@ -58,6 +60,7 @@ function parseHash(hash: string): ActiveDialog | null {
   if (h === 'cost') return { name: 'cost' };
   if (h === 'schedules') return { name: 'schedules' };
   if (h === 'settings') return { name: 'settings' };
+  if (h === 'style') return { name: 'style' };
   if (h.startsWith('member/')) {
     const id = decodeURIComponent(h.slice('member/'.length));
     return id ? { name: 'member', memberId: id } : null;
@@ -238,6 +241,7 @@ function Shell() {
     cost: '成本中心',
     schedules: '定时任务',
     settings: '设置后台',
+    style: '装修',
   };
 
   return (
@@ -397,12 +401,24 @@ function Shell() {
               <Settings />
             </Sheet>
           )}
+          {dialog?.name === 'style' && (
+            <Sheet title={sheetTitle.style} onClose={closeDialog}>
+              <StylePanel />
+            </Sheet>
+          )}
           {dialog?.name === 'member' && dialog.memberId && (
             <Dialog open onClose={closeDialog} title="成员档案">
               <MemberEditor memberId={dialog.memberId} onClose={closeDialog} />
             </Dialog>
           )}
         </>
+      )}
+
+      {/* v1.3.0 F：办公室场景悬浮「装修」按钮（无弹窗打开时才显示；移动端抬到底部导航之上） */}
+      {currentWorkspace && tab === 'office' && !dialog && (
+        <button type="button" className="style-fab" onClick={() => openDialog('style')}>
+          🎨 装修
+        </button>
       )}
 
       {/* v1.1.0/v1.3.0 移动端底部固定栏（≤768px 才显示）：办公室/发单/任务墙/技能/更多 */}

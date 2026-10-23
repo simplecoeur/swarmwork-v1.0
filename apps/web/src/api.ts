@@ -370,7 +370,7 @@ export async function fetchTaskTimeline(taskId: string): Promise<TaskTimelineDat
 /* ---------- v1.3.0 A3 任务模板 / B3 生态公示 / F 办公室风格 ---------- */
 
 export async function fetchTemplates(): Promise<import('./types').TaskTemplate[]> {
-  const j = await requestRaw('GET', '/api/task-templates');
+  const j = await requestRaw('GET', '/api/templates');
   return (j.templates as import('./types').TaskTemplate[]) ?? [];
 }
 
@@ -380,20 +380,20 @@ export async function createTemplate(body: {
   briefTemplate: string;
   suggestedRole?: string;
 }): Promise<import('./types').TaskTemplate> {
-  const j = await requestRaw('POST', '/api/task-templates', body);
+  const j = await requestRaw('POST', '/api/templates', body);
   return j.template as import('./types').TaskTemplate;
 }
 
-/** 任务墙「存为模板」：以既有任务为蓝本生成本空间模板 */
+/** 任务墙「存为模板」：以既有任务为蓝本生成本空间模板（taskId 走路径、无 body） */
 export async function createTemplateFromTask(
   taskId: string,
 ): Promise<import('./types').TaskTemplate> {
-  const j = await requestRaw('POST', '/api/task-templates/from-task', { taskId });
+  const j = await requestRaw('POST', `/api/templates/from-task/${taskId}`);
   return j.template as import('./types').TaskTemplate;
 }
 
 export async function deleteTemplate(id: string): Promise<void> {
-  await requestRaw('DELETE', `/api/task-templates/${id}`);
+  await requestRaw('DELETE', `/api/templates/${id}`);
 }
 
 /** B3 平台库最新动态（上架/精选公示） */
@@ -420,10 +420,78 @@ export async function putOfficeStyle(
   return (j.style as import('./types').OfficeStyleConfig) ?? style;
 }
 
-/** F 风格模板库（官方 + 平台库 + 本空间） */
-export async function fetchStyleTemplates(): Promise<import('./types').OfficeStyleTemplate[]> {
-  const j = await requestRaw('GET', '/api/office-style/templates');
-  return (j.templates as import('./types').OfficeStyleTemplate[]) ?? [];
+/** F 风格模板 DTO（GET /api/style-templates 的行：config 与 style 同义双字段） */
+export interface StyleTemplateItem {
+  id: string;
+  name: string;
+  config: import('./types').OfficeStyleConfig;
+  style: import('./types').OfficeStyleConfig;
+  visibility: string;
+  applyCount: number;
+  contributorName: string | null;
+  contributorWorkspaceName: string | null;
+  ownerType: string;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt?: string;
+  workspaceId?: string | null;
+}
+
+export interface StyleTemplatesResult {
+  mine: StyleTemplateItem[];
+  library: StyleTemplateItem[];
+}
+
+/** F 风格模板库：GET /api/style-templates → { mine, library } */
+export async function fetchStyleTemplates(): Promise<StyleTemplatesResult> {
+  const j = await requestRaw('GET', '/api/style-templates');
+  return {
+    mine: (j.mine as StyleTemplateItem[]) ?? [],
+    library: (j.library as StyleTemplateItem[]) ?? [],
+  };
+}
+
+/** F 存为风格模板（visibility 初始 private，提交审核后管理员过审进平台库） */
+export async function createStyleTemplate(
+  name: string,
+  config: import('./types').OfficeStyleConfig,
+): Promise<StyleTemplateItem> {
+  const j = await requestRaw('POST', '/api/style-templates', { name, config });
+  return j.template as StyleTemplateItem;
+}
+
+export async function submitStyleTemplateReview(id: string): Promise<void> {
+  await requestRaw('POST', `/api/style-templates/${id}/submit-review`);
+}
+
+/** 套用风格模板：服务端直接写入当前空间风格并计 applyCount，返回套用后的风格 */
+export async function applyStyleTemplate(
+  id: string,
+): Promise<import('./types').OfficeStyleConfig> {
+  const j = await requestRaw('POST', `/api/style-templates/${id}/apply`);
+  return j.style as import('./types').OfficeStyleConfig;
+}
+
+/** F 管理员：待审核风格模板（服务端第二阶段端点） */
+export async function fetchAdminStyleTemplatesPending(): Promise<StyleTemplateItem[]> {
+  const j = await requestRaw('GET', '/api/admin/style-templates/pending');
+  return (j.templates as StyleTemplateItem[]) ?? [];
+}
+
+export async function adminApproveStyleTemplate(id: string): Promise<void> {
+  await requestRaw('POST', `/api/admin/style-templates/${id}/approve`);
+}
+
+export async function adminRejectStyleTemplate(id: string, reason: string): Promise<void> {
+  await requestRaw('POST', `/api/admin/style-templates/${id}/reject`, { reason });
+}
+
+/** F 风格图片上传（multipart，字段名 'file' 与头像上传一致）→ { fileId, url } */
+export async function uploadStyleImage(file: File): Promise<{ fileId: string; url: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  const j = await postForm('/api/style-images', form);
+  return { fileId: String(j.fileId ?? ''), url: String(j.url ?? '') };
 }
 
 /* ---------- v1.3.0 G 晨报与签到 ---------- */

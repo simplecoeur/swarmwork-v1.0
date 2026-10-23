@@ -693,3 +693,55 @@ header{ flex-wrap:wrap; }
   .shell-quick{ gap:8px; }
   .tpl-card{ flex-basis:180px; max-width:180px; }
 }
+
+/* ---------- v1.3.0 F 公司风格定制（装修面板 / 悬浮按钮 / 模板卡） ---------- */
+.style-fab{
+  position:fixed; right:20px; bottom:20px; z-index:40;
+  border:2px solid var(--line); background:var(--accent); color:var(--accent-ink);
+  font-weight:900; font-size:14px; padding:10px 16px; cursor:pointer;
+  box-shadow:var(--shadow-sm);
+}
+.style-fab:active{ transform:translate(1px,1px); box-shadow:none; }
+.style-panel{ display:flex; flex-direction:column; gap:6px; }
+.style-sec{ font-size:14px; font-weight:900; margin:14px 0 4px; border-bottom:2px solid var(--line); padding-bottom:4px; }
+.style-color-row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0; }
+.style-color-label{ flex:0 0 44px; font-weight:700; font-size:13px; }
+.style-swatches{ display:flex; gap:5px; flex-wrap:wrap; }
+.style-swatch{
+  width:24px; height:24px; padding:0; cursor:pointer;
+  border:2px solid var(--line); box-shadow:none;
+}
+.style-swatch.on{ outline:2px solid var(--ink); outline-offset:1px; }
+.style-color-input{ width:38px; height:28px; padding:0; border:2px solid var(--line); background:var(--panel2); cursor:pointer; }
+.style-color-hex{ font-size:12px; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+.style-furn-row{ display:flex; align-items:center; gap:10px; margin:4px 0; }
+.style-furn-label{ flex:0 0 76px; font-weight:700; font-size:13px; }
+.style-furn-row .ui-select-root, .style-furn-row select{ flex:1; }
+.style-upload-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:6px 0; }
+.style-thumb{ width:72px; height:48px; object-fit:cover; border:2px solid var(--line); }
+.style-combo-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:6px 0; }
+.style-combo-name{ font-weight:900; }
+.style-save-row{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:6px 0; }
+.style-save-row input{ flex:1; min-width:180px; }
+.style-tpl-group{ font-size:12.5px; font-weight:900; color:var(--ink-soft); margin:10px 0 4px; }
+.style-tpl-grid{ display:flex; gap:8px; flex-wrap:wrap; }
+.style-tpl-card{
+  flex:1 1 200px; max-width:260px; border:2px solid var(--line); background:var(--panel2);
+  padding:8px 10px; box-shadow:var(--shadow-sm);
+}
+.style-tpl-head{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.style-tpl-name{ font-weight:900; font-size:13.5px; overflow-wrap:anywhere; }
+.style-tpl-swatches{ display:inline-flex; align-items:center; gap:4px; margin-top:5px; }
+.style-tpl-swatches > span{ width:16px; height:16px; border:1.5px solid var(--line); display:inline-block; }
+.style-tpl-swatches > span.style-tpl-pattern{ width:auto; height:auto; border:none; font-size:12px; color:var(--ink-soft); margin-left:4px; }
+.style-tpl-actions{ display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; align-items:center; }
+.style-admin-swatches{ display:inline-flex; gap:4px; vertical-align:middle; }
+.style-admin-swatches > span{ width:16px; height:16px; border:1.5px solid var(--line); display:inline-block; }
+.style-admin-thumbs{ display:flex; gap:8px; margin-top:6px; flex-wrap:wrap; }
+.style-admin-thumbs img{ width:96px; height:64px; object-fit:cover; border:2px solid var(--line); }
+
+@media (max-width:768px){
+  /* 装修悬浮按钮抬到底部导航之上，避免遮挡 */
+  .style-fab{ bottom:76px; right:12px; }
+  .style-tpl-card{ flex-basis:100%; max-width:100%; }
+}
