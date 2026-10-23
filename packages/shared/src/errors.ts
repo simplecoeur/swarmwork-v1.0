@@ -12,6 +12,12 @@ export const ErrorCode = {
   PROVIDER_ERROR: 'PROVIDER_ERROR',
   CIRCUIT_OPEN: 'CIRCUIT_OPEN',
   INTERNAL: 'INTERNAL',
+  /** 未登录或会话失效（M6） */
+  UNAUTHORIZED: 'UNAUTHORIZED',
+  /** 已登录但无权（非管理员/须先改密等，M6） */
+  FORBIDDEN: 'FORBIDDEN',
+  /** 登录失败次数过多，账号临时锁定（M6） */
+  ACCOUNT_LOCKED: 'ACCOUNT_LOCKED',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

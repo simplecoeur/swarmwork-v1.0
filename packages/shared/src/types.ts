@@ -79,6 +79,11 @@ export interface TaskDto {
   adjudicated: boolean;
   /** 本单实际注入的知识库条目 ids（注入审计，§10）；多次执行尝试取并集 */
   injectedKbIds: string[];
+  /** 发单人（登录用户，M6）；存量/系统任务为 null */
+  createdByUserId?: string | null;
+  /** 引用的 skill（M7 落地，本轮仅数据位） */
+  skillId?: string | null;
+  skillVersion?: number | null;
   totalTokens: number;
   totalCost: number;
   createdAt: string;
@@ -115,9 +120,13 @@ export interface PurchaseDto {
   ts: string;
   apiId: string;
   amountYuan: number;
+  /** purchase 普通采购 / trial_grant 体验额度发放（M6） */
+  type?: string;
 }
 
 export interface StateDto {
+  /** 当前会话空间（M6 多租户） */
+  workspace?: { id: string; name: string };
   apis: ApiDto[];
   defaultApiId: string | null;
   teams: TeamDto[];
@@ -197,4 +206,59 @@ export interface CostReportDto {
   priciestTask: { id: string; title: string; totalTokens: number; costYuan: number } | null;
   /** 裁决统计（§15.2）：单列待裁决与裁决通过数 */
   adjudication: { pending: number; passed: number };
+  /** 按发单人（登录用户）维度聚合（M6 §8）；存量无发单人任务归入 userId=null */
+  byUser?: Array<{ userId: string | null; totalTokens: number; costYuan: number; tasks: number }>;
+}
+
+/* ---------- M6 多用户平台 DTO ---------- */
+
+export interface AuthUserDto {
+  id: string;
+  email: string;
+  displayName: string;
+  status: string;
+  isPlatformAdmin: boolean;
+  mustChangePassword: boolean;
+}
+
+export interface WorkspaceDto {
+  id: string;
+  name: string;
+  ownerUserId: string;
+  status: string;
+  industryPackId: string | null;
+  role: string;
+}
+
+export interface RegistryRoleDto {
+  roleId: string;
+  name: string;
+  personaTemplate: string;
+  color: string;
+  icon: string;
+  industry: string | null;
+  packId: string | null;
+  workspaceId: string | null;
+  isSystem: boolean;
+}
+
+export interface RegistryTaskTypeDto {
+  typeId: string;
+  name: string;
+  roleId: string;
+  industry: string | null;
+  packId: string | null;
+  workspaceId: string | null;
+}
+
+export interface IndustryPackDto {
+  id: string;
+  industry: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  status: string;
+  /** 包 manifest（JSON）：company_template/kb_seeds/skill_slugs/role_extensions 等 */
+  content: Record<string, unknown>;
 }

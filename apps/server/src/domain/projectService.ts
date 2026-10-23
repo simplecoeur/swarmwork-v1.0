@@ -43,9 +43,17 @@ export async function createProject(
   repos: Repos,
   gateway: LlmGateway,
   logger: Logger,
-  input: { name: string; brief: string; teamId: string; clientName: string },
+  input: {
+    name: string;
+    brief: string;
+    teamId: string;
+    clientName: string;
+    workspaceId?: string;
+    createdByUserId?: string | null;
+  },
 ): Promise<{ projectId: string; taskIds: string[] }> {
-  const team = repos.getTeam(input.teamId);
+  const ws = input.workspaceId ?? 'ws_default';
+  const team = repos.getTeam(input.teamId, ws);
   if (!team) throw new Error('小组不存在');
   const projectId = uid('proj');
   const ts = nowIso();
@@ -57,19 +65,21 @@ export async function createProject(
     client_name: input.clientName,
     status: '进行中',
     created_at: ts,
+    workspace_id: ws,
   });
 
   const fallback: SubtaskSpec[] = [{ title: input.name, type: '文案', brief: input.brief }];
   let specs = fallback;
 
-  const apiId = team.api_id || repos.getSetting<string | null>('defaultApiId', null);
-  const api = apiId ? repos.getApi(apiId) : undefined;
-  const leader = repos.teamMember(input.teamId, '组长');
-  if (api && leader && decryptKey(api.api_key_enc) && balanceMilli(repos, api.id) > 0) {
+  const apiId = team.api_id || repos.getSetting<string | null>('defaultApiId', null, ws);
+  const api = apiId ? repos.getApi(apiId, ws) : undefined;
+  const leader = repos.teamMember(input.teamId, '组长', ws);
+  if (api && leader && decryptKey(api.api_key_enc) && balanceMilli(repos, api.id, ws) > 0) {
     try {
       const out = await gateway.call({
         taskId: projectId,
         teamId: input.teamId,
+        workspaceId: ws,
         api,
         stage: '执行',
         idempotencyKey: `${projectId}:split:0`,
@@ -127,6 +137,10 @@ export async function createProject(
       created_at: nowIso(),
       claimed_at: null,
       finished_at: null,
+      workspace_id: ws,
+      created_by_user_id: input.createdByUserId ?? null,
+      skill_id: null,
+      skill_version: null,
     };
     repos.insertTask(row);
     taskIds.push(id);

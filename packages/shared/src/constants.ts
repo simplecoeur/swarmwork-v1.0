@@ -24,14 +24,18 @@ export const ENGINE = {
   STALE_MS: 10 * 60_000,
 } as const;
 
-/** 工种与任务类型映射 */
+/**
+ * 工种与任务类型（M6 起已退役为「注册表种子默认值」）：
+ * 运行时工种/任务类型以服务端 roles/task_types 注册表为准（平台通用 + 行业包 + 空间自定义），
+ * 本常量仅作注册表种子与前端占位使用，不再是封闭枚举。Role/TaskType 因此放宽为 string。
+ */
 export const ROLES = ['组长', '研究员', '文案', '程序员', '审核'] as const;
-export type Role = (typeof ROLES)[number];
+export type Role = string;
 
 export const TASK_TYPES = ['文案', '调研', '代码'] as const;
-export type TaskType = (typeof TASK_TYPES)[number];
+export type TaskType = string;
 
-export const TYPE_ROLE: Readonly<Record<TaskType, Role>> = {
+export const TYPE_ROLE: Readonly<Record<string, string>> = {
   文案: '文案',
   调研: '研究员',
   代码: '程序员',
@@ -53,9 +57,12 @@ export const PROVIDER_PRESETS: Readonly<
 export const LEDGER_STAGES = ['执行', '审核', '重做'] as const;
 export type LedgerStage = (typeof LEDGER_STAGES)[number];
 
-/** 知识库条目范围（M3 一期：scope 仅作检索范围用，不做权限体系） */
-export const KB_SCOPES = ['company', 'team', 'member'] as const;
-export type KbScope = (typeof KB_SCOPES)[number];
+/**
+ * 知识库条目范围（M6 扩展）：company 空间级 / team 小组级 / personal 个人级（owner_user_id）/
+ * platform 平台公共（workspace_id 为 NULL）。'member' 为 M3 旧值，迁移后折算为 personal，保留在枚举中兼容旧数据。
+ */
+export const KB_SCOPES = ['company', 'team', 'member', 'personal', 'platform'] as const;
+export type KbScope = string;
 
 /** 知识库注入护栏（§10 + §15.1 上下文裁剪口径） */
 export const KB_INJECTION = {

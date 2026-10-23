@@ -27,9 +27,17 @@ export interface TaskGuards {
   budgetTokens(): number;
 }
 
+/** 状态迁移事件的触发者（M6 task_events 底座）：user 登录用户 / engine 引擎 / ai_member 执行或审核成员 */
+export interface TaskActor {
+  type: 'user' | 'engine' | 'ai_member';
+  id?: string | null;
+  note?: string;
+}
+
 /**
  * 状态迁移统一入口（设计 §6）：校验合法迁移 + 守卫，禁止各处直接改 status。
  * 返回迁移后的任务；守卫不满足时抛 DomainError（引擎据此置 blocked 覆盖层）。
+ * M6：每次成功迁移顺手落一条 task_events（方案 §5）。
  */
 export function transitionTask(
   repos: Repos,
@@ -37,6 +45,7 @@ export function transitionTask(
   to: TaskStatusT,
   patch: Partial<TaskRow> = {},
   guards?: TaskGuards,
+  actor?: TaskActor,
 ): TaskRow {
   if (!canTransition(task.status, to)) {
     throw new DomainError(
@@ -77,6 +86,15 @@ export function transitionTask(
   repos.updateTaskStatus(task.id, to, next);
   const updated = repos.getTask(task.id);
   if (!updated) throw new DomainError(ErrorCode.NOT_FOUND, '任务不存在');
+  repos.insertTaskEvent({
+    task_id: task.id,
+    workspace_id: task.workspace_id ?? null,
+    actor_type: actor?.type ?? 'engine',
+    actor_id: actor?.id ?? null,
+    from_status: task.status,
+    to_status: to,
+    note: actor?.note ?? '',
+  });
   return updated;
 }
 
@@ -89,7 +107,9 @@ export function refreshProjectStatus(repos: Repos, projectId: string | null): vo
   if (!projectId) return;
   const project = repos.getProject(projectId);
   if (!project) return;
-  const children = repos.listTasks().filter((t) => t.project_id === projectId);
+  const children = repos
+    .listTasks(project.workspace_id ?? undefined)
+    .filter((t) => t.project_id === projectId);
   const live = children.filter((t) => t.status !== TaskStatus.CANCELLED);
   let status = project.status;
   if (children.length > 0 && live.length > 0 && live.every((t) => t.status === TaskStatus.DONE)) {
@@ -108,7 +128,7 @@ export function refreshProjectStatus(repos: Repos, projectId: string | null): vo
  * 取消任务（终态 已取消）：仅「待领取 / 被打回」与带 blocked 覆盖层的停工任务可取消；
  * 执行中（正在调用模型）、待裁决、已完成、已取消均拒绝。
  */
-export function cancelTask(repos: Repos, task: TaskRow): TaskRow {
+export function cancelTask(repos: Repos, task: TaskRow, actor?: TaskActor): TaskRow {
   const blocked = task.blocked_code !== null;
   const cancellable =
     task.status === TaskStatus.PENDING ||
@@ -122,12 +142,19 @@ export function cancelTask(repos: Repos, task: TaskRow): TaskRow {
         : `当前状态「${task.status}」不能取消（只有待领取/被打回/停工中的任务可取消）`,
     );
   }
-  const next = transitionTask(repos, task, TaskStatus.CANCELLED, {
-    finished_at: new Date().toISOString(),
-    blocked_code: null,
-    blocked_reason: '',
-    heartbeat_at: null,
-  });
+  const next = transitionTask(
+    repos,
+    task,
+    TaskStatus.CANCELLED,
+    {
+      finished_at: new Date().toISOString(),
+      blocked_code: null,
+      blocked_reason: '',
+      heartbeat_at: null,
+    },
+    undefined,
+    actor ?? { type: 'user' },
+  );
   refreshProjectStatus(repos, task.project_id);
   return next;
 }
@@ -157,13 +184,22 @@ export function retryTask(repos: Repos, task: TaskRow): TaskRow {
  * 删除任务记录：仅已完成/已取消可删。账本行保留不删（删任务不删账，
  * 余额推导与总经理汇报的按 API/小组聚合不受影响）。
  */
-export function deleteTask(repos: Repos, task: TaskRow): void {
+export function deleteTask(repos: Repos, task: TaskRow, actor?: TaskActor): void {
   if (task.status !== TaskStatus.DONE && task.status !== TaskStatus.CANCELLED) {
     throw new DomainError(
       ErrorCode.VALIDATION,
       `只有已完成/已取消的任务可删除（当前「${task.status}」）`,
     );
   }
+  repos.insertTaskEvent({
+    task_id: task.id,
+    workspace_id: task.workspace_id ?? null,
+    actor_type: actor?.type ?? 'user',
+    actor_id: actor?.id ?? null,
+    from_status: task.status,
+    to_status: task.status,
+    note: '任务记录删除（账本保留）',
+  });
   repos.deleteTask(task.id);
   refreshProjectStatus(repos, task.project_id);
 }

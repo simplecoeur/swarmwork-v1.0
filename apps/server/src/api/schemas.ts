@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { KB_SCOPES, PROVIDERS, ROLES, TASK_TYPES } from '@swarm/shared';
+import { KB_SCOPES, PROVIDERS } from '@swarm/shared';
 
 /** 入参 zod 校验（设计 §7：校验失败不进 domain） */
 export const apiSaveSchema = z.object({
@@ -46,12 +46,12 @@ export const memberPromptSchema = z.object({
   prompt: z.string().default(''),
 });
 
-/** 成员新建/编辑（M5）：与 apis/teams 的 save 风格一致，外层包 member 对象 */
+/** 成员新建/编辑（M5）：与 apis/teams 的 save 风格一致，外层包 member 对象。role 为注册表 role_id（M6 起放宽为任意字符串，存在性在路由层查注册表） */
 export const memberSaveSchema = z.object({
   member: z.object({
     id: z.string().optional(),
     name: z.string().trim().min(1, '名字必填'),
-    role: z.enum(ROLES),
+    role: z.string().trim().min(1, '工种必填'),
     teamId: z.string().min(1, '必须指定所属小组'),
     prompt: z.string().default(''),
   }),
@@ -74,11 +74,14 @@ export const apiTestSchema = z.object({
 
 export const taskCreateSchema = z.object({
   title: z.string().trim().min(1, '标题必填'),
-  type: z.enum(TASK_TYPES).default('文案'),
+  /** 任务类型为注册表 type_id（M6 起放宽为任意字符串，存在性在路由层查注册表） */
+  type: z.string().trim().min(1).default('文案'),
   brief: z.string().default(''),
   teamId: z.string().min(1),
   projectId: z.string().nullable().optional(),
   idempotencyKey: z.string().min(1).optional(),
+  skillId: z.string().nullable().optional(),
+  skillVersion: z.number().int().nullable().optional(),
 });
 
 export const adjudicateSchema = z.object({ taskId: z.string().min(1) });
@@ -112,4 +115,87 @@ export const kbUpdateSchema = z.object({
   scopeId: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
   enabled: z.boolean().optional(),
+});
+
+/* ---------- M6 账号/空间/注册表/管理台 ---------- */
+
+export const registerSchema = z.object({
+  email: z.string().trim().toLowerCase().email('邮箱格式不正确'),
+  password: z.string().min(8, '密码至少 8 位'),
+  displayName: z.string().trim().min(1, '显示名必填'),
+  industryPackId: z.string().nullable().optional(),
+  workspaceName: z.string().trim().min(1).optional(),
+});
+
+export const loginSchema = z.object({
+  email: z.string().trim().toLowerCase().email('邮箱格式不正确'),
+  password: z.string().min(1, '密码必填'),
+});
+
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, '当前密码必填'),
+  newPassword: z.string().min(8, '新密码至少 8 位'),
+});
+
+export const switchWorkspaceSchema = z.object({
+  workspaceId: z.string().min(1),
+});
+
+export const workspaceCreateSchema = z.object({
+  name: z.string().trim().min(1, '空间名必填'),
+  industryPackId: z.string().nullable().optional(),
+});
+
+export const registryRoleSchema = z.object({
+  role: z.object({
+    name: z.string().trim().min(1, '工种名必填'),
+    roleId: z.string().trim().min(1).optional(),
+    personaTemplate: z.string().default(''),
+    color: z.string().default(''),
+    icon: z.string().default(''),
+  }),
+});
+
+export const registryTaskTypeSchema = z.object({
+  taskType: z.object({
+    name: z.string().trim().min(1, '类型名必填'),
+    typeId: z.string().trim().min(1).optional(),
+    roleId: z.string().trim().min(1, '必须指定派给哪个工种'),
+  }),
+});
+
+export const preferencesPutSchema = z.object({
+  key: z.string().min(1).optional(),
+  value: z.unknown().optional(),
+  values: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const trialGrantSchema = z.object({
+  workspaceId: z.string().min(1),
+  amountYuan: z.number().positive('金额必须大于 0'),
+});
+
+export const industryPackSaveSchema = z.object({
+  pack: z.object({
+    id: z.string().optional(),
+    industry: z.string().trim().min(1, '行业代码必填'),
+    name: z.string().trim().min(1, '包名必填'),
+    version: z.string().default('1.0.0'),
+    description: z.string().default(''),
+    author: z.string().default('platform'),
+    status: z.enum(['draft', 'published', 'offline']).default('published'),
+    content: z.record(z.string(), z.unknown()).default({}),
+  }),
+});
+
+export const trialApiSaveSchema = z.object({
+  api: z.object({
+    name: z.string().trim().min(1, '名称必填'),
+    provider: z.enum(PROVIDERS).default('custom'),
+    baseUrl: z.string().default(''),
+    model: z.string().default(''),
+    pricePerM: z.number().min(0).default(0),
+    apiKey: z.string().optional(),
+    clearKey: z.boolean().optional(),
+  }),
 });

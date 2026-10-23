@@ -83,50 +83,50 @@ function main() {
   db.exec('BEGIN');
   try {
     const insApi = db.prepare(
-      'INSERT INTO apis (id, name, provider, base_url, api_key_enc, model, price_per_m_milli, created_at) VALUES (?,?,?,?,?,?,?,?)',
+      'INSERT INTO apis (id, name, provider, base_url, api_key_enc, model, price_per_m_milli, created_at, workspace_id) VALUES (?,?,?,?,?,?,?,?,?)',
     );
     for (const a of settings.apis || []) {
-      insApi.run(a.id, a.name, a.provider, a.baseUrl || '', encryptKey(a.apiKey || ''), a.model || '', yuanToMilli(a.pricePerM), ts);
+      insApi.run(a.id, a.name, a.provider, a.baseUrl || '', encryptKey(a.apiKey || ''), a.model || '', yuanToMilli(a.pricePerM), ts, 'ws_default');
     }
-    const insTeam = db.prepare('INSERT INTO teams (id, name, color, api_id, created_at, deleted_at) VALUES (?,?,?,?,?,NULL)');
-    for (const t of settings.teams || []) insTeam.run(t.id, t.name, t.color || '#5b8def', t.apiId || null, ts);
+    const insTeam = db.prepare('INSERT INTO teams (id, name, color, api_id, created_at, deleted_at, workspace_id) VALUES (?,?,?,?,?,NULL,?)');
+    for (const t of settings.teams || []) insTeam.run(t.id, t.name, t.color || '#5b8def', t.apiId || null, ts, 'ws_default');
     const insMember = db.prepare(
-      'INSERT INTO members (id, team_id, name, role, persona, prompt, skill_tags, color) VALUES (?,?,?,?,?,?,?,?)',
+      'INSERT INTO members (id, team_id, name, role, persona, prompt, skill_tags, color, workspace_id) VALUES (?,?,?,?,?,?,?,?,?)',
     );
     for (const m of settings.members || []) {
-      insMember.run(m.id, m.teamId, m.name, m.role, m.persona || '', m.prompt || '', '[]', '');
+      insMember.run(m.id, m.teamId, m.name, m.role, m.persona || '', m.prompt || '', '[]', '', 'ws_default');
     }
     const insTask = db.prepare(
       `INSERT INTO tasks (id, project_id, team_id, assignee_id, title, type, brief, status, result, review_note,
         reject_reason, reject_count, blocked_reason, blocked_code, adjudicated, idempotency_key, total_tokens,
-        total_cost_milli, heartbeat_at, created_at, claimed_at, finished_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        total_cost_milli, heartbeat_at, created_at, claimed_at, finished_at, workspace_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     );
     for (const t of oldTasks) {
       insTask.run(
         t.id, null, t.teamId, t.assigneeId || null, t.title, t.type, t.brief || '', t.status, t.result || '',
         t.reviewNote || '', t.rejectReason || '', t.rejectCount || 0, t.blockedReason || '', null,
         t.reviewNote && t.reviewNote.includes('老板裁决') ? 1 : 0, null,
-        t.totalTokens || 0, yuanToMilli(t.totalCost), null, t.createdAt || ts, t.claimedAt || null, t.finishedAt || null,
+        t.totalTokens || 0, yuanToMilli(t.totalCost), null, t.createdAt || ts, t.claimedAt || null, t.finishedAt || null, 'ws_default',
       );
     }
     const insLedger = db.prepare(
       `INSERT INTO ledger_entries (task_id, team_id, api_id, stage, prompt_tokens, completion_tokens,
-        total_tokens, cost_milli, estimated, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        total_tokens, cost_milli, estimated, created_at, workspace_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
     );
     for (const l of oldLedger) {
       insLedger.run(
         l.taskId, l.teamId, l.apiId, l.stage, l.promptTokens || 0, l.completionTokens || 0,
-        l.totalTokens || 0, yuanToMilli(l.costYuan), 0, l.ts || ts,
+        l.totalTokens || 0, yuanToMilli(l.costYuan), 0, l.ts || ts, 'ws_default',
       );
     }
-    const insPurchase = db.prepare('INSERT INTO purchases (api_id, amount_milli, created_at) VALUES (?,?,?)');
-    for (const p of oldPurchases) insPurchase.run(p.apiId, yuanToMilli(p.amountYuan), p.ts || ts);
+    const insPurchase = db.prepare('INSERT INTO purchases (api_id, amount_milli, created_at, workspace_id, type) VALUES (?,?,?,?,?)');
+    for (const p of oldPurchases) insPurchase.run(p.apiId, yuanToMilli(p.amountYuan), p.ts || ts, 'ws_default', 'purchase');
 
-    const setSetting = db.prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
-    setSetting.run('defaultApiId', JSON.stringify(settings.defaultApiId ?? null));
-    setSetting.run('params', JSON.stringify(settings.params || { concurrency: 4, taskBudgetTokens: 0 }));
-    setSetting.run('reviewStandards', JSON.stringify(settings.reviewStandards || { points: '', clientNeeds: '' }));
+    const setSetting = db.prepare('INSERT INTO settings (workspace_id, key, value) VALUES (?,?,?) ON CONFLICT(workspace_id, key) DO UPDATE SET value=excluded.value');
+    setSetting.run('ws_default', 'defaultApiId', JSON.stringify(settings.defaultApiId ?? null));
+    setSetting.run('ws_default', 'params', JSON.stringify(settings.params || { concurrency: 4, taskBudgetTokens: 0 }));
+    setSetting.run('ws_default', 'reviewStandards', JSON.stringify(settings.reviewStandards || { points: '', clientNeeds: '' }));
     db.exec('COMMIT');
   } catch (e) {
     db.exec('ROLLBACK');

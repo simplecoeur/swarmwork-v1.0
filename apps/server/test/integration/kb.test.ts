@@ -45,14 +45,15 @@ detached: true,
 });
 const server = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
 cwd: SERVER_DIR,
-env: {...process.env, PORT: '8871', DATA_DIR: dataDir, LLM_RETRY_BASE_MS: '10'},
+env: {...process.env, PORT: '8871', DATA_DIR: dataDir, LLM_RETRY_BASE_MS: '10', SWARM_ADMIN_EMAIL: 'admin@test.local', SWARM_ADMIN_PASSWORD: '<MASKED_SECRET_001>!'},
 stdio: 'pipe',
 detached: true,
 });
 server.stderr.on('data', (d) => process.stderr.write('[server] ' + d));
 const rig: Rig = { base: 'http://127.0.0.1:8871', mockBase: 'http://127.0.0.1:8881', procs: [mock, server], dataDir};
 expect(await waitUp(rig.mockBase + '/__counts')).toBe(true);
-expect(await waitUp(rig.base + '/api/state')).toBe(true);
+expect(await waitUp(rig.base + '/api/health')).toBe(true);
+await loginAdmin(rig.base);
 return rig;
 }
 
@@ -76,13 +77,13 @@ fs.rmSync(rig.dataDir, { recursive: true, force: true});
 }
 
 async function jget(base: string, p: string): Promise<any> {
-const r = await fetch(base + p);
+const r = await fetch(base + p, { headers: { cookie: COOKIE } });
 return r.json();
 }
 async function jpost(base: string, p: string, body?: unknown): Promise<any> {
 const r = await fetch(base + p, {
 method: 'POST',
-headers: { 'content-type': 'application/json'},
+headers: { 'content-type': 'application/json', cookie: COOKIE },
 body: JSON.stringify(body?? {}),
 });
 return r.json();
@@ -90,15 +91,36 @@ return r.json();
 async function jput(base: string, p: string, body?: unknown): Promise<{ status: number; json: any}> {
 const r = await fetch(base + p, {
 method: 'PUT',
-headers: { 'content-type': 'application/json'},
+headers: { 'content-type': 'application/json', cookie: COOKIE },
 body: JSON.stringify(body?? {}),
 });
 return { status: r.status, json: await r.json()};
 }
 async function jdel(base: string, p: string): Promise<{ status: number; json: any}> {
-const r = await fetch(base + p, { method: 'DELETE'});
+const r = await fetch(base + p, { method: 'DELETE', headers: { cookie: COOKIE } });
 return { status: r.status, json: await r.json()};
 }
+
+/* M6 登录夹具：管理员由环境变量种子创建（must_change_password=1），登录后先改密再操作 */
+let COOKIE = '';
+async function loginAdmin(base: string): Promise<void> {
+  const r = await fetch(base + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: 'admin@test.local', password: '<MASKED_SECRET_001>!' }),
+  });
+  const j: any = await r.json();
+  expect(j.ok).toBe(true);
+  COOKIE = (r.headers.get('set-cookie') || '').split(';')[0];
+  expect(COOKIE).toContain('swarm_session=');
+  const r2 = await fetch(base + '/api/auth/change-password', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: COOKIE },
+    body: JSON.stringify({ currentPassword: '<MASKED_SECRET_001>!', newPassword: '<MASKED_SECRET_002>!' }),
+  });
+  expect((await r2.json()).ok).toBe(true);
+}
+
 
 async function waitFor<T>(fn: () => Promise<T | null>, timeout = 40_000): Promise<T> {
 const t0 = Date.now();

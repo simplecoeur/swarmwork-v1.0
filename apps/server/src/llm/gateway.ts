@@ -17,6 +17,8 @@ export function createProvider(api: ApiRow): LlmProvider {
 export interface GatewayCall<T> {
   taskId: string;
   teamId: string;
+  /** 账本归属空间（M6 隔离）：缺省取任务/默认空间口径，由引擎与项目服务显式传入 */
+  workspaceId?: string;
   api: ApiRow;
   stage: LedgerStage;
   /** 调用幂等键：同键已完成的调用直接复用结果且不重复记账（§8） */
@@ -78,6 +80,7 @@ export class LlmGateway {
             cost_milli: costMilli,
             estimated: out.usage.estimated ? 1 : 0,
             created_at: new Date().toISOString(),
+            workspace_id: params.workspaceId ?? 'ws_default',
           });
           repos.finishLlmCall(
             params.idempotencyKey,

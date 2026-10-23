@@ -4,6 +4,7 @@ import { LlmGateway } from './llm/gateway';
 import { Logger } from './logger';
 import { openDb } from './store/db';
 import { Repos } from './store/repositories';
+import { ensurePlatform } from './store/bootstrap';
 import { seedIfEmpty } from './store/seed';
 import { buildApp } from './api/app';
 
@@ -12,6 +13,7 @@ async function main(): Promise<void> {
   const logger = new Logger(config.logsDir);
   const db = openDb(config.dbPath);
   const repos = new Repos(db);
+  await ensurePlatform(repos, config.dataDir, logger);
   seedIfEmpty(repos);
   const gateway = new LlmGateway(repos, logger);
   const engine = new Engine(repos, gateway, logger);

@@ -2,6 +2,29 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)，格式参考 Keep a Changelog。
 
+## [0.6.0] - 2026-10-23
+
+M6 多用户平台后端（产品方案 §1–§6、§8.1、§9 M6、§10、§12；ADR-008）：账号体系 + workspace 全量隔离 + 工种/任务类型注册表 + 行业包 + 体验额度 + 审计/任务事件底座。前端本轮未动，API 契约完整可用。
+
+### Added
+
+- 账号与会话：users/workspaces/memberships/sessions/login_logs/user_preferences（迁移 003）；argon2id 密码哈希；服务端 session（库里只存哈希、HttpOnly/SameSite=Lax Cookie、Secure 可配、7 天滑动续期）；登录失败 5 次锁定 15 分钟且成败落 login_logs；登出/管理员停用即时吊销全部会话。接口：POST /api/auth/register|login|logout|change-password|switch-workspace、GET /api/auth/me；注册两档开通（个人空间即时开通，异常特征——同 IP 10 分钟 ≥3 次或全局 requireApproval 开关——走 pending）；管理员种子读 SWARM_ADMIN_EMAIL/SWARM_ADMIN_PASSWORD，未设密码时随机口令落 DATA_DIR/admin-initial-password.txt（0600），must_change_password 强制改密（未改密前除改密/登出/me 外 403）。
+- 管理台（仅平台管理员）：GET /api/admin/users、POST /api/admin/users/:id/approve|disable|reset-password（临时密码一次性返回）、GET /api/admin/workspaces（各空间聚合用量，不给明细）、POST /api/admin/trial-grants、GET/POST /api/admin/trial-api、GET/POST /api/admin/industry-packs。
+- 注册表：roles/task_types 两表（迁移 004），五工种与 TYPE_ROLE 映射作种子迁入（组长/审核 is_system）；GET /api/registry、POST /api/registry/roles|task-types（空间自定义工种/任务类型）；引擎派单改查注册表；shared 的 ROLES/TASK_TYPES 退役为种子默认值，DTO 的 role/type 放宽为 string。
+- 行业包：industry_packs 表（迁移 005，manifest JSON 存 content）；内置「短剧公司」包（short_drama：短剧文案组/选题调研组/审片组 + 示例知识种子 + 官方 skill slug 清单占位，skill 本体 M7 落地）；POST /api/workspaces 选包快照装入，不选包只装通用种子（通用小组 + 五工种默认人设，零行业词）；GET /api/industry-packs 列已上架包。
+- 体验额度（§8.1）：平台级体验 API（apis 行 is_trial=1、workspace_id=NULL，管理员经 /api/admin/trial-api 维护）；发放落 purchases type=trial_grant；引擎 resolveApi 守卫链末位挂体验 API（自备优先），消费走正常 ledger，余额按空间 Σtrial_grant − Σledger 推导；耗尽停工文案为「体验额度已用完，请到设置后台填自己的 API Key」；管理员聚合视图可见各空间发放与消耗。
+- 审计与事件底座：task_events（状态机统一函数落，actor_type=user/engine/ai_member）与 audit_logs（登录/采购/裁决/改 API/改审核标准/成员增删/备份/管理员动作）；user_preferences 与 GET/PUT /api/preferences，个人提示词拼入执行 prompt 个人段、个人审核偏好以附加要点并入审核 prompt（空间标准为硬约束）。
+
+### Changed
+
+- 全量隔离：业务表（apis/teams/members/projects/tasks/ledger_entries/purchases/kb_entries）加 workspace_id 回填默认空间「MJ 蜂群」（ws_default，视为已选短剧包）；settings 主键改 (workspace_id, key) 复合；tasks 加 created_by_user_id/skill_id/skill_version；kb_entries 加 owner_user_id、scope 扩为 company|team|personal|platform（旧 member 折算 personal）；仓储 list 强制带空间过滤、按 id 单查不匹配回 404；除 /api/auth/* 与健康检查外无会话一律 401，当前空间只取自 session（忽略前端传入的 workspace_id）；引擎按空间迭代队列，各空间并发/预算守卫互不影响；/api/state、/api/cost/report 只含当前空间（汇报新增按发单人维度）。
+- 备份口径：GET /api/backup 改为仅平台管理员可用（仍为整库文件、含全部空间，响应头 x-backup-scope 注明），下载落审计。
+- 旧数据迁移工具 tools/migrate-from-json.js 同步写 workspace_id（落默认空间）与 settings 复合主键。
+
+### Tests
+
+- 存量集成测试夹具改造为「管理员登录带 Cookie + 强制改密后操作」，断言口径不变；新增 M6 集成 3 组：账号全流程（锁定/pending 审核/重置强制改密/登出与停用吊销）、越权矩阵（跨空间 task/project/kb/api/member 直查全 404、state 与 cost 零串数据、备份仅管理员、个人 KB 在他人会话下不可见且不被注入——查注入记录）、体验额度发放→消耗→耗尽、注册表自定义工种端到端跑通一单（mock-llm）、行业包三组与知识种子/不选包零短剧字样、迁移对账（001/002 存量库逐项数量与金额一致）。
+
 ## [0.5.0] - 2026-10-23
 
 M5 业务流程补全一期（P0 五项）：项目制前端补齐、成员管理补全、API 测试连接、任务后悔药、数据备份下载。设计文档 §6/§7/§15.2 已同步补记 M5 扩展。

@@ -16,6 +16,8 @@ export interface KbContext {
 teamId: string;
 /** 执行成员 id（成员级范围按此匹配） */
 memberId: string | null;
+/** 发单人（登录用户 id）：personal 条目仅注入本人发的任务（M6 §3.3） */
+userId?: string | null;
 /** 检索文本：任务标题 + 类型 + 说明拼接 */
 queryText: string;
 }
@@ -52,11 +54,21 @@ const hay = `${entry.title}\n${parseTags(entry.tags).join(' ')}\n${entry.body}`.
 return keywords.some((k) => k.length > 0 && hay.includes(k));
 }
 
-/** 范围优先级：数值越小越优先；-1 表示不纳入候选 */
+/**
+ * 范围优先级：数值越小越优先；-1 表示不纳入候选。
+ * M6 注入优先级（§3.3）：平台公共 > 本空间公司级 > 本组资料 > 发单人个人资料 > 他组资料。
+ * platform 用 -1 档（与「不纳入」的 -1 区分靠 selectKbForInjection 中 rank<0 的判定只针对 personal/member 他人条目，
+ * 故 platform 单独用 -2 表示最高优先）。
+ * personal：owner_user_id 有值时仅发单人本人命中；存量折算条目（owner 为空）按 scope_id 的 AI 成员映射尽力匹配。
+ */
 export function kbScopeRank(entry: KbRow, ctx: KbContext): number {
+if (entry.scope === 'platform') return -2;
 if (entry.scope === 'company') return 0;
 if (entry.scope === 'team') return entry.scope_id === ctx.teamId? 1: 3;
-if (entry.scope === 'member') return ctx.memberId && entry.scope_id === ctx.memberId? 2: -1;
+if (entry.scope === 'personal' || entry.scope === 'member') {
+if (entry.owner_user_id) return ctx.userId && entry.owner_user_id === ctx.userId? 2: -1;
+return ctx.memberId && entry.scope_id === ctx.memberId? 2: -1;
+}
 return -1;
 }
 
@@ -89,7 +101,7 @@ const keywords = extractKeywords(ctx.queryText);
 const candidates = entries
 .filter((e) => e.enabled === 1)
 .map((e) => ({ e, rank: kbScopeRank(e, ctx)}))
-.filter(({ e, rank}) => rank >= 0 && (rank === 0 || kbMatches(e, keywords)))
+.filter(({ e, rank}) => rank !== -1 && (rank <= 0 || kbMatches(e, keywords)))
 .sort((a, b) => a.rank - b.rank || (a.e.created_at < b.e.created_at? -1: a.e.created_at > b.e.created_at? 1: a.e.id < b.e.id? -1: 1));
 
 const picked: KbRow[] = [];
