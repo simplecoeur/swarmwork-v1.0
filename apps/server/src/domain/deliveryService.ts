@@ -107,6 +107,7 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
 h1{font-size:22px;margin:0 0 6px}.meta{color:#8a7f6d;font-size:13px;margin-bottom:18px}
 .blk{margin:0 0 14px;line-height:1.75;word-break:break-word}
 .foot{margin-top:24px;padding-top:12px;border-top:1px dashed #cbbfa5;color:#8a7f6d;font-size:12px}
+@media (max-width:600px){body{padding:16px 8px}.wrap{padding:18px 16px}h1{font-size:19px}}
 </style></head>
 <body><div class="wrap"><h1>${escapeHtml(title)}</h1><div class="meta">${escapeHtml(metaLine)}</div>
 ${paras}
@@ -120,9 +121,10 @@ export function renderDeliveryPasswordHtml(title: string, badPassword: boolean):
 <style>
 body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#f6f1e7;color:#2b2620;margin:0;padding:48px 16px}
 .wrap{max-width:420px;margin:0 auto;background:#fffdf7;border:2px solid #2b2620;border-radius:14px;padding:26px;box-shadow:4px 4px 0 #2b2620}
-input{width:100%;box-sizing:border-box;padding:10px;border:2px solid #2b2620;border-radius:8px;margin:10px 0}
-button{background:#e8a13a;border:2px solid #2b2620;border-radius:8px;padding:9px 18px;font-weight:700;cursor:pointer}
+input{width:100%;box-sizing:border-box;padding:10px;border:2px solid #2b2620;border-radius:8px;margin:10px 0;font-size:16px;min-height:44px}
+button{background:#e8a13a;border:2px solid #2b2620;border-radius:8px;padding:9px 18px;font-weight:700;cursor:pointer;min-height:44px}
 .err{color:#c0392b;font-size:13px}
+@media (max-width:600px){body{padding:24px 10px}.wrap{padding:18px 16px}}
 </style></head>
 <body><div class="wrap"><h1 style="font-size:19px;margin:0 0 6px">${escapeHtml(title)}</h1>
 <p style="color:#8a7f6d;font-size:13px">这份交付物设有访问口令，输入后查看。</p>

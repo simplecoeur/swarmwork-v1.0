@@ -53,6 +53,13 @@ export default function Office() {
   const { S } = useApp();
   const [editingId, setEditingId] = useState<string | null>(null);
   if (!S) return null;
+  // v1.1.0 移动端任务状态摘要：计数直接由 S.tasks 按状态过滤（状态值见 shared 状态机），无现成聚合字段
+  const running = S.tasks.filter((t) => t.status === '执行中').length;
+  const reviewing = S.tasks.filter((t) => t.status === '待审核').length;
+  const adjudicating = S.tasks.filter((t) => t.status === '待裁决').length;
+  const goTaskWall = () => {
+    document.getElementById('taskwall-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   return (
     <div className="card office-card">
       <h2>
@@ -60,6 +67,18 @@ export default function Office() {
         <span className="tag">像素办公室 · 小人状态由真实任务驱动 · 点小人可改他的专属提示词</span>
       </h2>
       <PixelOffice onEdit={setEditingId} />
+      {/* 移动端专属（CSS 控制显隐，桌面不显示）：画布下方任务状态摘要条，点击滚到本页任务墙区块 */}
+      <div className="mobile-summary">
+        <button type="button" className="mobile-summary-item" onClick={goTaskWall}>
+          进行中 <b>{running}</b>
+        </button>
+        <button type="button" className="mobile-summary-item" onClick={goTaskWall}>
+          待审核 <b>{reviewing}</b>
+        </button>
+        <button type="button" className="mobile-summary-item" onClick={goTaskWall}>
+          待裁决 <b>{adjudicating}</b>
+        </button>
+      </div>
       {editingId && <MemberEditor memberId={editingId} onClose={() => setEditingId(null)} />}
     </div>
   );

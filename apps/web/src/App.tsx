@@ -24,6 +24,8 @@ function Shell() {
     authStatus, user, workspaces, currentWorkspace, switchWorkspace, logout, toast,
   } = useApp();
   const [showNewWs, setShowNewWs] = useState(false);
+  // v1.1.0 移动端底部栏高亮：office tab 内含办公室/发单/任务墙三段，用它区分当前落点
+  const [mNav, setMNav] = useState<'office' | 'publish' | 'tasks'>('office');
 
   // 鉴权门（M6）：探活中 / 未登录 / 强制改密，三种状态都不渲染主界面
   if (authStatus === 'loading') {
@@ -47,6 +49,32 @@ function Shell() {
     <Button variant="nav" className={tab === t ? 'on' : ''} onClick={() => setTab(t)}>{label}</Button>
   );
 
+  /* v1.1.0 移动端导航：TabKey 只有 7 个，发单(PublishForm)/任务墙/项目/成果库都是 office 页内区块，
+     故底部栏这几项 = 切到 office tab + 滚动到区块锚点（锚点见下方 office section）。 */
+  const scrollToAnchor = (id: string) => {
+    window.setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+  };
+  const goOfficeTop = () => {
+    setMNav('office');
+    setTab('office');
+    window.setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 80);
+  };
+  const goOfficeSection = (key: 'publish' | 'tasks', anchor: string) => {
+    setMNav(key);
+    setTab('office');
+    scrollToAnchor(anchor);
+  };
+  const goMoreSection = (anchor: string) => {
+    // 成果库/项目同为 office 页内区块：从「更多」进入后高亮回落到办公室段
+    setMNav('office');
+    setTab('office');
+    scrollToAnchor(anchor);
+  };
+  const moreActive =
+    tab === 'assets' || tab === 'kb' || tab === 'cost' || tab === 'settings' || tab === 'admin';
+
   async function onSwitch(id: string) {
     if (!id || id === currentWorkspace?.id) return;
     try {
@@ -61,7 +89,7 @@ function Shell() {
     <>
       <header>
         <span className="logo">🐝 干活蜂群</span>
-        <div>
+        <div className="brand-block">
           <h1>干活蜂群{wsName ? ` · ${wsName}` : ''}</h1>
           <div className="sub">真干活的 AI 办公室 · 数据存储在服务器 · Key 加密保存</div>
         </div>
@@ -128,13 +156,19 @@ function Shell() {
             {tab === 'office' && (
               <section>
                 <Office />
-                <div className="row" style={{ alignItems: 'flex-start' }}>
+                <div className="row" id="publish-anchor" style={{ alignItems: 'flex-start' }}>
                   <PublishForm />
                   <Standards />
                 </div>
-                <Projects />
-                <TaskWall />
-                <Results />
+                <div id="projects-anchor">
+                  <Projects />
+                </div>
+                <div id="taskwall-anchor">
+                  <TaskWall />
+                </div>
+                <div id="results-anchor">
+                  <Results />
+                </div>
               </section>
             )}
             {tab === 'skills' && (
@@ -169,6 +203,60 @@ function Shell() {
             )}
           </main>
         </>
+      )}
+
+      {/* v1.1.0 移动端底部固定栏（≤768px 才显示，桌面隐藏）：办公室/发单/任务墙/技能/更多 */}
+      {currentWorkspace && (
+        <div className="bottomnav" role="navigation" aria-label="移动端主导航">
+          <button
+            type="button"
+            className={`bottomnav-item${tab === 'office' && mNav === 'office' && !moreActive ? ' on' : ''}`}
+            onClick={goOfficeTop}
+          >
+            办公室
+          </button>
+          <button
+            type="button"
+            className={`bottomnav-item${tab === 'office' && mNav === 'publish' ? ' on' : ''}`}
+            onClick={() => goOfficeSection('publish', 'publish-anchor')}
+          >
+            发单
+          </button>
+          <button
+            type="button"
+            className={`bottomnav-item${tab === 'office' && mNav === 'tasks' ? ' on' : ''}`}
+            onClick={() => goOfficeSection('tasks', 'taskwall-anchor')}
+          >
+            任务墙
+          </button>
+          <button
+            type="button"
+            className={`bottomnav-item${tab === 'skills' ? ' on' : ''}`}
+            onClick={() => setTab('skills')}
+          >
+            技能
+          </button>
+          <DropdownMenu
+            ariaLabel="更多页面"
+            align="end"
+            trigger={
+              <Button variant="mini" className={`bottomnav-item${moreActive ? ' on' : ''}`}>
+                更多 ▾
+              </Button>
+            }
+            items={[
+              { label: '资产库', onSelect: () => setTab('assets') },
+              { label: '知识库', onSelect: () => setTab('kb') },
+              { label: '成本中心', onSelect: () => setTab('cost') },
+              { label: '成果库', onSelect: () => goMoreSection('results-anchor') },
+              { label: '项目', onSelect: () => goMoreSection('projects-anchor') },
+              { label: '设置后台', onSelect: () => setTab('settings') },
+              ...(user?.isPlatformAdmin
+                ? [{ label: '管理台', onSelect: () => setTab('admin') }]
+                : []),
+            ]}
+          />
+        </div>
       )}
     </>
   );

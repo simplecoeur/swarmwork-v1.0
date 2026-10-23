@@ -126,7 +126,8 @@ export default function Admin() {
       {/* ---------- 用户管理 ---------- */}
       <div className="card">
         <h2>用户管理 <span className="tag">待审核的通过后自动按其注册意向建空间</span></h2>
-        <table>
+        <div className="table-wrap">
+          <table>
           <thead>
             <tr>
               <th>邮箱</th><th>显示名</th><th>状态</th><th>空间数</th>
@@ -164,7 +165,8 @@ export default function Admin() {
               <tr><td colSpan={7} className="hint">暂无用户（或加载失败）。</td></tr>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       {/* ---------- 体验额度 ---------- */}
@@ -183,7 +185,8 @@ export default function Admin() {
       {/* ---------- 空间聚合 ---------- */}
       <div className="card">
         <h2>空间总览</h2>
-        <table>
+        <div className="table-wrap">
+          <table>
           <thead>
             <tr>
               <th>空间</th><th>所有者</th><th>任务数</th><th>总消费</th>
@@ -206,7 +209,8 @@ export default function Admin() {
               <tr><td colSpan={7} className="hint">暂无空间（或加载失败）。</td></tr>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       {/* ---------- skill 上架审核（M7） ---------- */}

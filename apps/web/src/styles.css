@@ -385,3 +385,109 @@ header{ flex-wrap:wrap; }
 .ui-field{ display:block; }
 .ui-field-label{ font-size:12.5px; color:var(--ink-soft); font-weight:700; display:block; margin:8px 0 4px; }
 .ui-field-error{ color:var(--accent); font-size:12.5px; font-weight:800; margin-top:4px; line-height:1.6; }
+
+/* ============ v1.1.0 移动端适配（≤768px） ============
+   铁律：桌面（>768px）布局与视觉零变化——除以下三条「默认隐藏/无样式」声明外，
+   全部移动规则都收在 @media (max-width:768px) 内；颜色/边框/阴影只引用既有 token。 */
+.bottomnav{ display:none; }
+.mobile-summary{ display:none; }
+.table-wrap{ display:block; }
+
+@media (max-width:768px){
+  /* ---- 全局基线：整页禁止横滚、main 收窄并给底部栏让位 ---- */
+  body{ overflow-x:clip; }
+  main{ padding:10px 8px 92px; }
+  .card, .ui-card{ padding:10px 12px; margin-bottom:12px; box-shadow:var(--shadow-sm); }
+  .card h2{ font-size:14.5px; }
+  /* 长串防溢出：正文/元信息/提示允许任意断行，代码/成果块自身内滚 */
+  p, .hint, .task .meta, .subtask, .bell-item{ overflow-wrap:anywhere; }
+  pre.result{ max-height:320px; }
+
+  /* ---- 控件基线：字号 ≥16px 防 iOS 聚焦缩放、触控高度 ≥44px ---- */
+  input, select, textarea, .ui-input, .ui-textarea, .ui-select-trigger{ font-size:16px; min-height:44px; }
+  textarea, .ui-textarea{ min-height:0; }
+  button.btn, .ui-btn, a.btn{ min-height:44px; }
+  a.btn{ display:inline-flex; align-items:center; }
+  button.btn.small, .ui-btn--sm, a.btn.small{ min-height:44px; padding-top:8px; padding-bottom:8px; }
+  .mini-btn, .ui-btn--mini{ min-height:44px; padding:8px 10px; }
+  .ui-menu-item{ min-height:44px; }
+  .ui-select-item{ min-height:44px; }
+  .ui-tabs-trigger{ min-height:44px; padding:8px 12px; font-size:13px; }
+  .ui-dialog-close{ width:44px; height:44px; top:4px; right:4px; }
+  .ui-checkbox{ width:22px; height:22px; }
+  .ui-switch{ width:48px; height:28px; }
+  .ui-switch-thumb{ width:18px; height:18px; }
+  .ui-switch[data-state="checked"] .ui-switch-thumb{ transform:translateX(24px); }
+  input[type="checkbox"].chk, input[type="radio"]{ min-height:0; }
+
+  /* ---- 通用单列：.row 子项全宽堆叠、.kv 两列 ---- */
+  .row{ flex-wrap:wrap; }
+  .row > *{ flex:1 1 100%; }
+  .kv div{ flex:1 1 42%; min-width:0; }
+
+  /* ---- 顶栏：桌面 nav 隐藏；品牌行 + 第二行空间切换 ---- */
+  header{ padding:8px 10px; gap:8px; }
+  header nav{ display:none; }
+  header .logo{ padding:3px 7px; font-size:13px; }
+  .brand-block{ flex:1; min-width:0; }
+  header h1{ font-size:14.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  header .sub{ display:none; }
+  .wsbar{ order:6; flex:1 1 100%; }
+  .wsbar .ui-select-trigger{ flex:1; max-width:none; }
+  .userinfo{ margin-left:auto; }
+  .userinfo .ui-btn--mini{
+    max-width:118px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block;
+  }
+  .banner{ padding:8px 12px; font-size:13px; }
+  .toast{ bottom:84px; }
+
+  /* ---- 底部固定栏 ---- */
+  .bottomnav{
+    display:flex; position:fixed; left:0; right:0; bottom:0; z-index:65;
+    background:var(--panel); border-top:3px solid var(--line);
+    padding:4px 4px calc(4px + env(safe-area-inset-bottom)); gap:4px;
+  }
+  .bottomnav .bottomnav-item{
+    flex:1; min-height:48px; display:flex; align-items:center; justify-content:center;
+    font:inherit; font-size:13.5px; font-weight:900; letter-spacing:.02em;
+    background:var(--panel); color:var(--ink); border:2px solid transparent;
+    box-shadow:none; padding:6px 2px; cursor:pointer; border-radius:0; white-space:nowrap;
+  }
+  .bottomnav .bottomnav-item:active{ transform:none; box-shadow:none; }
+  .bottomnav .bottomnav-item.on{ background:var(--accent); color:var(--accent-ink); border-color:var(--line); }
+
+  /* ---- 办公室：画布包裹收窄 + 移动专属任务状态摘要条 ---- */
+  .canvas-box{ padding:6px; }
+  .legend-row{ font-size:11.5px; padding:8px 10px; gap:4px 10px; }
+  .mobile-summary{ display:flex; gap:8px; padding:10px 12px 12px; }
+  .mobile-summary-item{
+    flex:1; min-height:48px; font:inherit; font-size:13px; font-weight:800; cursor:pointer;
+    background:var(--panel2); color:var(--ink); border:2px solid var(--line);
+    box-shadow:2px 2px 0 rgba(44,37,25,.9); border-radius:0; padding:6px 4px;
+  }
+  .mobile-summary-item b{ font-size:16px; font-weight:900; }
+  .mobile-summary-item:active{ transform:translate(2px,2px); box-shadow:none; }
+  .office-card > .card{ margin:10px; }
+
+  /* ---- 任务墙：全宽单列（.task 本就是块级全宽）、操作按钮已由上方触控基线放大 ---- */
+  .task{ padding:10px; }
+  .task .tt{ font-size:13.5px; overflow-wrap:anywhere; }
+
+  /* ---- 宽表格：容器内横向滚动，整页不横滚 ---- */
+  .table-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .table-wrap table{ min-width:560px; }
+  td, th{ overflow-wrap:normal; }
+
+  /* ---- 弹层/菜单/对话框：不超屏 ---- */
+  .ui-popover-panel{ width:92vw; max-width:92vw; }
+  .ui-dialog-content{ width:94%; padding:14px 14px; max-height:88vh; }
+  .ui-select-content{ max-width:92vw; }
+  .ui-menu-content{ max-width:92vw; }
+  .modal .box{ padding:14px; width:96%; }
+
+  /* ---- 登录/注册/改密 ---- */
+  .auth-wrap{ margin-top:3vh; padding:0 10px 92px; }
+
+  /* ---- 底部栏锚点跳转时避开 sticky 顶栏 ---- */
+  #publish-anchor, #projects-anchor, #taskwall-anchor, #results-anchor{ scroll-margin-top:132px; }
+}

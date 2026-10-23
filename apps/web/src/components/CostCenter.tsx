@@ -56,7 +56,8 @@ export default function CostCenter() {
 
       <div className="card">
         <h2>按 API 拆账</h2>
-        <table>
+        <div className="table-wrap">
+          <table>
           <thead>
             <tr><th>API</th><th>调用次数</th><th>token</th><th>成本</th><th>余额</th><th>状态</th></tr>
           </thead>
@@ -85,13 +86,15 @@ export default function CostCenter() {
               );
             })}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       <div className="row" style={{ alignItems: 'flex-start' }}>
         <div className="card">
           <h2>小组排行</h2>
-          <table>
+          <div className="table-wrap">
+            <table>
             <thead>
               <tr><th>小组</th><th>token</th><th>成本</th><th>已完成</th></tr>
             </thead>
@@ -108,7 +111,8 @@ export default function CostCenter() {
                 );
               })}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
         <div className="card">
           <h2>采购充值</h2>
@@ -146,7 +150,8 @@ export default function CostCenter() {
       <div className="card">
         <h2>任务账本 <span className="tag">每单从接单到交付的全程消耗</span></h2>
         {S.tasks.length ? (
-          <table>
+          <div className="table-wrap">
+            <table>
             <thead>
               <tr><th>任务</th><th>小组</th><th>负责人</th><th>全程 token</th><th>成本</th><th>状态</th></tr>
             </thead>
@@ -162,7 +167,8 @@ export default function CostCenter() {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         ) : (
           <p className="hint">暂无任务。</p>
         )}
