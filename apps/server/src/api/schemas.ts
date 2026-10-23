@@ -444,6 +444,13 @@ export const openTaskCreateSchema = taskCreateSchema.extend({
   skillParams: z.record(z.string(), z.unknown()).optional(),
 });
 
+/* ---------- G-15 空间所有权转让（v1.2.0 批次二接口先行） ---------- */
+
+export const workspaceTransferSchema = z.object({
+  targetUserId: z.string().min(1, '必须指定接收人'),
+  password: z.string().min(1, '密码必填（转让须验密确认）'),
+});
+
 /* ---------- G-09 全局搜索（v1.2.0 批次二）：q 必填，types 为逗号分隔过滤（路由层解析） ---------- */
 
 /** 资产导入 confirm：sections 上限 200 整体校验（超限 VALIDATION 且零落库）；资产为单行创建，字段在此收紧 */

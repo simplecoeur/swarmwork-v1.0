@@ -14,6 +14,8 @@ import {
   type WebhookDeliveryDto,
   type WebhookDto,
 } from '@swarm/shared';
+import { verifyPassword } from '../auth/auth';
+import { notifyUser } from '../domain/notify';
 import { assetDtoOf, createAsset } from '../domain/assetService';
 import {
   buildSummary,
@@ -50,6 +52,7 @@ import {
   openTaskCreateSchema,
   webhookCreateSchema,
   webhookUpdateSchema,
+  workspaceTransferSchema,
 } from './schemas';
 import type { M7Helpers, RouteCtx } from './m7';
 
@@ -120,7 +123,6 @@ export function registerV120Routes(
 ): void {
   const { repos, logger } = deps;
   const { auth, wsAuth, requireAdmin, audit } = helpers;
-  void auth;
 
   /* ================= G-05 反馈 ================= */
   app.post('/api/feedback', async (req: FastifyRequest) => {
@@ -674,6 +676,74 @@ export function registerV120Routes(
     const done = fresh ? await attemptWebhookDelivery(repos, fresh, logger) : fresh;
     audit(req, ctx, 'test_webhook', 'webhook', id, done?.status ?? '');
     return { ok: true, delivery: done ? deliveryDto(done) : undefined };
+  });
+
+  /* ================= G-15 空间所有权转让（批次二接口先行，页面留批次三） =================
+   * POST /api/workspaces/:id/transfer { targetUserId, password }：所有者本人 + 验密。
+   * 校验链：操作者是该空间 owner（非成员 404 不泄漏存在性、成员非 owner 403）→ 验密 →
+   * 目标存在且 status='active'（pending_deletion/disabled/pending 一并在此拒绝）、非本人。
+   * 单事务：memberships 目标行 role=owner（无则建）、原所有者行删除、workspaces.owner_user_id 同步
+   * （workspaces 自 003 迁移起即有 owner_user_id 列——以它与 memberships role 双写为准）。
+   * 连带：空间内 apis/额度/定时计划/Webhook 归空间不随人走；原所有者的 api_tokens 靠 G-07
+   * Token 守卫的 membership 校验自然失效；其 personal KB 随 membership 移除按既有口径隐身不删。
+   * 管理台不提供强制转让（不开运营越权口子）。 */
+  app.post('/api/workspaces/:id/transfer', async (req: FastifyRequest) => {
+    const ctx = auth(req);
+    const { id } = req.params as { id: string };
+    const body = workspaceTransferSchema.parse(req.body ?? {});
+    const ws = repos.getWorkspace(id);
+    if (!ws || ws.status !== 'active') fail(ErrorCode.NOT_FOUND, '空间不存在', 404);
+    const mine = repos.getMembership(ctx.user.id, id);
+    if (!mine || mine.status !== 'active') fail(ErrorCode.NOT_FOUND, '空间不存在', 404);
+    if (mine!.role !== 'owner') fail(ErrorCode.FORBIDDEN, '只有空间所有者可以转让所有权', 403);
+    const okPw = await verifyPassword(ctx.user.password_hash, body.password);
+    if (!okPw) fail(ErrorCode.VALIDATION, '密码不正确，转让未执行');
+    if (body.targetUserId === ctx.user.id) {
+      fail(ErrorCode.VALIDATION, '不能把空间转让给自己');
+    }
+    const target = repos.getUser(body.targetUserId);
+    if (!target) fail(ErrorCode.VALIDATION, '接收人不存在');
+    if (target!.status === 'pending_deletion') {
+      fail(ErrorCode.VALIDATION, '接收人账号正处于注销冷静期，不能接收空间');
+    }
+    if (target!.status !== 'active') {
+      fail(ErrorCode.VALIDATION, '接收人账号未开通或已停用，不能接收空间');
+    }
+    repos.tx(() => {
+      repos.insertMembership({
+        user_id: target!.id,
+        workspace_id: id,
+        role: 'owner',
+        status: 'active',
+        joined_at: nowIso(),
+      });
+      repos.deleteMembership(ctx.user.id, id);
+      repos.updateWorkspaceOwner(id, target!.id);
+    });
+    // 两侧 audit：转出一条（actor=原所有者）+ 接收一条（user_id=新所有者），ledger-view 按空间合并可见
+    repos.insertAudit({
+      workspace_id: id,
+      user_id: ctx.user.id,
+      action: 'transfer_workspace_out',
+      target_type: 'workspace',
+      target_id: id,
+      detail: `转让给 ${target!.email}`,
+      ip: req.ip ?? '',
+    });
+    repos.insertAudit({
+      workspace_id: id,
+      user_id: target!.id,
+      action: 'transfer_workspace_in',
+      target_type: 'workspace',
+      target_id: id,
+      detail: `自 ${ctx.user.email} 接收所有权`,
+      ip: req.ip ?? '',
+    });
+    // 两侧通知（type='transfer'，G-03 已注册）：按人投递——此时所有者已变更，notifyOwner 只达新所有者
+    notifyUser(repos, target!.id, id, 'transfer', '你已成为空间所有者', `你已成为空间「${ws!.name}」的所有者（由 ${ctx.user.email} 转让）。空间内的 API、额度、定时计划与 Webhook 保持不变。`);
+    notifyUser(repos, ctx.user.id, id, 'transfer', '空间所有权已转让', `你已把空间「${ws!.name}」的所有权转让给 ${target!.email}，你不再是该空间成员。`);
+    logger.info('workspace', `空间 ${id} 所有权转让：${ctx.user.id} → ${target!.id}`);
+    return { ok: true, workspaceId: id, newOwnerUserId: target!.id };
   });
 
   /* ================= G-09 全局搜索（批次二） ================= */

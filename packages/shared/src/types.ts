@@ -752,3 +752,11 @@ export interface SearchResponseDto {
   groups: Array<{ type: SearchResultItemDto['type']; items: SearchResultItemDto[] }>;
   results: SearchResultItemDto[];
 }
+
+/* ---------- G-15 空间所有权转让（v1.2.0 批次二接口先行，页面留批次三） ---------- */
+
+/** POST /api/workspaces/:id/transfer 入参：所有者本人操作 + 验密二次确认 */
+export interface WorkspaceTransferDto {
+  targetUserId: string;
+  password: string;
+}

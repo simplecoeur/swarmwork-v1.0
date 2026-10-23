@@ -906,6 +906,18 @@ export class Repos {
       .prepare('SELECT * FROM memberships WHERE user_id = ? AND workspace_id = ?')
       .get(userId, workspaceId) as unknown as MembershipRow | undefined;
   }
+  /** G-15 转让：移除成员关系（原所有者让出空间时调用，与 insertMembership 的 upsert 对应） */
+  deleteMembership(userId: string, workspaceId: string): void {
+    this.db.prepare('DELETE FROM memberships WHERE user_id = ? AND workspace_id = ?').run(userId, workspaceId);
+  }
+  /** G-15 转让：同步 workspaces.owner_user_id（本表自 003 起即有 owner 列，以它 + memberships role 双写为准） */
+  updateWorkspaceOwner(workspaceId: string, ownerUserId: string): void {
+    this.db.prepare('UPDATE workspaces SET owner_user_id = ? WHERE id = ?').run(ownerUserId, workspaceId);
+  }
+  /** 某用户在某空间的全部成员关系（G-11 注销到期清理用） */
+  deleteMembershipsByUser(userId: string): void {
+    this.db.prepare('DELETE FROM memberships WHERE user_id = ?').run(userId);
+  }
   listMembershipsByUser(userId: string): MembershipRow[] {
     return this.db
       .prepare("SELECT * FROM memberships WHERE user_id = ? AND status = 'active' ORDER BY joined_at")
@@ -1323,6 +1335,15 @@ export class Repos {
         'SELECT COUNT(*) AS c FROM notifications WHERE workspace_id = ? AND type = ? AND task_id IS ? AND read_at IS NULL',
       )
       .get(workspaceId, type, taskId) as { c: number };
+    return r.c > 0;
+  }
+  /** 按接收人维度的未读去重（G-15 转让等「通知指定用户」场景：同空间同类型给不同人的通知互不压制） */
+  hasUnreadNotificationForUser(workspaceId: string, userId: string, type: string, taskId: string | null): boolean {
+    const r = this.db
+      .prepare(
+        'SELECT COUNT(*) AS c FROM notifications WHERE workspace_id = ? AND user_id = ? AND type = ? AND task_id IS ? AND read_at IS NULL',
+      )
+      .get(workspaceId, userId, type, taskId) as { c: number };
     return r.c > 0;
   }
   listNotifications(workspaceId: string, limit = 50): NotificationRow[] {

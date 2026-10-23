@@ -92,3 +92,32 @@ export function notifyOwner(
     created_at: nowIso(),
   });
 }
+
+/**
+ * 通知指定用户（G-15 转让的接收侧 / 原所有者留痕侧）：与 notifyOwner 同一套口径
+ * （查接收人 notifyPrefs、站内 channel、mail channel 暂缓跳过），差别只在接收人——
+ * notifyOwner 恒投空间当前所有者，转让落定后原所有者已不是所有者，必须按人投递。
+ * 去重按（空间 + 接收人 + 类型 + 任务）未读维度，不与所有者通知互相压制。
+ */
+export function notifyUser(
+  repos: Repos,
+  userId: string,
+  workspaceId: string,
+  type: NotificationType,
+  title: string,
+  body: string,
+  taskId: string | null = null,
+): void {
+  if (!inappEnabled(repos, userId, type)) return;
+  if (repos.hasUnreadNotificationForUser(workspaceId, userId, type, taskId)) return;
+  repos.insertNotification({
+    workspace_id: workspaceId,
+    user_id: userId,
+    type,
+    title,
+    body,
+    task_id: taskId,
+    read_at: null,
+    created_at: nowIso(),
+  });
+}
