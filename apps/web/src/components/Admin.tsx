@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { adminFeatureSkill, fetchSkills, requestRaw } from '../api';
+import {
+  adminApproveStyleTemplate,
+  adminFeatureSkill,
+  adminRejectStyleTemplate,
+  fetchAdminStyleTemplatesPending,
+  fetchSkills,
+  requestRaw,
+  type StyleTemplateItem,
+} from '../api';
 import { yuan } from '../utils';
 import { Badge, Button, Dialog, Field, Input, Select, Spinner, useConfirm } from './ui';
 import type { AdminUser, AdminWorkspace, FeedbackItem, IndustryPack, SkillListItem, TrialApi } from '../types';
@@ -235,6 +243,9 @@ export default function Admin() {
 
       {/* ---------- skill 精选管理（v1.3.0 生态） ---------- */}
       <SkillFeaturedCard />
+
+      {/* ---------- 风格模板审核（v1.3.0 F） ---------- */}
+      <StyleTemplateReviewCard />
 
       {/* ---------- 用户反馈（G-05） ---------- */}
       <FeedbackCard />
@@ -526,6 +537,125 @@ function SkillFeaturedCard() {
       <div style={{ marginTop: 8 }}>
         <Button size="small" variant="gray" onClick={load}>刷新</Button>
       </div>
+    </div>
+  );
+}
+
+/* ---------------- 风格模板审核（v1.3.0 F） ----------------
+ * 审核即含图片内容审核：模板 config 带海报/招牌图时展示缩略图供管理员肉眼过审。
+ * 待审列表端点为服务端第二阶段补口（GET /api/admin/style-templates/pending），先行对接。 */
+function StyleTemplateReviewCard() {
+  const { toast } = useApp();
+  const [pending, setPending] = useState<StyleTemplateItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [rejecting, setRejecting] = useState<StyleTemplateItem | null>(null);
+  const [reason, setReason] = useState('');
+  const [busyId, setBusyId] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      setPending(await fetchAdminStyleTemplatesPending());
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoaded(true);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function approve(t: StyleTemplateItem) {
+    setBusyId(t.id);
+    try {
+      await adminApproveStyleTemplate(t.id);
+    } catch (e) {
+      setBusyId('');
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
+    setBusyId('');
+    toast(`已通过「${t.name}」，已上架平台风格库`);
+    load();
+  }
+
+  async function reject() {
+    if (!rejecting) return;
+    const t = rejecting;
+    setBusyId(t.id);
+    try {
+      await adminRejectStyleTemplate(t.id, reason);
+    } catch (e) {
+      setBusyId('');
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
+    setBusyId('');
+    toast(`已驳回「${t.name}」，退回提交方空间可见状态`);
+    setRejecting(null);
+    setReason('');
+    load();
+  }
+
+  return (
+    <div className="card">
+      <h2>风格模板审核 <span className="tag">用户提交上架的办公室风格在此过审（含海报/招牌图片内容审核）：通过 → 进平台库公开；驳回 → 退回本空间可见</span></h2>
+      {!loaded && <p><Spinner label="加载中…" /></p>}
+      {loaded && pending.length === 0 && <p className="hint">暂无待审核的风格模板。</p>}
+      {pending.map((t) => {
+        const cfg = t.config;
+        const furnCount = Object.values(cfg.furniture ?? {}).filter((v) => v).length;
+        const imgs: Array<{ label: string; id: string }> = [];
+        if (cfg.poster?.imageFileId) imgs.push({ label: '海报', id: cfg.poster.imageFileId });
+        if (cfg.sign?.mode === 'image' && cfg.sign.imageFileId) imgs.push({ label: '招牌图', id: cfg.sign.imageFileId });
+        return (
+          <div className="task" key={t.id}>
+            <span className="tt">{t.name}</span>
+            <Badge variant="adj">待审核</Badge>
+            <div className="meta">
+              由 {t.contributorWorkspaceName ?? ''} · {t.contributorName ?? ''} 贡献 · 提交于 {t.createdAt.slice(0, 16).replace('T', ' ')}
+              <br />
+              配色{' '}
+              <span className="style-admin-swatches">
+                <span style={{ background: cfg.palette.wall }} title={`墙面 ${cfg.palette.wall}`} />
+                <span style={{ background: cfg.palette.floor }} title={`地板 ${cfg.palette.floor}`} />
+                <span style={{ background: cfg.palette.accent }} title={`点缀 ${cfg.palette.accent}`} />
+              </span>{' '}
+              {cfg.palette.wall} / {cfg.palette.floor} / {cfg.palette.accent} · 地板纹样 {cfg.floorPattern} · 家具 {furnCount} 件
+              {cfg.sign?.mode === 'text' && cfg.sign.text ? <><br />招牌文字：{cfg.sign.text}</> : null}
+            </div>
+            {imgs.length > 0 && (
+              <div className="style-admin-thumbs">
+                {imgs.map((im) => (
+                  <span key={im.id}>
+                    <img src={`/api/style-images/${im.id}`} alt={`${im.label}（待审图）`} />
+                    <div className="hint">{im.label}</div>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div style={{ marginTop: 6 }}>
+              <Button size="small" variant="green" disabled={busyId === t.id} onClick={() => approve(t)}>通过上架</Button>{' '}
+              <Button size="small" variant="gray" disabled={busyId === t.id} onClick={() => { setRejecting(t); setReason(''); }}>驳回</Button>
+            </div>
+          </div>
+        );
+      })}
+      <div style={{ marginTop: 8 }}>
+        <Button size="small" variant="gray" onClick={load}>刷新</Button>
+      </div>
+      {rejecting && (
+        <Dialog open onClose={() => setRejecting(null)} title={`驳回「${rejecting.name}」`}>
+          <Field label="驳回原因（会记入审计）">
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="如：海报图片涉及违规内容" autoFocus />
+          </Field>
+          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+            <Button onClick={reject}>确认驳回</Button>
+            <Button variant="gray" onClick={() => setRejecting(null)}>取消</Button>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 }
