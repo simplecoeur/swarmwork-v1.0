@@ -142,7 +142,10 @@ export default function Admin() {
                   {u.isPlatformAdmin && <Badge variant="rev">管理员</Badge>}
                   {u.mustChangePassword && <Badge variant="adj">待改密</Badge>}
                 </td>
-                <td>{u.displayName}</td>
+                <td>
+                  <img className="avatar-img" src={u.avatarUrl ?? `/api/users/${u.id}/avatar`} alt="" />{' '}
+                  {u.displayName}
+                </td>
                 <td>{STATUS_LABEL[u.status] ?? u.status}</td>
                 <td>{u.workspaceCount}</td>
                 <td>{fmtTime(u.createdAt)}</td>

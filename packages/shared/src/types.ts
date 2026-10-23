@@ -262,6 +262,9 @@ export interface AuthUserDto {
   status: string;
   isPlatformAdmin: boolean;
   mustChangePassword: boolean;
+  /** G-11：头像地址（无头像为 null，读取端回占位图）；注销冷静期到期时刻（非冷静期为 null） */
+  avatarUrl?: string | null;
+  deletionAt?: string | null;
 }
 
 export interface WorkspaceDto {
@@ -796,6 +799,33 @@ export interface ScheduleDto {
   lastResult: ScheduleLastResult | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/* ---------- G-11 账号设置（v1.2.0 批次二；邮箱验证小块暂缓） ---------- */
+
+/** GET /api/account 资料聚合：基本资料 + 名下空间清单 + 邮箱验证状态位（暂缓口径） */
+export interface AccountDto {
+  id: string;
+  email: string;
+  displayName: string;
+  avatarUrl: string | null;
+  status: string;
+  isPlatformAdmin: boolean;
+  /** 邮箱验证：随 G-01 邮件通道暂缓，本版恒 false 且只展示占位文案，不做假状态/假按钮 */
+  emailVerified: boolean;
+  emailVerificationNote: string;
+  deletionAt: string | null;
+  workspaces: Array<{ id: string; name: string; role: string }>;
+}
+
+/** GET /api/auth/sessions 的活跃会话行：id 为会话行 id 的掩码前缀（吊销接口以此定位本人会话） */
+export interface AuthSessionDto {
+  id: string;
+  createdAt: string;
+  lastSeenAt: string;
+  ip: string;
+  userAgent: string;
+  isCurrent: boolean;
 }
 
 /** POST /api/schedules 入参（assetRefs 与手动发单同口径，服务端并入 params 快照） */

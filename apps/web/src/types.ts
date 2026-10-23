@@ -80,6 +80,8 @@ export interface AdminUser {
   workspaceCount: number;
   lastLoginAt: string | null;
   createdAt: string;
+  /** G-11：头像地址（随 /api/admin/users 的 userDto 下发，无头像为 null、读取端回占位） */
+  avatarUrl?: string | null;
 }
 
 export interface AdminWorkspace {
@@ -122,6 +124,10 @@ export type AssetImportConfirm = AssetImportConfirmDto;
 /* ---------- G-07/G-09（v1.2.0 批次二） ---------- */
 export type ApiToken = ApiTokenDto;
 export type ScheduleItem = import('@swarm/shared').ScheduleDto;
+
+/* G-11 账号设置：与 shared DTO 同口径 */
+export type AccountInfo = import('@swarm/shared').AccountDto;
+export type SessionItem = import('@swarm/shared').AuthSessionDto;
 export type ApiTokenCreated = ApiTokenCreatedDto;
 export type WebhookItem = WebhookDto;
 export type WebhookDelivery = WebhookDeliveryDto;

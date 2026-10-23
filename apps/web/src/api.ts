@@ -307,6 +307,32 @@ export async function fetchSearch(
   };
 }
 
+/* ---------- G-11 账号设置 ---------- */
+
+export async function fetchAccount(): Promise<import('./types').AccountInfo> {
+  const j = await requestRaw('GET', '/api/account');
+  return j.account as import('./types').AccountInfo;
+}
+
+export async function fetchSessions(): Promise<import('./types').SessionItem[]> {
+  const j = await requestRaw('GET', '/api/auth/sessions');
+  return (j.sessions as import('./types').SessionItem[]) ?? [];
+}
+
+/** 头像上传（multipart 直传；裁剪在 AvatarUploader 组件内完成后以 Blob 传入） */
+export async function uploadAvatar(blob: Blob): Promise<{ avatarUrl: string | null }> {
+  const fd = new FormData();
+  fd.append('file', blob, 'avatar.jpg');
+  const r = await fetch('/api/account/avatar', { method: 'POST', body: fd });
+  const j = (await r.json().catch(() => ({}))) as {
+    ok?: boolean;
+    avatarUrl?: string | null;
+    error?: { message?: string };
+  };
+  if (!j.ok) throw new Error(j.error?.message || `上传失败（${r.status}）`);
+  return { avatarUrl: j.avatarUrl ?? null };
+}
+
 /* ---------- G-10 定时任务 ---------- */
 
 export async function fetchSchedules(): Promise<import('./types').ScheduleItem[]> {

@@ -12,6 +12,7 @@ import Settings from './components/Settings';
 import Admin from './components/Admin';
 import Skills from './components/Skills';
 import Schedules from './components/Schedules';
+import Account, { PendingDeletionPage } from './components/Account';
 import Assets from './components/Assets';
 import HelpCenter from './components/HelpCenter';
 import { GlobalSearch, SearchResultsPage } from './components/GlobalSearch';
@@ -51,6 +52,8 @@ function Shell() {
   }
   if (authStatus === 'anon') return <AuthGate />;
   if (user?.mustChangePassword) return <ChangePasswordGate />;
+  /* G-11：注销冷静期账号登录后只达「注销待生效」页（服务端 onRequest 同口径收口） */
+  if (user?.status === 'pending_deletion') return <PendingDeletionPage />;
 
   const usable = S?.apis.some((a) => a.hasKey);
   const wsName = currentWorkspace?.name ?? S?.workspace?.name ?? '';
@@ -146,10 +149,19 @@ function Shell() {
             ariaLabel="账号菜单"
             trigger={
               <Button variant="mini">
+                {user && (
+                  <img
+                    className="avatar-img"
+                    src={`/api/users/${user.id}/avatar`}
+                    alt=""
+                    style={{ marginRight: 6 }}
+                  />
+                )}
                 {user?.displayName}（{user?.email}）{user?.isPlatformAdmin ? ' · 平台管理员' : ''} ▾
               </Button>
             }
             items={[
+              { label: '👤 账号设置', onSelect: () => setTab('account') },
               { label: '＋ 开新公司', onSelect: () => setShowNewWs(true) },
               { label: '❓ 帮助中心', onSelect: () => setTab('help') },
               { label: '✉️ 意见反馈', onSelect: () => setFeedbackOpen(true) },
@@ -210,6 +222,11 @@ function Shell() {
             {tab === 'schedules' && (
               <section>
                 <Schedules />
+              </section>
+            )}
+            {tab === 'account' && (
+              <section>
+                <Account />
               </section>
             )}
             {tab === 'assets' && (

@@ -151,6 +151,9 @@ export interface UserRow {
   registration_ip: string;
   last_login_at: string | null;
   created_at: string;
+  /** G-11：头像文件名（<user_id>.<ext>，落盘 DATA_DIR/avatars/）；注销冷静期到期时刻 */
+  avatar_file?: string | null;
+  deletion_at?: string | null;
 }
 
 export interface WorkspaceRow {
@@ -874,11 +877,13 @@ export class Repos {
     this.db
       .prepare(
         `INSERT INTO users (id, email, password_hash, display_name, status, is_platform_admin, must_change_password,
-          failed_attempts, locked_until, registration_ip, last_login_at, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+          failed_attempts, locked_until, registration_ip, last_login_at, created_at, avatar_file, deletion_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id, row.email, row.password_hash, row.display_name, row.status, row.is_platform_admin,
         row.must_change_password, row.failed_attempts, row.locked_until, row.registration_ip, row.last_login_at, row.created_at,
+        row.avatar_file ?? null, row.deletion_at ?? null,
       );
   }
   getUserByEmail(email: string): UserRow | undefined {
@@ -894,12 +899,44 @@ export class Repos {
     this.db
       .prepare(
         `UPDATE users SET email=?, password_hash=?, display_name=?, status=?, is_platform_admin=?, must_change_password=?,
-          failed_attempts=?, locked_until=?, last_login_at=? WHERE id=?`,
+          failed_attempts=?, locked_until=?, last_login_at=?, avatar_file=?, deletion_at=? WHERE id=?`,
       )
       .run(
         row.email, row.password_hash, row.display_name, row.status, row.is_platform_admin,
-        row.must_change_password, row.failed_attempts, row.locked_until, row.last_login_at, row.id,
+        row.must_change_password, row.failed_attempts, row.locked_until, row.last_login_at,
+        row.avatar_file ?? null, row.deletion_at ?? null, row.id,
       );
+  }
+  /** G-11：冷静期已到期、待匿名化处理的用户（status='pending_deletion' 且 deletion_at 已到） */
+  listDuePendingDeletions(nowIsoStr: string): UserRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM users WHERE status = 'pending_deletion' AND deletion_at IS NOT NULL AND deletion_at <= ? ORDER BY deletion_at",
+      )
+      .all(nowIsoStr) as unknown as UserRow[];
+  }
+  /** G-11：某用户的全部会话（活跃会话列表用，含已过期行，过期过滤在路由层） */
+  listSessionsByUser(userId: string): SessionRow[] {
+    return this.db
+      .prepare('SELECT * FROM sessions WHERE user_id = ? ORDER BY created_at DESC')
+      .all(userId) as unknown as SessionRow[];
+  }
+  /** G-11 注销到期：物理删除该用户的全部个人偏好 */
+  deletePreferencesByUser(userId: string): void {
+    this.db.prepare('DELETE FROM user_preferences WHERE user_id = ?').run(userId);
+  }
+  /** G-11 注销到期：物理删除该用户的 personal KB 条目，返回删除条数 */
+  deletePersonalKbByUser(userId: string): number {
+    const r = this.db
+      .prepare("DELETE FROM kb_entries WHERE scope = 'personal' AND owner_user_id = ?")
+      .run(userId);
+    return Number(r.changes);
+  }
+  countPersonalKbByUser(userId: string): number {
+    const r = this.db
+      .prepare("SELECT COUNT(*) AS c FROM kb_entries WHERE scope = 'personal' AND owner_user_id = ?")
+      .get(userId) as { c: number };
+    return r.c;
   }
   countRecentRegistrationsByIp(ip: string, sinceIso: string): number {
     const r = this.db

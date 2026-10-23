@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { DatabaseSync } from 'node:sqlite';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { computeNextRunAt, runDueSchedules } from '../../src/domain/scheduleService';
 import { encryptKey } from '../../src/store/crypto';
 import { openDb } from '../../src/store/db';
@@ -748,6 +748,424 @@ describe('G-10 验收①②④（rig）：到点自动发单与手动一致 / �
       expect(notif.total).toBeGreaterThanOrEqual(1);
     } finally {
       stopRig(rig);
+    }
+  });
+});
+
+/* ================= G-11 账号设置（断言①②③④⑤⑥ + 存量库升级对账） =================
+ * 越权矩阵扩展（批次二）：会话定向吊销跨用户回 404（断言②内）、注销守卫（断言③）、
+ * 转让前置（断言③依赖 G-15 接口先行）、Token 跨空间（G-07 既有）。 */
+
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+async function uploadAvatar(
+  base: string,
+  cookie: string,
+  blob: Blob,
+  name: string,
+): Promise<{ status: number; json: any }> {
+  const fd = new FormData();
+  fd.append('file', blob, name);
+  const r = await fetch(base + '/api/account/avatar', { method: 'POST', headers: { cookie }, body: fd });
+  return { status: r.status, json: await r.json().catch(() => ({})) };
+}
+
+async function loginRaw(
+  base: string,
+  email: string,
+  password: string,
+): Promise<{ status: number; cookie: string; json: any }> {
+  const r = await fetch(base + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  return {
+    status: r.status,
+    cookie: (r.headers.get('set-cookie') || '').split(';')[0],
+    json: await r.json().catch(() => ({})),
+  };
+}
+
+describe('G-11 验收①②③④⑤⑥：头像 / 会话定向吊销 / 注销守卫与冷静期 / 到期匿名化 / 管理员拒绝', () => {
+  let rig: Rig;
+  let A: { cookie: string; userId: string; workspaceId: string };
+  let B: { cookie: string; userId: string; workspaceId: string };
+  let server2: ChildProcess | null = null;
+
+  beforeAll(async () => {
+    rig = await startRig(8943, 8953, { SWARM_SCHEDULE_TICK_MS: '400' });
+    A = await registerUser(rig.base, 'g11-a@test.local', '账号甲');
+    B = await registerUser(rig.base, 'g11-b@test.local', '账号乙');
+  }, 60_000);
+
+  afterAll(async () => {
+    if (server2?.pid) {
+      try {
+        process.kill(-server2.pid, 'SIGKILL');
+      } catch {
+        /* 已退出 */
+      }
+    }
+    if (rig) stopRig(rig);
+  });
+
+  it('断言①：头像上传（合法 PNG）后 me/读取口径一致；非图片与 3MB 回 VALIDATION；无头像回占位', async () => {
+    const bad = await uploadAvatar(rig.base, A.cookie, new Blob(['hello'], { type: 'text/plain' }), 'x.txt');
+    expect(bad.status).toBe(400);
+    expect(bad.json.error.code).toBe('VALIDATION');
+
+    const big = await uploadAvatar(
+      rig.base,
+      A.cookie,
+      new Blob([Buffer.alloc(3 * 1024 * 1024, 7)], { type: 'image/png' }),
+      'big.png',
+    );
+    expect(big.status).toBe(400);
+    expect(big.json.error.code).toBe('VALIDATION');
+
+    const ok = await uploadAvatar(rig.base, A.cookie, new Blob([PNG_1PX], { type: 'image/png' }), 'a.png');
+    expect(ok.status).toBe(200);
+    expect(ok.json.avatarUrl).toBe(`/api/users/${A.userId}/avatar`);
+
+    const me = await jget(rig.base, '/api/auth/me', A.cookie);
+    expect(me.user.avatarUrl).toBe(`/api/users/${A.userId}/avatar`);
+
+    const img = await fetch(rig.base + `/api/users/${A.userId}/avatar`, { headers: { cookie: A.cookie } });
+    expect(img.status).toBe(200);
+    expect(img.headers.get('content-type')).toContain('image/png');
+
+    const placeholder = await fetch(rig.base + `/api/users/${B.userId}/avatar`, {
+      headers: { cookie: A.cookie },
+    });
+    expect(placeholder.status).toBe(200);
+    expect(placeholder.headers.get('content-type')).toContain('image/svg+xml');
+
+    /* 资料聚合与改名（GET /api/account + PUT /api/account/profile） */
+    const acc = await jget(rig.base, '/api/account', A.cookie);
+    expect(acc.account.email).toBe('g11-a@test.local');
+    expect(acc.account.emailVerified).toBe(false);
+    expect(acc.account.emailVerificationNote).toBe('邮箱通道接入后可用');
+    expect(acc.account.workspaces.some((w: any) => w.id === A.workspaceId && w.role === 'owner')).toBe(true);
+    const ren = await fetch(rig.base + '/api/account/profile', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', cookie: A.cookie },
+      body: JSON.stringify({ displayName: '账号甲改' }),
+    });
+    expect((await ren.json()).ok).toBe(true);
+    const me2 = await jget(rig.base, '/api/auth/me', A.cookie);
+    expect(me2.user.displayName).toBe('账号甲改');
+  });
+
+  it('断言②：双会话定向吊销——被吊销会话 401、当前不受影响；跨用户吊销回 404；revoke-others 只留当前', async () => {
+    const second = await loginRaw(rig.base, 'g11-a@test.local', 'UserPass123!');
+    expect(second.status).toBe(200);
+    const cookie2 = second.cookie;
+
+    const list = await jget(rig.base, '/api/auth/sessions', A.cookie);
+    expect(list.sessions.length).toBeGreaterThanOrEqual(2);
+    const current = list.sessions.find((s: any) => s.isCurrent);
+    const other = list.sessions.find((s: any) => !s.isCurrent);
+    expect(current).toBeTruthy();
+    expect(other).toBeTruthy();
+    expect(other.ip).toBeTruthy();
+
+    /* 越权条：B 拿 A 的会话掩码 id 请求吊销 → 404（不泄露存在性），A 会话不受影响 */
+    const cross = await raw(rig.base, 'DELETE', `/api/auth/sessions/${current.id}`, undefined, {
+      cookie: B.cookie,
+    });
+    expect(cross.status).toBe(404);
+    expect((await jget(rig.base, '/api/auth/me', A.cookie)).user.id).toBe(A.userId);
+
+    const del = await raw(rig.base, 'DELETE', `/api/auth/sessions/${other.id}`, undefined, {
+      cookie: A.cookie,
+    });
+    expect(del.json.ok).toBe(true);
+    const meDead = await fetch(rig.base + '/api/auth/me', { headers: { cookie: cookie2 } });
+    expect(meDead.status).toBe(401);
+    expect((await jget(rig.base, '/api/auth/me', A.cookie)).user.id).toBe(A.userId);
+
+    /* revoke-others：第三会话吊销其余（含最初会话），自身存活 */
+    const third = await loginRaw(rig.base, 'g11-a@test.local', 'UserPass123!');
+    const cookie3 = third.cookie;
+    const rv = await jpost(rig.base, '/api/auth/sessions/revoke-others', {}, cookie3);
+    expect(rv.ok).toBe(true);
+    const meOld = await fetch(rig.base + '/api/auth/me', { headers: { cookie: A.cookie } });
+    expect(meOld.status).toBe(401);
+    expect((await jget(rig.base, '/api/auth/me', cookie3)).user.id).toBe(A.userId);
+    A.cookie = cookie3;
+  });
+
+  it('断言③④：有自有空间注销被 VALIDATION 拦下列名 → G-15 转让后申请成功 → 冷静期只达撤销页 → 撤销恢复', async () => {
+    const wrong = await raw(
+      rig.base,
+      'POST',
+      '/api/account/delete-request',
+      { password: '<MASKED_SECRET_004>' },
+      { cookie: A.cookie },
+    );
+    expect(wrong.status).toBe(400);
+    expect(wrong.json.error.code).toBe('VALIDATION');
+
+    const wsList = await jget(rig.base, '/api/workspaces', A.cookie);
+    const myWs = wsList.workspaces.find((w: any) => w.id === A.workspaceId);
+    const blocked = await raw(
+      rig.base,
+      'POST',
+      '/api/account/delete-request',
+      { password: 'UserPass123!' },
+      { cookie: A.cookie },
+    );
+    expect(blocked.status).toBe(400);
+    expect(blocked.json.error.code).toBe('VALIDATION');
+    expect(blocked.json.blockingWorkspaces).toEqual([{ id: A.workspaceId, name: myWs.name }]);
+    expect(blocked.json.error.message).toContain(myWs.name);
+
+    /* 先行兜底：经 G-15 接口把空间转给 B；再以 DB 直插让 A 成为 B 空间的普通成员
+     * （本平台无用户邀请接口，测试 setup 沿用 G-10 seed 的直插 membership 先例） */
+    const tr = await jpost(
+      rig.base,
+      `/api/workspaces/${A.workspaceId}/transfer`,
+      { targetUserId: B.userId, password: 'UserPass123!' },
+      A.cookie,
+    );
+    expect(tr.ok).toBe(true);
+    withDb(rig, (db) => {
+      db.prepare(
+        "INSERT OR REPLACE INTO memberships (user_id, workspace_id, role, status, joined_at) VALUES (?, ?, 'member', 'active', ?)",
+      ).run(A.userId, B.workspaceId, new Date().toISOString());
+    });
+
+    /* 注销前种下个人数据（personal KB + 偏好），供断言⑤核对到期物理删除 */
+    const kb = await jpost(
+      rig.base,
+      '/api/kb',
+      { title: '甲的私人资料', body: 'secret-body', scope: 'personal' },
+      A.cookie,
+    );
+    expect(kb.ok).toBe(true);
+    const pref = await fetch(rig.base + '/api/preferences', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', cookie: A.cookie },
+      body: JSON.stringify({ key: 'notify.task_done', value: false }),
+    });
+    expect((await pref.json()).ok).toBe(true);
+
+    const okReq = await jpost(
+      rig.base,
+      '/api/account/delete-request',
+      { password: 'UserPass123!' },
+      A.cookie,
+    );
+    expect(okReq.ok).toBe(true);
+    const deletionAtMs = Date.parse(okReq.deletionAt);
+    expect(deletionAtMs).toBeGreaterThan(Date.now() + 6.9 * 24 * 3600 * 1000);
+    expect(deletionAtMs).toBeLessThan(Date.now() + 7.1 * 24 * 3600 * 1000);
+
+    /* 申请通过即吊销全部会话 */
+    const meRevoked = await fetch(rig.base + '/api/auth/me', { headers: { cookie: A.cookie } });
+    expect(meRevoked.status).toBe(401);
+
+    /* 冷静期登录：只达「注销待生效」页口径——me 可见 pending_deletion、业务面 403 */
+    const relogin = await loginRaw(rig.base, 'g11-a@test.local', 'UserPass123!');
+    expect(relogin.status).toBe(200);
+    const cookie4 = relogin.cookie;
+    const meP = await jget(rig.base, '/api/auth/me', cookie4);
+    expect(meP.user.status).toBe('pending_deletion');
+    expect(meP.user.deletionAt).toBeTruthy();
+    const stateP = await fetch(rig.base + '/api/state', { headers: { cookie: cookie4 } });
+    expect(stateP.status).toBe(403);
+
+    /* 撤销后恢复 active 且可正常使用 */
+    const cancel = await jpost(rig.base, '/api/account/delete-cancel', {}, cookie4);
+    expect(cancel.ok).toBe(true);
+    const meA = await jget(rig.base, '/api/auth/me', cookie4);
+    expect(meA.user.status).toBe('active');
+    expect(meA.user.deletionAt).toBeNull();
+    const acc = await jget(rig.base, '/api/account', cookie4);
+    expect(acc.account.workspaces.some((w: any) => w.id === B.workspaceId && w.role === 'member')).toBe(true);
+    A.cookie = cookie4;
+  });
+
+  it('断言⑤：冷静期到期 → 重启触发到期扫描 → deleted + 邮箱匿名化 + personal KB/偏好/头像/成员资格清零 + 再登录 401', async () => {
+    const okReq = await jpost(
+      rig.base,
+      '/api/account/delete-request',
+      { password: 'UserPass123!' },
+      A.cookie,
+    );
+    expect(okReq.ok).toBe(true);
+    const avatarPath = path.join(rig.dataDir, 'avatars', `${A.userId}.png`);
+    expect(fs.existsSync(avatarPath)).toBe(true);
+    withDb(rig, (db) => {
+      db.prepare("UPDATE users SET deletion_at = '2020-01-01T00:00:00.000Z' WHERE id = ?").run(A.userId);
+      const kb = db
+        .prepare("SELECT COUNT(*) AS c FROM kb_entries WHERE scope = 'personal' AND owner_user_id = ?")
+        .get(A.userId) as { c: number };
+      expect(kb.c).toBe(1);
+      const pf = db
+        .prepare('SELECT COUNT(*) AS c FROM user_preferences WHERE user_id = ?')
+        .get(A.userId) as { c: number };
+      expect(pf.c).toBeGreaterThanOrEqual(1);
+    });
+
+    /* 到期扫描挂在服务进程的共用 tick 上（首 tick 即扫）：杀掉旧进程、以同一 DATA_DIR 重启触发 */
+    const serverProc = rig.procs[1];
+    try {
+      if (serverProc.pid) process.kill(-serverProc.pid, 'SIGKILL');
+    } catch {
+      /* 已退出 */
+    }
+    await sleep(600);
+    server2 = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
+      cwd: SERVER_DIR,
+      env: {
+        ...process.env,
+        PORT: '8944',
+        DATA_DIR: rig.dataDir,
+        LLM_RETRY_BASE_MS: '10',
+        SWARM_ADMIN_EMAIL: 'admin@test.local',
+        SWARM_ADMIN_PASSWORD: '<MASKED_SECRET_001>!',
+        SWARM_SCHEDULE_TICK_MS: '400',
+      },
+      stdio: 'pipe',
+      detached: true,
+    });
+    server2.stderr?.on('data', (d) => process.stderr.write('[server2] ' + d));
+    expect(await waitUp('http://127.0.0.1:8944/api/health')).toBe(true);
+
+    const row = await waitFor(async () => {
+      const u = withDb(rig, (db) =>
+        db
+          .prepare('SELECT email, display_name, status, avatar_file FROM users WHERE id = ?')
+          .get(A.userId),
+      ) as any;
+      return u && u.status === 'deleted' ? u : null;
+    }, 30_000);
+    expect(row.email).toBe(`deleted-${A.userId}@invalid`);
+    expect(row.display_name).toBe('已注销用户');
+    expect(row.avatar_file).toBeNull();
+    expect(fs.existsSync(avatarPath)).toBe(false);
+    withDb(rig, (db) => {
+      const kb = db
+        .prepare("SELECT COUNT(*) AS c FROM kb_entries WHERE scope = 'personal' AND owner_user_id = ?")
+        .get(A.userId) as { c: number };
+      expect(kb.c).toBe(0);
+      const pf = db
+        .prepare('SELECT COUNT(*) AS c FROM user_preferences WHERE user_id = ?')
+        .get(A.userId) as { c: number };
+      expect(pf.c).toBe(0);
+      const mb = db
+        .prepare('SELECT COUNT(*) AS c FROM memberships WHERE user_id = ?')
+        .get(A.userId) as { c: number };
+      expect(mb.c).toBe(0);
+      const audit = db
+        .prepare("SELECT COUNT(*) AS c FROM audit_logs WHERE action = 'account_deleted' AND user_id = ?")
+        .get(A.userId) as { c: number };
+      expect(audit.c).toBe(1);
+    });
+
+    const relogin = await loginRaw('http://127.0.0.1:8944', 'g11-a@test.local', 'UserPass123!');
+    expect(relogin.status).toBe(401);
+  }, 60_000);
+
+  it('断言⑥：平台管理员自助注销被拒（VALIDATION）且账号状态不变', async () => {
+    /* 断言⑤ 已把原服务进程重启到 8944（同一 DATA_DIR，会话/管理员口径不变） */
+    const base2 = 'http://127.0.0.1:8944';
+    const r = await raw(
+      base2,
+      'POST',
+      '/api/account/delete-request',
+      { password: '<MASKED_SECRET_002>!' },
+      { cookie: rig.adminCookie },
+    );
+    expect(r.status).toBe(400);
+    expect(r.json.error.code).toBe('VALIDATION');
+    expect(r.json.error.message).toContain('管理员');
+    const users = await jget(base2, '/api/admin/users', rig.adminCookie);
+    const admin = users.users.find((u: any) => u.email === 'admin@test.local');
+    expect(admin.status).toBe('active');
+  });
+});
+
+describe('存量库升级对账：001–010 → 011/012（schedules 表 + users 新列，存量数据与聚合不变）', () => {
+  it('手工只应用 001–010 并种存量数据 → openDb 自动升级 → 新表/新列就位、旧行与采购/账本聚合不变', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'swarm-v120-upg-'));
+    const dbPath = path.join(dir, 'swarm.db');
+    const MIGRATIONS = path.join(SERVER_DIR, 'src', 'store', 'migrations');
+    const files = fs
+      .readdirSync(MIGRATIONS)
+      .filter((f) => /^\d+_.*\.sql$/.test(f))
+      .sort();
+    const legacy = files.filter((f) => f < '011');
+    expect(legacy.length).toBe(10);
+    const db = new DatabaseSync(dbPath);
+    db.exec('CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)');
+    for (const f of legacy) {
+      db.exec(fs.readFileSync(path.join(MIGRATIONS, f), 'utf8'));
+      db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(
+        f.replace(/\.sql$/, ''),
+        '2026-10-20T00:00:00.000Z',
+      );
+    }
+    const ts = '2026-10-20T00:00:00.000Z';
+    db.prepare(
+      `INSERT INTO users (id, email, password_hash, display_name, status, is_platform_admin, must_change_password,
+        failed_attempts, locked_until, registration_ip, last_login_at, created_at)
+       VALUES ('usr_legacy', 'legacy@test.local', 'x', '存量用户', 'active', 0, 0, 0, NULL, '127.0.0.1', NULL, ?)`,
+    ).run(ts);
+    db.prepare(
+      "INSERT INTO workspaces (id, name, owner_user_id, status, industry_pack_id, created_at) VALUES ('ws_legacy', '存量空间', 'usr_legacy', 'active', NULL, ?)",
+    ).run(ts);
+    db.prepare(
+      "INSERT INTO memberships (user_id, workspace_id, role, status, joined_at) VALUES ('usr_legacy', 'ws_legacy', 'owner', 'active', ?)",
+    ).run(ts);
+    db.prepare(
+      'INSERT INTO apis (id, name, provider, base_url, api_key_enc, model, price_per_m_milli, created_at, workspace_id) VALUES (?,?,?,?,?,?,?,?,?)',
+    ).run('api_legacy', '存量API', 'custom', 'http://127.0.0.1:9', '', 'm1', 10_000, ts, 'ws_legacy');
+    db.prepare(
+      'INSERT INTO purchases (api_id, amount_milli, created_at, workspace_id) VALUES (?,?,?,?)',
+    ).run('api_legacy', 100_000, ts, 'ws_legacy');
+    db.prepare(
+      `INSERT INTO ledger_entries (task_id, team_id, api_id, stage, prompt_tokens, completion_tokens, total_tokens, cost_milli, estimated, created_at, workspace_id)
+       VALUES ('task_legacy', 'team_legacy', 'api_legacy', '执行', 100, 50, 150, 3, 0, ?, 'ws_legacy')`,
+    ).run(ts);
+    db.close();
+
+    const db2 = openDb(dbPath);
+    try {
+      const versions = (
+        db2.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as Array<{
+          version: string;
+        }>
+      ).map((r) => r.version);
+      expect(versions).toContain('011_schedules');
+      expect(versions).toContain('012_account');
+      const userCols = (db2.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>).map(
+        (c) => c.name,
+      );
+      expect(userCols).toContain('avatar_file');
+      expect(userCols).toContain('deletion_at');
+      const sched = db2
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schedules'")
+        .get() as { name: string } | undefined;
+      expect(sched?.name).toBe('schedules');
+      const u = db2
+        .prepare('SELECT email, display_name, avatar_file, deletion_at FROM users WHERE id = ?')
+        .get('usr_legacy') as any;
+      expect(u.email).toBe('legacy@test.local');
+      expect(u.avatar_file).toBeNull();
+      expect(u.deletion_at).toBeNull();
+      const sumP = db2.prepare('SELECT SUM(amount_milli) AS s FROM purchases').get() as { s: number };
+      expect(sumP.s).toBe(100_000);
+      const sumL = db2.prepare('SELECT SUM(cost_milli) AS s FROM ledger_entries').get() as { s: number };
+      expect(sumL.s).toBe(3);
+    } finally {
+      db2.close();
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

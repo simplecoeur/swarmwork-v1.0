@@ -21,6 +21,7 @@ import {
   type WorkspaceDto,
 } from '@swarm/shared';
 import * as fs from 'fs';
+import * as path from 'path';
 import {
   clearCookieHeader,
   generateTempPassword,
@@ -151,6 +152,8 @@ function userDto(u: UserRow): AuthUserDto {
     status: u.status,
     isPlatformAdmin: u.is_platform_admin === 1,
     mustChangePassword: u.must_change_password === 1,
+    avatarUrl: u.avatar_file ? `/api/users/${u.id}/avatar` : null,
+    deletionAt: u.deletion_at ?? null,
   };
 }
 
@@ -330,7 +333,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       fail(ErrorCode.UNAUTHORIZED, '会话已过期，请重新登录', 401);
     }
     const user = repos.getUser(session!.user_id);
-    if (!user || user!.status === 'disabled') {
+    if (!user || user!.status === 'disabled' || user!.status === 'deleted') {
       repos.deleteSessionsByUser(session!.user_id);
       fail(ErrorCode.UNAUTHORIZED, '账号不可用，请重新登录', 401);
     }
@@ -359,6 +362,12 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
 
   const PUBLIC_PATHS = new Set(['/api/health', '/api/auth/login', '/api/auth/register']);
   const MUST_CHANGE_EXEMPT = new Set(['/api/auth/me', '/api/auth/logout', '/api/auth/change-password']);
+  /** G-11 冷静期：pending_deletion 账号登录后只能到达「注销待生效」页——仅放行撤销/登出/me */
+  const PENDING_DELETION_EXEMPT = new Set([
+    '/api/auth/me',
+    '/api/auth/logout',
+    '/api/account/delete-cancel',
+  ]);
   app.addHook('onRequest', async (req) => {
     const url = (req.url || '').split('?')[0];
     if (!url.startsWith('/api/') || PUBLIC_PATHS.has(url)) return;
@@ -366,6 +375,13 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     if (url.startsWith('/api/open/')) return;
     const ctx = resolveAuth(req);
     (req as AuthedRequest).authCtx = ctx;
+    if (ctx.user.status === 'pending_deletion' && !PENDING_DELETION_EXEMPT.has(url)) {
+      fail(
+        ErrorCode.FORBIDDEN,
+        '账号处于注销冷静期：只能撤销注销或退出登录，冷静期结束账号将被注销',
+        403,
+      );
+    }
     if (ctx.user.must_change_password === 1 && !MUST_CHANGE_EXEMPT.has(url)) {
       fail(ErrorCode.FORBIDDEN, '请先修改初始密码后再继续使用', 403);
     }
@@ -522,10 +538,15 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       if (locked) fail(ErrorCode.ACCOUNT_LOCKED, '登录失败次数过多，账号已锁定 15 分钟', 403);
       fail(ErrorCode.UNAUTHORIZED, '邮箱或密码不正确', 401);
     }
+    if (u.status === 'deleted') {
+      repos.insertLoginLog({ user_id: u.id, email: u.email, success: 0, ip, reason: '账号已注销' });
+      fail(ErrorCode.UNAUTHORIZED, '邮箱或密码不正确', 401);
+    }
     if (u.status === 'pending') {
       repos.insertLoginLog({ user_id: u.id, email: u.email, success: 0, ip, reason: '账号待审核' });
       fail(ErrorCode.FORBIDDEN, '账号待管理员审核开通', 403);
     }
+    // G-11：pending_deletion（注销冷静期）允许登录——会话只达「注销待生效」页（onRequest 守卫收口）
     if (u.status === 'disabled') {
       repos.insertLoginLog({ user_id: u.id, email: u.email, success: 0, ip, reason: '账号已停用' });
       fail(ErrorCode.FORBIDDEN, '账号已停用', 403);
@@ -1619,6 +1640,11 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   registerM8Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit });
 
   /* ================= v1.2.0 路由组（批次一 G-05/G-08 + 批次二 G-07 开放 API/Webhook、G-09 全局搜索） =================
-   * G-07 开放面发单复用本闭包的 createOneTask 共用路径（经 helpers.createTask 注入），不另开后门。 */
-  registerV120Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit, createTask: createOneTask });
+   * G-07 开放面发单复用本闭包的 createOneTask 共用路径（经 helpers.createTask 注入），不另开后门。
+   * dataDir 由 dbPath 推导（G-11 头像落盘 / 注销到期删头像用）。 */
+  registerV120Routes(
+    app,
+    { repos, logger, dataDir: path.dirname(deps.dbPath) },
+    { auth, wsAuth, requireAdmin, audit, createTask: createOneTask },
+  );
 }

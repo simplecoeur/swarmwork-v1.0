@@ -126,6 +126,9 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 .subtask{ border-top:2px dashed var(--line); padding:6px 2px; cursor:pointer; font-size:13px; }
 .subtask:hover{ background:var(--panel2); }
 .task.flash{ outline:3px solid var(--amber); outline-offset:2px; }
+/* G-11 头像：顶栏/管理台列表小头像与账号页大头像（方框像素风，与既有 token 一致） */
+.avatar-img{ width:22px; height:22px; object-fit:cover; border:2px solid var(--line); vertical-align:-6px; background:var(--panel2); }
+.avatar-lg{ width:72px; height:72px; object-fit:cover; border:2px solid var(--line); background:var(--panel2); }
 /* G-10 定时任务列表行：标题/徽标/下次运行同排，启停与操作靠右成组（移动端在 ≤768px 块内改卡片纵排） */
 .schedule-row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .schedule-row .hint{ flex:1 1 260px; }

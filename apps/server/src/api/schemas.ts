@@ -492,6 +492,16 @@ export const scheduleUpdateSchema = z.object({
   enabled: z.boolean().optional(),
 });
 
+/* ---------- G-11 账号设置（v1.2.0 批次二） ---------- */
+
+export const accountProfileSchema = z.object({
+  displayName: z.string().trim().min(1, '显示名必填').max(50),
+});
+
+export const deleteRequestSchema = z.object({
+  password: z.string().min(1, '密码必填（注销须验密确认）'),
+});
+
 /* ---------- G-09 全局搜索（v1.2.0 批次二）：q 必填，types 为逗号分隔过滤（路由层解析） ---------- */
 
 /** 资产导入 confirm：sections 上限 200 整体校验（超限 VALIDATION 且零落库）；资产为单行创建，字段在此收紧 */

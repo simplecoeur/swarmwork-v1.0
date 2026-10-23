@@ -1,6 +1,8 @@
 import * as crypto from 'crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import {
+  ACCOUNT_DELETION_GRACE_MS,
+  AVATAR_LIMITS,
   ErrorCode,
   IMPORT_LIMITS,
   KB_SCOPES,
@@ -8,7 +10,9 @@ import {
   TaskStatus,
   milliToYuan,
   yuanToMilli,
+  type AccountDto,
   type ApiTokenDto,
+  type AuthSessionDto,
   type FeedbackDto,
   type KbImportItemResultDto,
   type OpenTaskDto,
@@ -16,7 +20,18 @@ import {
   type WebhookDeliveryDto,
   type WebhookDto,
 } from '@swarm/shared';
-import { verifyPassword } from '../auth/auth';
+import * as fs from 'fs';
+import { clearCookieHeader, verifyPassword } from '../auth/auth';
+import {
+  AVATAR_EXT_TO_MIME,
+  AVATAR_MIME_TO_EXT,
+  avatarFilePath,
+  avatarUrlOf,
+  deleteAvatarFile,
+  processDueDeletions,
+  saveAvatarFile,
+  uaSummary,
+} from '../domain/accountService';
 import { notifyUser } from '../domain/notify';
 import { assetDtoOf, createAsset } from '../domain/assetService';
 import {
@@ -52,9 +67,11 @@ import type {
 } from '../store/repositories';
 import { nowIso, uid } from '../util';
 import {
+  accountProfileSchema,
   apiTokenCreateSchema,
   assetImportConfirmSchema,
   costSettingsSchema,
+  deleteRequestSchema,
   feedbackCreateSchema,
   feedbackHandleSchema,
   kbImportConfirmSchema,
@@ -129,7 +146,7 @@ interface MultipartInput {
  */
 export function registerV120Routes(
   app: FastifyInstance,
-  deps: { repos: Repos; logger: Logger },
+  deps: { repos: Repos; logger: Logger; dataDir: string },
   helpers: V120Helpers,
 ): void {
   const { repos, logger } = deps;
@@ -944,15 +961,216 @@ export function registerV120Routes(
     return { ok: true };
   });
 
+  /* ============================================================
+   * G-11 账号设置（批次二；邮箱验证小块暂缓，仅占位文案）
+   * - 资料聚合/改名、头像上传与读取、活跃会话定向吊销、注销冷静期。
+   * - 冷静期账号的接口白名单收口在 routes.ts 的 onRequest 守卫；注销到期处理
+   *   挂在本文件末尾与 G-10 共用的调度 tick（按日节流），不另起进程。
+   * ============================================================ */
+
+  app.get('/api/account', async (req) => {
+    const ctx = auth(req);
+    const u = ctx.user;
+    const workspaces = repos.listMembershipsByUser(u.id).map((m) => {
+      const w = repos.getWorkspace(m.workspace_id);
+      return { id: m.workspace_id, name: w?.name ?? '(已删除的空间)', role: m.role };
+    });
+    const account: AccountDto = {
+      id: u.id,
+      email: u.email,
+      displayName: u.display_name,
+      avatarUrl: avatarUrlOf(u),
+      status: u.status,
+      isPlatformAdmin: u.is_platform_admin === 1,
+      emailVerified: false,
+      emailVerificationNote: '邮箱通道接入后可用',
+      deletionAt: u.deletion_at ?? null,
+      workspaces,
+    };
+    return { ok: true, account };
+  });
+
+  app.put('/api/account/profile', async (req) => {
+    const ctx = auth(req);
+    const body = accountProfileSchema.parse(req.body ?? {});
+    repos.updateUser({ ...ctx.user, display_name: body.displayName });
+    audit(req, ctx, 'update_profile', 'user', ctx.user.id, '修改显示名');
+    return { ok: true };
+  });
+
+  /** 头像上传：multipart 单文件（@fastify/multipart，G-06 已装）；类型白名单 + ≤2MB，旧文件替换删除 */
+  app.post('/api/account/avatar', async (req) => {
+    const ctx = auth(req);
+    const data = await req.file();
+    if (!data) fail(ErrorCode.VALIDATION, '请选择要上传的头像图片', 400);
+    const ext = AVATAR_MIME_TO_EXT[data!.mimetype];
+    if (!ext) {
+      fail(
+        ErrorCode.VALIDATION,
+        `头像只支持图片（PNG/JPEG/WebP/GIF），当前类型：${data!.mimetype || '未知'}`,
+        400,
+      );
+    }
+    const buffer = await data!.toBuffer();
+    if (buffer.length === 0) fail(ErrorCode.VALIDATION, '头像文件为空', 400);
+    if (buffer.length > AVATAR_LIMITS.MAX_BYTES) {
+      fail(ErrorCode.VALIDATION, '头像图片不能超过 2MB', 400);
+    }
+    if (ctx.user.avatar_file && ctx.user.avatar_file !== `${ctx.user.id}.${ext}`) {
+      deleteAvatarFile(deps.dataDir, ctx.user);
+    }
+    const fileName = saveAvatarFile(deps.dataDir, ctx.user.id, ext!, buffer);
+    repos.updateUser({ ...ctx.user, avatar_file: fileName });
+    audit(req, ctx, 'update_avatar', 'user', ctx.user.id, `更新头像 ${fileName}`);
+    return { ok: true, avatarUrl: avatarUrlOf({ ...ctx.user, avatar_file: fileName }) };
+  });
+
+  /** 头像读取：会话内任意登录用户可读（顶栏/管理台列表渲染用）；无头像回 SVG 占位（显示名首字） */
+  app.get('/api/users/:id/avatar', async (req, reply) => {
+    auth(req);
+    const { id } = req.params as { id: string };
+    const u = repos.getUser(id);
+    if (u?.avatar_file) {
+      const full = avatarFilePath(deps.dataDir, u.avatar_file);
+      if (full && fs.existsSync(full)) {
+        const ext = u.avatar_file.split('.').pop() ?? 'png';
+        reply.header('cache-control', 'no-cache');
+        reply.type(AVATAR_EXT_TO_MIME[ext] ?? 'application/octet-stream');
+        return reply.send(fs.readFileSync(full));
+      }
+    }
+    const initial = (u?.display_name || u?.email || '蜂').slice(0, 1);
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+      `<rect width="64" height="64" fill="#e2574c"/>` +
+      `<text x="32" y="42" font-size="30" text-anchor="middle" fill="#ffffff" font-family="sans-serif">${initial}</text></svg>`;
+    reply.header('cache-control', 'no-cache');
+    reply.type('image/svg+xml');
+    return reply.send(svg);
+  });
+
+  /** 活跃会话列表：id 用会话行 id 的掩码前缀作定位（原值=token 哈希，不外泄全文） */
+  const sessionDto = (row: SessionRow, currentId: string): AuthSessionDto => ({
+    id: row.id.slice(0, 16),
+    createdAt: row.created_at,
+    lastSeenAt: row.last_seen_at,
+    ip: row.created_ip ?? '',
+    userAgent: uaSummary(row.user_agent ?? ''),
+    isCurrent: row.id === currentId,
+  });
+
+  app.get('/api/auth/sessions', async (req) => {
+    const ctx = auth(req);
+    const now = nowIso();
+    const sessions = repos
+      .listSessionsByUser(ctx.user.id)
+      .filter((s) => s.expires_at > now)
+      .map((s) => sessionDto(s, ctx.session.id));
+    return { ok: true, sessions };
+  });
+
+  /** 定向吊销：只能吊销本人的会话（越权请求回 404 不泄露存在性）；吊销当前会话即登出 */
+  app.delete('/api/auth/sessions/:id', async (req, reply) => {
+    const ctx = auth(req);
+    const { id } = req.params as { id: string };
+    const target = repos
+      .listSessionsByUser(ctx.user.id)
+      .find((s) => s.id.startsWith(id));
+    if (!target) fail(ErrorCode.NOT_FOUND, '会话不存在', 404);
+    repos.deleteSession(target!.id);
+    audit(req, ctx,
+      'revoke_session',
+      'session',
+      target!.id.slice(0, 16),
+      target!.id === ctx.session.id ? '吊销当前会话（登出）' : '吊销一个登录会话',
+    );
+    if (target!.id === ctx.session.id) {
+      reply.header('set-cookie', clearCookieHeader());
+      return { ok: true, loggedOut: true };
+    }
+    return { ok: true };
+  });
+
+  app.post('/api/auth/sessions/revoke-others', async (req) => {
+    const ctx = auth(req);
+    repos.deleteSessionsByUser(ctx.user.id, ctx.session.id);
+    audit(req, ctx, 'revoke_other_sessions', 'user', ctx.user.id, '吊销除当前外的全部会话');
+    return { ok: true };
+  });
+
+  /**
+   * 注销申请：验密 → 平台管理员不可自助注销 → 名下仍有自有空间（owner）回 VALIDATION 并列出
+   * 阻塞空间名（兜底文案：先经 G-15 接口转让或删除空间）。通过 → pending_deletion + 冷静期
+   * 到期时刻（now+7d）+ 吊销全部会话（当场登出）。
+   */
+  app.post('/api/account/delete-request', async (req, reply) => {
+    const ctx = auth(req);
+    const body = deleteRequestSchema.parse(req.body ?? {});
+    const okPw = await verifyPassword(ctx.user.password_hash, body.password);
+    if (!okPw) fail(ErrorCode.VALIDATION, '密码不正确，注销申请未提交', 400);
+    if (ctx.user.is_platform_admin === 1) {
+      fail(ErrorCode.VALIDATION, '平台管理员账号不可自助注销，请先移交管理员权限', 400);
+    }
+    const blockingWorkspaces = repos
+      .listMembershipsByUser(ctx.user.id)
+      .filter((m) => m.role === 'owner')
+      .map((m) => {
+        const w = repos.getWorkspace(m.workspace_id);
+        return { id: m.workspace_id, name: w?.name ?? '(已删除的空间)' };
+      });
+    if (blockingWorkspaces.length > 0) {
+      const names = blockingWorkspaces.map((w) => `「${w.name}」`).join('、');
+      return reply.status(400).send({
+        ok: false,
+        error: {
+          code: ErrorCode.VALIDATION,
+          message: `你还是这些空间的所有者：${names}。请先把空间转让给其他账号或删除空间，再申请注销。`,
+        },
+        blockingWorkspaces,
+      });
+    }
+    const deletionAt = new Date(Date.now() + ACCOUNT_DELETION_GRACE_MS).toISOString();
+    repos.updateUser({ ...ctx.user, status: 'pending_deletion', deletion_at: deletionAt });
+    repos.deleteSessionsByUser(ctx.user.id);
+    audit(req, ctx, 'account_delete_request', 'user', ctx.user.id, `申请注销账号，冷静期至 ${deletionAt}`);
+    logger.info('account', `用户 ${ctx.user.email} 申请注销账号（冷静期至 ${deletionAt}）`);
+    reply.header('set-cookie', clearCookieHeader());
+    return { ok: true, deletionAt };
+  });
+
+  /** 冷静期内撤销注销：恢复 active、清 deletion_at（当前会话保留） */
+  app.post('/api/account/delete-cancel', async (req) => {
+    const ctx = auth(req);
+    if (ctx.user.status !== 'pending_deletion') {
+      fail(ErrorCode.VALIDATION, '账号不在注销冷静期，无需撤销', 400);
+    }
+    repos.updateUser({ ...ctx.user, status: 'active', deletion_at: null });
+    audit(req, ctx, 'account_delete_cancel', 'user', ctx.user.id, '撤销注销申请，账号恢复正常');
+    return { ok: true };
+  });
+
   /* ================= 定时扫描基础设施（G-10 调度器；G-11 注销到期扫描共用同一 tick） =================
    * 与引擎 1s tick 分开的进程内 interval（默认 SCHEDULE_SCAN_MS=30s，测试可用
    * SWARM_SCHEDULE_TICK_MS 覆盖）；进程未运行期间不发单（页面已注明「平台运行期间生效」）。 */
   const scheduleTickMs = Number(process.env.SWARM_SCHEDULE_TICK_MS || SCHEDULE_SCAN_MS) || SCHEDULE_SCAN_MS;
+  /* G-11 注销到期扫描共用本 tick（同一套定时基础设施，不另起进程）：按日节流；
+   * lastDeletionScanAt 初值 0 → 进程启动后首个 tick 即扫一次（到期处理幂等）。 */
+  let lastDeletionScanAt = 0;
   const scheduleTimer = setInterval(() => {
     try {
       runDueSchedules(repos, { createTask: helpers.createTask, logger }, new Date());
     } catch (e) {
       logger.error('schedule', `调度扫描异常：${e instanceof Error ? e.message : String(e)}`);
+    }
+    const nowMs = Date.now();
+    if (nowMs - lastDeletionScanAt >= 24 * 60 * 60 * 1000) {
+      lastDeletionScanAt = nowMs;
+      try {
+        const done = processDueDeletions(repos, deps.dataDir, logger);
+        if (done.length > 0) logger.info('account', `注销到期扫描处理 ${done.length} 个账号`);
+      } catch (e) {
+        logger.error('account', `注销到期扫描异常：${e instanceof Error ? e.message : String(e)}`);
+      }
     }
   }, scheduleTickMs);
   scheduleTimer.unref?.();

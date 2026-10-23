@@ -86,6 +86,14 @@ export const WEBHOOK_DELIVERY = {
   TIMEOUT_MS: 10_000,
 } as const;
 
+/** 头像（G-11）：单文件大小上限（服务端校验口径，客户端上传前另裁方缩到 256px） */
+export const AVATAR_LIMITS = {
+  MAX_BYTES: 2 * 1024 * 1024,
+  CLIENT_SIZE_PX: 256,
+} as const;
+/** 注销冷静期（G-11）：申请后 7 天到期自动匿名化，冷静期内可撤销 */
+export const ACCOUNT_DELETION_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
 /** 定时任务调度（G-10）：进程内扫描间隔（与引擎 1s tick 分开，避免高频查表） */
 export const SCHEDULE_SCAN_MS = 30_000;
 /** 星期标签（下标 = weekday，0=周日，与 JS Date.getDay / Intl 口径一致） */
