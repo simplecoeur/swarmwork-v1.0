@@ -3,6 +3,7 @@ import { useApp } from '../context';
 import { fetchDeliveries, fetchResults } from '../api';
 import { yuan } from '../utils';
 import { Badge, Button, Checkbox, Dialog, EmptyState, Input, useConfirm } from './ui';
+import ResultView from './ResultView';
 import type { Delivery, ResultItem } from '../types';
 
 /** 标记成果渠道表现的弹窗状态：指标三件套（播放 / 点击率 / 完播率）+ 备注 */
@@ -224,7 +225,7 @@ export default function Results() {
                   </>
                 ) : null}
               </div>
-              <pre className="result">{r.result}</pre>
+              <ResultView result={r.result || ''} taskId={r.taskId} />
               <Button size="small" variant="gray" onClick={() => copyText(r.result || '')}>复制</Button>{' '}
               <a className="btn small gray" href={`/api/tasks/${r.taskId}/export?format=md`} download>
                 导出 .md

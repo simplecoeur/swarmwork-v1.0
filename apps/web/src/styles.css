@@ -456,6 +456,15 @@ header{ flex-wrap:wrap; }
 }
 .help-md code{ background:var(--panel2); border:1px solid var(--line); padding:0 4px; font-size:12.5px; }
 .help-md pre code{ background:none; border:none; padding:0; }
+/* G-12 MarkdownView 全语法集补样式（表格/分隔线/深层标题/斜体链接）+ 成果渲染区 */
+.help-md h4, .help-md h5, .help-md h6{ font-size:13.5px; margin:10px 0 6px; }
+.help-md hr{ border:none; border-top:2px dashed var(--line); margin:12px 0; }
+.help-md table{ border-collapse:collapse; margin:8px 0; font-size:13px; max-width:100%; }
+.help-md th, .help-md td{ border:2px solid var(--line); padding:4px 9px; text-align:left; overflow-wrap:anywhere; }
+.help-md th{ background:var(--panel2); }
+.help-md a{ color:var(--brand, #c93a2e); text-decoration:underline; }
+.result-md{ white-space:normal; background:var(--panel2); border:2px solid var(--line); padding:10px; max-height:420px; overflow:auto; }
+.result-md .help-md p{ font-size:13px; }
 .help-toc{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
 
 /* G-09 全局搜索：顶栏搜索框 + 分组下拉（桌面）；移动端图标 + 全屏层规则在下方 ≤768px 段 */

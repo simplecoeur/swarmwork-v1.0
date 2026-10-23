@@ -3,6 +3,7 @@ import { useApp } from '../context';
 import { fetchRegistry, fetchSkills } from '../api';
 import AssetRefPicker from './AssetRefPicker';
 import EstimateLine from './EstimateLine';
+import ResultView from './ResultView';
 import { SkillParamFields } from './SkillParamFields';
 import { Badge, Button, Checkbox, Dialog, EmptyState, Input, Select, Spinner, Textarea } from './ui';
 import type { AssetRef, RegistryRole, SkillInputField, SkillListItem } from '../types';
@@ -591,6 +592,12 @@ export default function Skills() {
                 <Textarea rows={3} value={form.exampleOutput} onChange={(e) => setForm({ ...form, exampleOutput: e.target.value })} placeholder="一份理想产出的样子" />
               </div>
             </div>
+            {form.exampleOutput.trim() ? (
+              <div>
+                <label>示例产出预览（结构化渲染，G-12）</label>
+                <ResultView result={form.exampleOutput} structured />
+              </div>
+            ) : null}
             <label>{editing ? '本次变更说明 changelog（必填，后端会据此升版本）' : '变更说明 changelog（可空，默认「初始版本」）'}</label>
             <Input value={form.changelog} onChange={(e) => setForm({ ...form, changelog: e.target.value })} placeholder="如：标题公式加入反问式钩子" />
             <div style={{ marginTop: 12 }}>

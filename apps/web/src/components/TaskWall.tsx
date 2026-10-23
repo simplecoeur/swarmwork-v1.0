@@ -3,6 +3,7 @@ import { useApp } from '../context';
 import { fetchKb } from '../api';
 import { yuan } from '../utils';
 import TaskTimeline from './TaskTimeline';
+import ResultView from './ResultView';
 import { Badge, Button, EmptyState, useConfirm, type BadgeVariant } from './ui';
 
 const chipCls: Record<string, BadgeVariant> = {
@@ -102,6 +103,11 @@ export default function TaskWall() {
                   <><br />本单注入知识：{t.injectedKbIds.map((id) => kbTitles[id] ?? id).join('、')}</>
                 ) : null}
               </div>
+              {t.status === '已完成' && t.result ? (
+                <div style={{ marginTop: 8 }}>
+                  <ResultView result={t.result} taskId={t.id} />
+                </div>
+              ) : null}
               {t.rejectReason ? <div className="reject">打回/裁决原因：{t.rejectReason}</div> : null}
               {t.blockedReason ? <div className="blocked">停工原因：{t.blockedReason}</div> : null}
               <div style={{ marginTop: 6 }}>
