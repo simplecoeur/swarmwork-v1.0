@@ -348,6 +348,45 @@ export interface FeedbackRow {
   handled_at: string | null;
 }
 
+/* ----- G-07 开放 API Token / Webhook（迁移 010） ----- */
+export interface ApiTokenRow {
+  id: string;
+  user_id: string;
+  workspace_id: string;
+  name: string;
+  token_hash: string;
+  token_prefix: string;
+  scopes: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export interface WebhookRow {
+  id: string;
+  workspace_id: string;
+  url: string;
+  secret_enc: string;
+  events: string;
+  enabled: number;
+  created_at: string;
+}
+
+export interface WebhookDeliveryRow {
+  id: number;
+  webhook_id: string;
+  workspace_id: string;
+  event: string;
+  task_id: string | null;
+  payload: string;
+  status: string;
+  attempts: number;
+  last_error: string | null;
+  next_retry_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /* ----- G-04 任务步骤（task_steps，迁移 008） ----- */
 export interface TaskStepRow {
   id: number;
@@ -1477,5 +1516,171 @@ export class Repos {
       ? (this.db.prepare('SELECT COUNT(*) AS c FROM task_steps WHERE task_id = ? AND kind = ?').get(taskId, kind) as { c: number })
       : (this.db.prepare('SELECT COUNT(*) AS c FROM task_steps WHERE task_id = ?').get(taskId) as { c: number });
     return r.c;
+  }
+
+  /* ----- 开放 API Token（G-07，迁移 010）：库里只存哈希，吊销 = revoked_at 置时 ----- */
+  insertApiToken(row: ApiTokenRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO api_tokens (id, user_id, workspace_id, name, token_hash, token_prefix, scopes, last_used_at, revoked_at, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.id, row.user_id, row.workspace_id, row.name, row.token_hash, row.token_prefix,
+        row.scopes, row.last_used_at, row.revoked_at, row.created_at,
+      );
+  }
+  getApiTokenByHash(tokenHash: string): ApiTokenRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM api_tokens WHERE token_hash = ?')
+      .get(tokenHash) as unknown as ApiTokenRow | undefined;
+  }
+  getApiToken(id: string, workspaceId: string): ApiTokenRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM api_tokens WHERE id = ? AND workspace_id = ?')
+      .get(id, workspaceId) as unknown as ApiTokenRow | undefined;
+  }
+  listApiTokens(workspaceId: string): ApiTokenRow[] {
+    return this.db
+      .prepare('SELECT * FROM api_tokens WHERE workspace_id = ? ORDER BY created_at DESC, id')
+      .all(workspaceId) as unknown as ApiTokenRow[];
+  }
+  revokeApiToken(id: string): void {
+    this.db.prepare('UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(now(), id);
+  }
+  touchApiToken(id: string): void {
+    this.db.prepare('UPDATE api_tokens SET last_used_at = ? WHERE id = ?').run(now(), id);
+  }
+
+  /* ----- Webhook 订阅与投递（G-07，迁移 010） ----- */
+  insertWebhook(row: WebhookRow): void {
+    this.db
+      .prepare(
+        'INSERT INTO webhooks (id, workspace_id, url, secret_enc, events, enabled, created_at) VALUES (?,?,?,?,?,?,?)',
+      )
+      .run(row.id, row.workspace_id, row.url, row.secret_enc, row.events, row.enabled, row.created_at);
+  }
+  getWebhook(id: string, workspaceId?: string): WebhookRow | undefined {
+    if (workspaceId !== undefined) {
+      return this.db
+        .prepare('SELECT * FROM webhooks WHERE id = ? AND workspace_id = ?')
+        .get(id, workspaceId) as unknown as WebhookRow | undefined;
+    }
+    return this.db.prepare('SELECT * FROM webhooks WHERE id = ?').get(id) as unknown as WebhookRow | undefined;
+  }
+  listWebhooks(workspaceId: string): WebhookRow[] {
+    return this.db
+      .prepare('SELECT * FROM webhooks WHERE workspace_id = ? ORDER BY created_at DESC, id')
+      .all(workspaceId) as unknown as WebhookRow[];
+  }
+  updateWebhook(row: WebhookRow): void {
+    this.db
+      .prepare('UPDATE webhooks SET url=?, secret_enc=?, events=?, enabled=? WHERE id=?')
+      .run(row.url, row.secret_enc, row.events, row.enabled, row.id);
+  }
+  deleteWebhook(id: string): void {
+    this.db.prepare('DELETE FROM webhooks WHERE id = ?').run(id);
+    this.db.prepare('DELETE FROM webhook_deliveries WHERE webhook_id = ?').run(id);
+  }
+  insertWebhookDelivery(row: Omit<WebhookDeliveryRow, 'id'>): number {
+    const r = this.db
+      .prepare(
+        `INSERT INTO webhook_deliveries (webhook_id, workspace_id, event, task_id, payload, status, attempts, last_error, next_retry_at, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.webhook_id, row.workspace_id, row.event, row.task_id, row.payload, row.status,
+        row.attempts, row.last_error, row.next_retry_at, row.created_at, row.updated_at,
+      );
+    return Number(r.lastInsertRowid);
+  }
+  getWebhookDelivery(id: number): WebhookDeliveryRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM webhook_deliveries WHERE id = ?')
+      .get(id) as unknown as WebhookDeliveryRow | undefined;
+  }
+  listWebhookDeliveries(webhookId: string, limit = 20): WebhookDeliveryRow[] {
+    return this.db
+      .prepare('SELECT * FROM webhook_deliveries WHERE webhook_id = ? ORDER BY id DESC LIMIT ?')
+      .all(webhookId, limit) as unknown as WebhookDeliveryRow[];
+  }
+  /** 到期待投递（pending 且 next_retry_at 已到/为空），按 id 升序（FIFO） */
+  listDueWebhookDeliveries(nowIsoStr: string, limit = 20): WebhookDeliveryRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM webhook_deliveries WHERE status = 'pending'
+           AND (next_retry_at IS NULL OR next_retry_at <= ?) ORDER BY id LIMIT ?`,
+      )
+      .all(nowIsoStr, limit) as unknown as WebhookDeliveryRow[];
+  }
+  updateWebhookDelivery(
+    id: number,
+    patch: { status?: string; attempts?: number; last_error?: string | null; next_retry_at?: string | null },
+  ): void {
+    const cur = this.getWebhookDelivery(id);
+    if (!cur) return;
+    this.db
+      .prepare('UPDATE webhook_deliveries SET status=?, attempts=?, last_error=?, next_retry_at=?, updated_at=? WHERE id=?')
+      .run(
+        patch.status ?? cur.status,
+        patch.attempts ?? cur.attempts,
+        patch.last_error !== undefined ? patch.last_error : cur.last_error,
+        patch.next_retry_at !== undefined ? patch.next_retry_at : cur.next_retry_at,
+        now(),
+        id,
+      );
+  }
+
+  /* ----- 全局搜索（G-09）：六类各一条 workspace 过滤 LIKE 查询，原始行回 domain/searchService 组装 -----
+   * q 的 %/_/\ 转义在 searchService 内完成（escapeLikePattern），此处只拼已转义 pattern 并声明 ESCAPE '\'。
+   * 长文本口径：tasks 的 brief/result 只匹配前段（substr 前 SEARCH_TEXT_LIMIT 字，与 shared 常量一致，此处写死 500 并注明）。 */
+  searchTasks(workspaceId: string, pattern: string, limit: number): TaskRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM tasks WHERE workspace_id = ?
+           AND (title LIKE ? ESCAPE '\\' OR substr(brief, 1, 500) LIKE ? ESCAPE '\\')
+         ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(workspaceId, pattern, pattern, limit) as unknown as TaskRow[];
+  }
+  searchResults(workspaceId: string, pattern: string, limit: number): TaskRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM tasks WHERE workspace_id = ? AND status = '已完成' AND result != ''
+           AND (title LIKE ? ESCAPE '\\' OR substr(result, 1, 500) LIKE ? ESCAPE '\\')
+         ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(workspaceId, pattern, pattern, limit) as unknown as TaskRow[];
+  }
+  /** KB 搜索候选：本空间 + 平台公共（workspace_id IS NULL）；personal 可见性过滤在 searchService 做 */
+  searchKb(workspaceId: string, pattern: string, limit: number): KbRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM kb_entries WHERE (workspace_id = ? OR workspace_id IS NULL)
+           AND (title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\')
+         ORDER BY updated_at DESC LIMIT ?`,
+      )
+      .all(workspaceId, pattern, pattern, limit) as unknown as KbRow[];
+  }
+  /** 资产搜索候选：只按名称匹配（section 标题匹配与 snippet 组装在 searchService 解析 content 后做，恒不出正文） */
+  searchAssetsByName(workspaceId: string, pattern: string, limit: number): AssetRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM assets WHERE workspace_id = ? AND name LIKE ? ESCAPE '\\'
+         ORDER BY updated_at DESC LIMIT ?`,
+      )
+      .all(workspaceId, pattern, limit) as unknown as AssetRow[];
+  }
+  listAssetsForSearch(workspaceId: string): AssetRow[] {
+    return this.listAssets(workspaceId);
+  }
+  searchProjects(workspaceId: string, pattern: string, limit: number): ProjectRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM projects WHERE workspace_id = ?
+           AND (name LIKE ? ESCAPE '\\' OR substr(brief, 1, 500) LIKE ? ESCAPE '\\')
+         ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(workspaceId, pattern, pattern, limit) as unknown as ProjectRow[];
   }
 }

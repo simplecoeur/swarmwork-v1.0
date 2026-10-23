@@ -1,12 +1,18 @@
+import * as crypto from 'crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import {
   ErrorCode,
   IMPORT_LIMITS,
   KB_SCOPES,
+  TaskStatus,
   milliToYuan,
   yuanToMilli,
+  type ApiTokenDto,
   type FeedbackDto,
   type KbImportItemResultDto,
+  type OpenTaskDto,
+  type WebhookDeliveryDto,
+  type WebhookDto,
 } from '@swarm/shared';
 import { assetDtoOf, createAsset } from '../domain/assetService';
 import {
@@ -17,18 +23,57 @@ import {
 } from '../domain/costService';
 import { parseAssetSectionsFromFile, parseKbDrafts } from '../domain/importService';
 import { createKbEntry } from '../domain/kbService';
+import { searchWorkspace } from '../domain/searchService';
 import { resolveTypeForSkill } from '../domain/skillService';
+import { assertSafeOutboundUrl } from '../domain/ssrf';
+import { attemptWebhookDelivery, webhookDtoOf } from '../domain/webhookService';
 import type { Logger } from '../logger';
-import type { FeedbackRow, Repos } from '../store/repositories';
-import { nowIso } from '../util';
+import { encryptKey, maskKey } from '../store/crypto';
+import type {
+  ApiTokenRow,
+  FeedbackRow,
+  Repos,
+  SessionRow,
+  TaskRow,
+  UserRow,
+  WebhookDeliveryRow,
+  WebhookRow,
+} from '../store/repositories';
+import { nowIso, uid } from '../util';
 import {
+  apiTokenCreateSchema,
   assetImportConfirmSchema,
   costSettingsSchema,
   feedbackCreateSchema,
   feedbackHandleSchema,
   kbImportConfirmSchema,
+  openTaskCreateSchema,
+  webhookCreateSchema,
+  webhookUpdateSchema,
 } from './schemas';
 import type { M7Helpers, RouteCtx } from './m7';
+
+/** routes.ts 的 createOneTask 共用发单路径（G-07 开放面复用，签名与闭包实现一致） */
+export type CreateTaskFn = (
+  ctx: RouteCtx & { workspaceId: string },
+  body: {
+    title: string;
+    type: string;
+    brief: string;
+    references?: string;
+    teamId: string;
+    projectId?: string | null;
+    idempotencyKey?: string;
+    skillId?: string | null;
+    skillVersion?: number | null;
+    assetRefs?: Array<{ assetId: string; sections?: string[] }>;
+    source?: string;
+  },
+) => { id: string; duplicated?: boolean };
+
+export interface V120Helpers extends M7Helpers {
+  createTask: CreateTaskFn;
+}
 
 function fail(code: string, message: string, status = 400): never {
   throw Object.assign(new Error(message), { code, statusCode: status });
@@ -71,7 +116,7 @@ interface MultipartInput {
 export function registerV120Routes(
   app: FastifyInstance,
   deps: { repos: Repos; logger: Logger },
-  helpers: M7Helpers,
+  helpers: V120Helpers,
 ): void {
   const { repos, logger } = deps;
   const { auth, wsAuth, requireAdmin, audit } = helpers;
@@ -345,5 +390,304 @@ export function registerV120Routes(
       `资产文件导入：${body.filename ?? ''} → 资产 ${row.id}（${body.sections.length} 个分段，v1）`,
     );
     return { ok: true, id: row.id, asset: assetDtoOf(row) };
+  });
+
+  /* ================= G-07 对外开放 API + Webhook（批次二） ================= */
+
+  const tokenDto = (r: ApiTokenRow): ApiTokenDto => {
+    let scopes: string[] = [];
+    try {
+      const v = JSON.parse(r.scopes || '[]') as unknown;
+      scopes = Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      scopes = [];
+    }
+    return {
+      id: r.id,
+      name: r.name,
+      tokenPrefix: r.token_prefix,
+      scopes,
+      lastUsedAt: r.last_used_at,
+      revokedAt: r.revoked_at,
+      createdAt: r.created_at,
+    };
+  };
+
+  const deliveryDto = (d: WebhookDeliveryRow): WebhookDeliveryDto => ({
+    id: d.id,
+    webhookId: d.webhook_id,
+    event: d.event,
+    taskId: d.task_id,
+    status: d.status as WebhookDeliveryDto['status'],
+    attempts: d.attempts,
+    lastError: d.last_error,
+    nextRetryAt: d.next_retry_at,
+    createdAt: d.created_at,
+  });
+
+  /* ----- Token 管理（会话守卫）：明文只在创建响应出现一次 ----- */
+  app.post('/api/tokens', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const body = apiTokenCreateSchema.parse(req.body ?? {});
+    const plain = 'swk_' + crypto.randomBytes(32).toString('base64url');
+    const row: ApiTokenRow = {
+      id: uid('tok'),
+      user_id: ctx.user.id,
+      workspace_id: ctx.workspaceId,
+      name: body.name,
+      token_hash: crypto.createHash('sha256').update(plain).digest('hex'),
+      token_prefix: plain.slice(0, 8),
+      scopes: JSON.stringify([...new Set(body.scopes)]),
+      last_used_at: null,
+      revoked_at: null,
+      created_at: nowIso(),
+    };
+    repos.insertApiToken(row);
+    audit(req, ctx, 'create_api_token', 'api_token', row.id, body.name);
+    logger.info('openapi', `创建 API Token「${body.name}」（${row.token_prefix}…）`);
+    return { ok: true, token: { ...tokenDto(row), token: plain } };
+  });
+
+  app.get('/api/tokens', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    return { ok: true, tokens: repos.listApiTokens(ctx.workspaceId).map(tokenDto) };
+  });
+
+  app.delete('/api/tokens/:id', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    const row = repos.getApiToken(id, ctx.workspaceId);
+    if (!row) fail(ErrorCode.NOT_FOUND, 'Token 不存在', 404);
+    repos.revokeApiToken(id);
+    audit(req, ctx, 'revoke_api_token', 'api_token', id, row!.name);
+    return { ok: true };
+  });
+
+  /* ----- 开放面 Token 守卫（独立于会话） -----
+   * Authorization: Bearer <token> → sha256 哈希查行 → 吊销/用户状态/空间状态校验 →
+   * 【membership 校验落点】token 所属用户仍须是该空间 active 成员，失格即 401
+   * （G-15 空间转让后原所有者 Token 对该空间自然失效，靠的就是这一处校验）→ scopes 校验。 */
+  interface TokenAuth {
+    tokenRow: ApiTokenRow;
+    user: UserRow;
+    workspaceId: string;
+    ctx: RouteCtx & { workspaceId: string };
+  }
+  const tokenAuth = (req: FastifyRequest, scope: string): TokenAuth => {
+    const header = String(req.headers.authorization ?? '');
+    const m = /^Bearer\s+(.+)$/i.exec(header.trim());
+    if (!m) fail(ErrorCode.UNAUTHORIZED, '缺少或无效的 API Token', 401);
+    const hash = crypto.createHash('sha256').update(m[1]!.trim()).digest('hex');
+    const row = repos.getApiTokenByHash(hash);
+    if (!row || row.revoked_at) fail(ErrorCode.UNAUTHORIZED, 'API Token 无效或已吊销', 401);
+    const user = repos.getUser(row!.user_id);
+    if (!user || user!.status !== 'active') fail(ErrorCode.UNAUTHORIZED, 'Token 所属账号不可用', 401);
+    const ws = repos.getWorkspace(row!.workspace_id);
+    if (!ws || ws!.status !== 'active') fail(ErrorCode.UNAUTHORIZED, 'Token 所属空间不可用', 401);
+    const membership = repos.getMembership(user!.id, row!.workspace_id);
+    if (!membership || membership.status !== 'active') {
+      fail(ErrorCode.UNAUTHORIZED, 'Token 所属用户已不是该空间成员', 401);
+    }
+    let scopes: string[] = [];
+    try {
+      const v = JSON.parse(row!.scopes || '[]') as unknown;
+      scopes = Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      scopes = [];
+    }
+    if (!scopes.includes(scope)) {
+      fail(ErrorCode.FORBIDDEN, `Token 权限不足：需要 ${scope} 权限`, 403);
+    }
+    repos.touchApiToken(row!.id);
+    const ctx: RouteCtx & { workspaceId: string } = {
+      user: user!,
+      // 开放面无浏览器会话：session 位以空会话占位（createOneTask 只用 user 与 workspaceId）
+      session: null as unknown as SessionRow,
+      workspaceId: row!.workspace_id,
+    };
+    return { tokenRow: row!, user: user!, workspaceId: row!.workspace_id, ctx };
+  };
+
+  const openTaskDto = (t: TaskRow): OpenTaskDto => {
+    const events = repos.listTaskEvents(t.id);
+    const source = events.some((e) => String(e.note ?? '').includes('开放 API')) ? 'api' : 'web';
+    return {
+      id: t.id,
+      title: t.title,
+      type: t.type,
+      status: t.status,
+      teamId: t.team_id,
+      projectId: t.project_id,
+      skillId: t.skill_id ?? null,
+      source,
+      totalTokens: t.total_tokens,
+      totalCostYuan: milliToYuan(t.total_cost_milli),
+      createdAt: t.created_at,
+      finishedAt: t.finished_at,
+    };
+  };
+
+  /* ----- 开放面（Token 守卫）：与页面发单共用 createOneTask 同一路径与守卫链 ----- */
+  app.post('/api/open/tasks', async (req: FastifyRequest) => {
+    const tctx = tokenAuth(req, 'dispatch');
+    const body = openTaskCreateSchema.parse(req.body ?? {});
+    const r = helpers.createTask(tctx.ctx, {
+      title: body.title,
+      type: body.type,
+      brief: body.brief,
+      references: body.references,
+      teamId: body.teamId,
+      projectId: body.projectId ?? null,
+      idempotencyKey: body.idempotencyKey,
+      skillId: body.skillId ?? null,
+      skillVersion: body.skillVersion ?? null,
+      assetRefs: body.assetRefs,
+      source: 'api',
+    });
+    const task = repos.getTask(r.id, tctx.workspaceId);
+    logger.info('openapi', `开放 API 发单 → 任务 ${r.id}（Token ${tctx.tokenRow.token_prefix}…）`);
+    return { ok: true, id: r.id, ...(r.duplicated ? { duplicated: true } : {}), task: task ? openTaskDto(task) : undefined };
+  });
+
+  app.get('/api/open/tasks/:id', async (req: FastifyRequest) => {
+    const tctx = tokenAuth(req, 'read');
+    const { id } = req.params as { id: string };
+    const task = repos.getTask(id, tctx.workspaceId);
+    if (!task) fail(ErrorCode.NOT_FOUND, '任务不存在', 404);
+    return { ok: true, task: openTaskDto(task!) };
+  });
+
+  app.get('/api/open/tasks/:id/result', async (req: FastifyRequest) => {
+    const tctx = tokenAuth(req, 'read');
+    const { id } = req.params as { id: string };
+    const task = repos.getTask(id, tctx.workspaceId);
+    if (!task) fail(ErrorCode.NOT_FOUND, '任务不存在', 404);
+    if (task!.status !== TaskStatus.DONE) {
+      fail(ErrorCode.VALIDATION, `任务尚未完成（当前「${task!.status}」），暂无成果`);
+    }
+    return {
+      ok: true,
+      task: { ...openTaskDto(task!), result: task!.result, reviewNote: task!.review_note },
+    };
+  });
+
+  /* ----- Webhook 管理（会话守卫）：创建/改址走 SSRF 守卫，secret 加密存、只回掩码 ----- */
+  const getWebhookOr404 = (ctx: RouteCtx & { workspaceId: string }, id: string): WebhookRow => {
+    const row = repos.getWebhook(id, ctx.workspaceId);
+    if (!row) fail(ErrorCode.NOT_FOUND, 'Webhook 不存在', 404);
+    return row!;
+  };
+
+  app.post('/api/webhooks', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const body = webhookCreateSchema.parse(req.body ?? {});
+    await assertSafeOutboundUrl(body.url);
+    const secret = body.secret?.trim() ? body.secret.trim() : crypto.randomBytes(24).toString('base64url');
+    const row: WebhookRow = {
+      id: uid('whk'),
+      workspace_id: ctx.workspaceId,
+      url: body.url.trim(),
+      secret_enc: encryptKey(secret),
+      events: JSON.stringify([...new Set(body.events)]),
+      enabled: body.enabled ? 1 : 0,
+      created_at: nowIso(),
+    };
+    repos.insertWebhook(row);
+    audit(req, ctx, 'create_webhook', 'webhook', row.id, row.url);
+    return { ok: true, webhook: webhookDtoOf(row, maskKey) as WebhookDto };
+  });
+
+  app.get('/api/webhooks', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    return {
+      ok: true,
+      webhooks: repos.listWebhooks(ctx.workspaceId).map((h) => webhookDtoOf(h, maskKey) as WebhookDto),
+    };
+  });
+
+  app.put('/api/webhooks/:id', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    const cur = getWebhookOr404(ctx, id);
+    const body = webhookUpdateSchema.parse(req.body ?? {});
+    if (body.url !== undefined && body.url.trim() !== cur.url) {
+      await assertSafeOutboundUrl(body.url.trim());
+    }
+    const next: WebhookRow = {
+      ...cur,
+      url: body.url !== undefined ? body.url.trim() : cur.url,
+      secret_enc: body.clearSecret
+        ? encryptKey('')
+        : body.secret?.trim()
+          ? encryptKey(body.secret.trim())
+          : cur.secret_enc,
+      events: body.events ? JSON.stringify([...new Set(body.events)]) : cur.events,
+      enabled: body.enabled !== undefined ? (body.enabled ? 1 : 0) : cur.enabled,
+    };
+    repos.updateWebhook(next);
+    audit(req, ctx, 'update_webhook', 'webhook', id, next.enabled === 1 ? '启用' : '停用');
+    return { ok: true, webhook: webhookDtoOf(next, maskKey) as WebhookDto };
+  });
+
+  app.delete('/api/webhooks/:id', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    getWebhookOr404(ctx, id);
+    repos.deleteWebhook(id);
+    audit(req, ctx, 'delete_webhook', 'webhook', id);
+    return { ok: true };
+  });
+
+  app.get('/api/webhooks/:id/deliveries', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    getWebhookOr404(ctx, id);
+    return { ok: true, deliveries: repos.listWebhookDeliveries(id).map(deliveryDto) };
+  });
+
+  /** 试投递：生成一条 test 事件投递并立即尝试一次（失败按正常退避排重试） */
+  app.post('/api/webhooks/:id/test', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    const hook = getWebhookOr404(ctx, id);
+    const payload = JSON.stringify({
+      event: 'test',
+      webhookId: hook.id,
+      workspaceId: ctx.workspaceId,
+      message: '干活蜂群 Webhook 试投递：你的端点已成功接通时，这条会以 success 落账。',
+      occurredAt: nowIso(),
+    });
+    const deliveryId = repos.insertWebhookDelivery({
+      webhook_id: hook.id,
+      workspace_id: ctx.workspaceId,
+      event: 'test',
+      task_id: null,
+      payload,
+      status: 'pending',
+      attempts: 0,
+      last_error: null,
+      next_retry_at: nowIso(),
+      created_at: nowIso(),
+      updated_at: nowIso(),
+    });
+    const fresh = repos.getWebhookDelivery(deliveryId);
+    const done = fresh ? await attemptWebhookDelivery(repos, fresh, logger) : fresh;
+    audit(req, ctx, 'test_webhook', 'webhook', id, done?.status ?? '');
+    return { ok: true, delivery: done ? deliveryDto(done) : undefined };
+  });
+
+  /* ================= G-09 全局搜索（批次二） ================= */
+  app.get('/api/search', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const q = (req.query ?? {}) as { q?: string; types?: string };
+    const query = String(q.q ?? '');
+    const types = q.types
+      ? String(q.types)
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined;
+    const result = searchWorkspace(repos, ctx.workspaceId, ctx.user.id, query, types);
+    return { ok: true, ...result };
   });
 }

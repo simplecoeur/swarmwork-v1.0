@@ -71,6 +71,30 @@ export const IMPORT_LIMITS = {
   MAX_ASSET_SECTIONS: 200,
 } as const;
 
+/** 开放 API Token 权限位（G-07）：dispatch 发单 / read 查状态与成果 */
+export const API_TOKEN_SCOPES = ['dispatch', 'read'] as const;
+export type ApiTokenScope = (typeof API_TOKEN_SCOPES)[number];
+
+/** Webhook 订阅事件（G-07）：任务终态外推（done/转裁决/终局失败）+ test 试投递事件 */
+export const WEBHOOK_EVENTS = ['task.done', 'task.adjudication', 'task.failed', 'test'] as const;
+export type WebhookEventName = (typeof WEBHOOK_EVENTS)[number];
+
+/** Webhook 投递重试口径（G-07）：总尝试 3 次，退避 1m/5m/15m（第 3 次失败即终败，后两档供后续扩展） */
+export const WEBHOOK_DELIVERY = {
+  MAX_ATTEMPTS: 3,
+  RETRY_DELAYS_MS: [60_000, 300_000, 900_000],
+  TIMEOUT_MS: 10_000,
+} as const;
+
+/** 全局搜索实体类型（G-09）：result = done 且 result 非空的 tasks 子集 */
+export const SEARCH_TYPES = ['task', 'result', 'kb', 'asset', 'skill', 'project'] as const;
+export type SearchEntityType = (typeof SEARCH_TYPES)[number];
+
+/** 搜索长文本匹配口径（G-09）：brief 前段与 result 仅匹配前 500 字，防长文本全表扫描失控 */
+export const SEARCH_TEXT_LIMIT = 500;
+/** 搜索每类结果上限（G-09） */
+export const SEARCH_PER_TYPE_LIMIT = 10;
+
 /** 知识库注入护栏（§10 + §15.1 上下文裁剪口径） */
 export const KB_INJECTION = {
   /** 有单任务预算时：注入总量上限 = 剩余预算 × 此比例 */

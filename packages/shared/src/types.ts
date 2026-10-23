@@ -643,3 +643,112 @@ export interface TaskTimelineDto {
   steps: TaskStepDto[];
   events: TaskTimelineEventDto[];
 }
+
+/* ---------- G-07 对外开放 API + Webhook（v1.2.0） ---------- */
+
+/** API Token 列表行（掩码口径：只出 prefix，明文永不回显） */
+export interface ApiTokenDto {
+  id: string;
+  name: string;
+  /** 明文 Token 前 8 位（展示/识别用） */
+  tokenPrefix: string;
+  scopes: string[];
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  createdAt: string;
+}
+
+/** POST /api/tokens 创建响应：token 明文字段仅此一次出现，之后任何接口都不再返回 */
+export interface ApiTokenCreatedDto extends ApiTokenDto {
+  token: string;
+}
+
+/** POST /api/tokens 入参 */
+export interface ApiTokenCreateDto {
+  name: string;
+  scopes?: string[];
+}
+
+/** Webhook 列表行：secret 只回掩码，明文永不出接口 */
+export interface WebhookDto {
+  id: string;
+  url: string;
+  secretMasked: string;
+  hasSecret: boolean;
+  events: string[];
+  enabled: boolean;
+  createdAt: string;
+}
+
+/** POST /api/webhooks 入参（secret 留空 = 服务端生成） */
+export interface WebhookCreateDto {
+  url: string;
+  secret?: string;
+  events?: string[];
+  enabled?: boolean;
+}
+
+/** Webhook 投递记录行 */
+export interface WebhookDeliveryDto {
+  id: number;
+  webhookId: string;
+  event: string;
+  taskId: string | null;
+  status: 'pending' | 'success' | 'failed';
+  attempts: number;
+  lastError: string | null;
+  nextRetryAt: string | null;
+  createdAt: string;
+}
+
+/** 开放面发单入参（POST /api/open/tasks）：与页面发单同一口径（title/type/brief/references/assetRefs/teamId） */
+export interface OpenTaskCreateDto {
+  title: string;
+  type: string;
+  brief?: string;
+  references?: string;
+  assetRefs?: Array<{ assetId: string; sections?: string[] }>;
+  teamId: string;
+  projectId?: string | null;
+  idempotencyKey?: string;
+}
+
+/** 开放面任务视图（GET /api/open/tasks/:id）：状态 + 基本信息 + 用量（金额为元） */
+export interface OpenTaskDto {
+  id: string;
+  title: string;
+  type: string;
+  status: string;
+  teamId: string;
+  projectId: string | null;
+  skillId: string | null;
+  /** 来源标记：api = 经开放 API 发单（页面发单为 web） */
+  source: string;
+  totalTokens: number;
+  totalCostYuan: number;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+/** 开放面成果视图（GET /api/open/tasks/:id/result）：done 后取成果全文 + 用量 */
+export interface OpenTaskResultDto extends OpenTaskDto {
+  result: string;
+  reviewNote: string;
+}
+
+/* ---------- G-09 全局搜索（v1.2.0） ---------- */
+
+export interface SearchResultItemDto {
+  type: 'task' | 'result' | 'kb' | 'asset' | 'skill' | 'project';
+  id: string;
+  title: string;
+  /** 摘要片段；资产类恒不含正文（只出名称与 section 标题，见 searchService 可见性口径） */
+  snippet: string;
+  updatedAt: string;
+}
+
+/** GET /api/search 响应：按类分组（每类 ≤10）+ 同内容的平铺列表（分组顺序即 SEARCH_TYPES） */
+export interface SearchResponseDto {
+  groups: Array<{ type: SearchResultItemDto['type']; items: SearchResultItemDto[] }>;
+  results: SearchResultItemDto[];
+}

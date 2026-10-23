@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { IMPORT_LIMITS, KB_SCOPES, PROVIDERS } from '@swarm/shared';
+import { API_TOKEN_SCOPES, IMPORT_LIMITS, KB_SCOPES, PROVIDERS } from '@swarm/shared';
 
 /** 入参 zod 校验（设计 §7：校验失败不进 domain） */
 export const apiSaveSchema = z.object({
@@ -406,6 +406,45 @@ export const kbImportConfirmSchema = z.object({
     .min(1, '没有可导入的条目草案')
     .max(IMPORT_LIMITS.MAX_KB_DRAFTS, 'KB 单次导入最多 500 条，请拆分文件分批导入'),
 });
+
+/* ---------- G-07 开放 API / Webhook（v1.2.0 批次二） ---------- */
+
+export const apiTokenCreateSchema = z.object({
+  name: z.string().trim().min(1, 'Token 名称必填').max(100),
+  scopes: z
+    .array(z.enum(API_TOKEN_SCOPES))
+    .min(1, '至少选择一个权限')
+    .default(['dispatch', 'read']),
+});
+
+/** Webhook 可订阅事件：三类终态事件（test 为系统试投递事件，不开放订阅） */
+const subscribableEventSchema = z.enum(['task.done', 'task.adjudication', 'task.failed']);
+
+export const webhookCreateSchema = z.object({
+  url: z.string().trim().min(1, 'Webhook URL 必填').max(2000),
+  secret: z.string().trim().max(500).optional(),
+  events: z
+    .array(subscribableEventSchema)
+    .min(1, '至少订阅一个事件')
+    .default(['task.done']),
+  enabled: z.boolean().default(true),
+});
+
+/** Webhook 更新（启停/改址/改订阅）：未传字段保持不变 */
+export const webhookUpdateSchema = z.object({
+  url: z.string().trim().min(1, 'Webhook URL 必填').max(2000).optional(),
+  secret: z.string().trim().max(500).optional(),
+  clearSecret: z.boolean().optional(),
+  events: z.array(subscribableEventSchema).min(1, '至少订阅一个事件').optional(),
+  enabled: z.boolean().optional(),
+});
+
+/** 开放面发单（POST /api/open/tasks）：与页面发单 taskCreateSchema 同口径，另加可选 skillId 透传 */
+export const openTaskCreateSchema = taskCreateSchema.extend({
+  skillParams: z.record(z.string(), z.unknown()).optional(),
+});
+
+/* ---------- G-09 全局搜索（v1.2.0 批次二）：q 必填，types 为逗号分隔过滤（路由层解析） ---------- */
 
 /** 资产导入 confirm：sections 上限 200 整体校验（超限 VALIDATION 且零落库）；资产为单行创建，字段在此收紧 */
 export const assetImportConfirmSchema = z.object({

@@ -7,6 +7,7 @@ import {
 } from '@swarm/shared';
 import type { Repos, TaskRow } from '../store/repositories';
 import { recordTaskStep } from './taskSteps';
+import { enqueueTaskEventDeliveries } from './webhookService';
 
 export class DomainError extends Error {
   constructor(
@@ -96,6 +97,8 @@ export function transitionTask(
     to_status: to,
     note: actor?.note ?? '',
   });
+  // G-07 旁路：终态迁移（done/待裁决/已取消）为订阅的 Webhook 生成投递行（函数内部吞异常，不阻断迁移）
+  enqueueTaskEventDeliveries(repos, updated);
   // G-04 旁路步：裁决相关迁移各落一步（转待裁决 / 老板裁决通过），失败不阻断迁移（recordTaskStep 内部吞异常）
   if (to === TaskStatus.ADJUDICATION) {
     recordTaskStep(repos, {

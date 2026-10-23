@@ -362,6 +362,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.addHook('onRequest', async (req) => {
     const url = (req.url || '').split('?')[0];
     if (!url.startsWith('/api/') || PUBLIC_PATHS.has(url)) return;
+    // G-07 开放面：/api/open/* 走独立 Token 守卫（v120 路由内的 preHandler 语义，逐路由解析），不走会话
+    if (url.startsWith('/api/open/')) return;
     const ctx = resolveAuth(req);
     (req as AuthedRequest).authCtx = ctx;
     if (ctx.user.must_change_password === 1 && !MUST_CHANGE_EXEMPT.has(url)) {
@@ -1126,6 +1128,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       skillId?: string | null;
       skillVersion?: number | null;
       assetRefs?: Array<{ assetId: string; sections?: string[] }>;
+      /** 来源标记（G-07）：'api' = 开放 API 发单、'schedule' = 定时发单，缺省页面发单 'web'；落 task_events note 与 plan 步 detail */
+      source?: string;
     },
   ): { id: string; duplicated?: boolean } => {
     const team = repos.getTeam(body.teamId, ctx.workspaceId) ?? repos.listTeams(ctx.workspaceId)[0];
@@ -1190,7 +1194,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       actor_id: ctx.user.id,
       from_status: null,
       to_status: TaskStatus.PENDING,
-      note: '发单',
+      note: body.source === 'api' ? '发单（开放 API）' : body.source === 'schedule' ? '发单（定时任务）' : '发单',
     });
     if (body.assetRefs?.length) attachAssetRefs(repos, id, ctx.workspaceId, body.assetRefs);
     // G-04：发单落 plan 步（时间线起点，旁路失败不影响发单结果）
@@ -1201,7 +1205,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
         workspaceId: ctx.workspaceId,
         kind: 'plan',
         summary: `任务已创建：《${body.title}》（${body.type}）`,
-        detail: { title: body.title, type: body.type, teamId: team.id },
+        detail: { title: body.title, type: body.type, teamId: team.id, source: body.source ?? 'web' },
         callKey: `plan:${id}`,
       },
       logger,
@@ -1614,6 +1618,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   /* ================= M8 路由组（资产库 / 飞轮 / 成果库 / 台账 / 流水线 / 提醒） ================= */
   registerM8Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit });
 
-  /* ================= v1.2.0 批次一路由组（G-05 反馈 / G-08 预估与阈值设置） ================= */
-  registerV120Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit });
+  /* ================= v1.2.0 路由组（批次一 G-05/G-08 + 批次二 G-07 开放 API/Webhook、G-09 全局搜索） =================
+   * G-07 开放面发单复用本闭包的 createOneTask 共用路径（经 helpers.createTask 注入），不另开后门。 */
+  registerV120Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit, createTask: createOneTask });
 }
