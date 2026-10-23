@@ -255,6 +255,8 @@ export interface DeliveryLinkRow {
   id: string;
   token_hash: string;
   workspace_id: string;
+  /** G-13：'delivery' 交付页 | 'visit' 办公室参观链接（013 迁移；存量行默认 delivery） */
+  kind: string;
   scope: string;
   task_id: string | null;
   project_id: string | null;
@@ -1233,12 +1235,12 @@ export class Repos {
   insertDeliveryLink(row: DeliveryLinkRow): void {
     this.db
       .prepare(
-        `INSERT INTO delivery_links (id, token_hash, workspace_id, scope, task_id, project_id, title,
+        `INSERT INTO delivery_links (id, token_hash, workspace_id, kind, scope, task_id, project_id, title,
           password_hash, expires_at, revoked, view_count, created_by, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
-        row.id, row.token_hash, row.workspace_id, row.scope, row.task_id, row.project_id, row.title,
+        row.id, row.token_hash, row.workspace_id, row.kind || 'delivery', row.scope, row.task_id, row.project_id, row.title,
         row.password_hash, row.expires_at, row.revoked, row.view_count, row.created_by, row.created_at,
       );
   }
@@ -1252,10 +1254,11 @@ export class Repos {
       .prepare('SELECT * FROM delivery_links WHERE id = ? AND workspace_id = ?')
       .get(id, workspaceId) as unknown as DeliveryLinkRow | undefined;
   }
-  listDeliveries(workspaceId: string): DeliveryLinkRow[] {
+  /** kind 缺省 'delivery'：交付页列表不混入参观链接（G-13）；参观链接管理传 'visit' */
+  listDeliveries(workspaceId: string, kind: string = 'delivery'): DeliveryLinkRow[] {
     return this.db
-      .prepare('SELECT * FROM delivery_links WHERE workspace_id = ? ORDER BY created_at DESC, id')
-      .all(workspaceId) as unknown as DeliveryLinkRow[];
+      .prepare('SELECT * FROM delivery_links WHERE workspace_id = ? AND kind = ? ORDER BY created_at DESC, id')
+      .all(workspaceId, kind) as unknown as DeliveryLinkRow[];
   }
   revokeDelivery(id: string): void {
     this.db.prepare('UPDATE delivery_links SET revoked = 1 WHERE id = ?').run(id);

@@ -1,5 +1,5 @@
 import * as crypto from 'crypto';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   ACCOUNT_DELETION_GRACE_MS,
   AVATAR_LIMITS,
@@ -13,6 +13,7 @@ import {
   type AccountDto,
   type ApiTokenDto,
   type AuthSessionDto,
+  type DeliveryLinkDto,
   type FeedbackDto,
   type KbImportItemResultDto,
   type OpenTaskDto,
@@ -40,7 +41,14 @@ import {
   effectiveLowBalanceThresholdMilli,
   estimateCost,
 } from '../domain/costService';
+import {
+  createDeliveryLink,
+  deliveryTokenHash,
+  renderDeliveryHtml,
+  renderDeliveryPasswordHtml,
+} from '../domain/deliveryService';
 import { parseAssetSectionsFromFile, parseKbDrafts } from '../domain/importService';
+import { buildVisitPageData, renderShareCardSvg, renderVisitHtml } from '../domain/visitService';
 import { createKbEntry } from '../domain/kbService';
 import {
   computeNextRunAt,
@@ -56,6 +64,7 @@ import type { Logger } from '../logger';
 import { encryptKey, maskKey } from '../store/crypto';
 import type {
   ApiTokenRow,
+  DeliveryLinkRow,
   FeedbackRow,
   Repos,
   ScheduleRow,
@@ -78,6 +87,7 @@ import {
   openTaskCreateSchema,
   scheduleCreateSchema,
   scheduleUpdateSchema,
+  visitLinkCreateSchema,
   webhookCreateSchema,
   webhookUpdateSchema,
   workspaceTransferSchema,
@@ -787,6 +797,104 @@ export function registerV120Routes(
       : undefined;
     const result = searchWorkspace(repos, ctx.workspaceId, ctx.user.id, query, types);
     return { ok: true, ...result };
+  });
+
+  /* ================= G-13 办公室参观链接 + 成果分享卡（批次三） =================
+   * 参观链接与交付页同一张 delivery_links 表、同一 domain 创建函数（createDeliveryLink
+   * 扩 kind='visit'）：token 只存哈希、口令 argon2、有效期/撤销/浏览计数全口径复用。
+   * visit 行 scope='workspace'（target 即空间本身），公开面 /v/:token 的数据只经
+   * visitService.buildVisitPageData 的字段白名单出口（默认拒绝，零任务内容/金额）。 */
+  const visitDto = (r: DeliveryLinkRow): DeliveryLinkDto => ({
+    id: r.id,
+    kind: 'visit',
+    scope: 'workspace',
+    taskId: null,
+    projectId: null,
+    title: r.title,
+    hasPassword: !!r.password_hash,
+    expiresAt: r.expires_at,
+    revoked: r.revoked === 1,
+    viewCount: r.view_count,
+    createdAt: r.created_at,
+  });
+
+  app.post('/api/visit-links', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const body = visitLinkCreateSchema.parse(req.body ?? {});
+    const ws = repos.getWorkspace(ctx.workspaceId);
+    const { row, path } = await createDeliveryLink(repos, {
+      workspaceId: ctx.workspaceId,
+      kind: 'visit',
+      scope: 'workspace',
+      title: ws?.name ?? '',
+      password: body.password,
+      expiresInDays: body.expiresInDays,
+      createdBy: ctx.user.id,
+    });
+    audit(req, ctx, 'create_visit_link', 'visit_link', row.id, row.title);
+    return { ok: true, visitLink: { ...visitDto(row), path } };
+  });
+
+  app.get('/api/visit-links', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    return { ok: true, visitLinks: repos.listDeliveries(ctx.workspaceId, 'visit').map(visitDto) };
+  });
+
+  app.delete('/api/visit-links/:id', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    const row = repos.getDelivery(id, ctx.workspaceId);
+    if (!row || row.kind !== 'visit') fail(ErrorCode.NOT_FOUND, '参观链接不存在', 404);
+    repos.revokeDelivery(id);
+    audit(req, ctx, 'revoke_visit_link', 'visit_link', id, row!.title);
+    return { ok: true };
+  });
+
+  /** 公开参观页（无登录）：撤销/不存在 → 404；过期/口令行为与交付页同组口径（410/口令表单） */
+  const serveVisit = async (req: FastifyRequest, reply: FastifyReply) => {
+    const { token } = req.params as { token: string };
+    const row = repos.getDeliveryByTokenHash(deliveryTokenHash(token));
+    if (!row || row.kind !== 'visit' || row.revoked === 1) {
+      reply.type('text/html');
+      return reply.status(404).send(renderDeliveryHtml('参观页不可用', '该参观链接不存在或已被撤销。', ''));
+    }
+    if (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) {
+      reply.type('text/html');
+      return reply.status(410).send(renderDeliveryHtml('参观页已过期', '该参观链接已超过有效期。', ''));
+    }
+    if (row.password_hash) {
+      const given = (req.body as { password?: string } | undefined)?.password ?? '';
+      if (!given || !(await verifyPassword(row.password_hash, given))) {
+        reply.type('text/html');
+        return reply.send(renderDeliveryPasswordHtml(row.title, !!given));
+      }
+    }
+    repos.bumpDeliveryView(row.id);
+    reply.type('text/html');
+    return reply.send(renderVisitHtml(buildVisitPageData(repos, row.workspace_id)));
+  };
+  app.get('/v/:token', async (req, reply) => serveVisit(req, reply));
+  app.post('/v/:token', async (req, reply) => serveVisit(req, reply));
+
+  /** 成果分享卡（会话内、仅 done 任务）：1200×630 SVG，文本节点全量 XML 转义（visitService） */
+  app.get('/api/tasks/:id/share-card', async (req: FastifyRequest, reply: FastifyReply) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    const task = repos.getTask(id, ctx.workspaceId);
+    if (!task) fail(ErrorCode.NOT_FOUND, '任务不存在', 404);
+    if (task!.status !== TaskStatus.DONE) {
+      fail(ErrorCode.VALIDATION, '只有已完成的任务可以生成分享卡');
+    }
+    const ws = repos.getWorkspace(ctx.workspaceId);
+    reply.type('image/svg+xml');
+    return reply.send(
+      renderShareCardSvg({
+        title: task!.title,
+        result: task!.result,
+        workspaceName: ws?.name ?? '',
+        date: (task!.finished_at ?? task!.created_at).slice(0, 10),
+      }),
+    );
   });
 
   /* ================= G-10 定时任务（批次二） =================

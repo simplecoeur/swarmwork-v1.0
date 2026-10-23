@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import * as crypto from 'crypto';
 import {
   ErrorCode,
   TaskStatus,
@@ -7,10 +6,12 @@ import {
   type DeliveryLinkDto,
   type SkillDto,
 } from '@swarm/shared';
-import { hashPassword, verifyPassword } from '../auth/auth';
+import { verifyPassword } from '../auth/auth';
 import { attachAssetRefs } from '../domain/assetService';
 import { getChannelAdapter, type ChannelConfig } from '../domain/channels';
 import {
+  createDeliveryLink,
+  deliveryTokenHash,
   projectToCsv,
   projectToMarkdown,
   renderDeliveryHtml,
@@ -18,6 +19,7 @@ import {
   taskToCsv,
   taskToMarkdown,
 } from '../domain/deliveryService';
+import { renderShareCardSvg } from '../domain/visitService';
 import {
   copySkillSnapshot,
   createTaskFromSkill,
@@ -113,7 +115,8 @@ export function skillDto(repos: Repos, row: SkillRow, forWorkspaceId?: string): 
 function deliveryDto(row: DeliveryLinkRow): DeliveryLinkDto {
   return {
     id: row.id,
-    scope: row.scope as 'task' | 'project',
+    kind: row.kind === 'visit' ? 'visit' : 'delivery',
+    scope: row.scope as 'task' | 'project' | 'workspace',
     taskId: row.task_id,
     projectId: row.project_id,
     title: row.title,
@@ -125,7 +128,8 @@ function deliveryDto(row: DeliveryLinkRow): DeliveryLinkDto {
   };
 }
 
-const tokenHash = (token: string): string => crypto.createHash('sha256').update(token).digest('hex');
+/** token 哈希与 deliveryService.deliveryTokenHash 同一实现（交付/参观共用口径） */
+const tokenHash = deliveryTokenHash;
 
 interface ChannelsSetting {
   mj?: { baseUrl: string; tokenEnc: string; account: string };
@@ -455,27 +459,20 @@ export function registerM7Routes(
       if (!p) fail(ErrorCode.NOT_FOUND, '项目不存在', 404);
       if (!title) title = p!.name;
     }
-    const token = crypto.randomBytes(24).toString('base64url');
-    const row: DeliveryLinkRow = {
-      id: uid('dlv'),
-      token_hash: tokenHash(token),
-      workspace_id: ctx.workspaceId,
+    // 创建走 deliveryService.createDeliveryLink 唯一 domain 入口（G-13 起交付/参观共用、扩 kind 参数）
+    const { row, path } = await createDeliveryLink(repos, {
+      workspaceId: ctx.workspaceId,
+      kind: 'delivery',
       scope: body.scope,
-      task_id: body.scope === 'task' ? (body.taskId ?? null) : null,
-      project_id: body.scope === 'project' ? (body.projectId ?? null) : null,
+      taskId: body.scope === 'task' ? (body.taskId ?? null) : null,
+      projectId: body.scope === 'project' ? (body.projectId ?? null) : null,
       title,
-      password_hash: body.password ? await hashPassword(body.password) : '',
-      expires_at: body.expiresInDays
-        ? new Date(Date.now() + body.expiresInDays * 86_400_000).toISOString()
-        : null,
-      revoked: 0,
-      view_count: 0,
-      created_by: ctx.user.id,
-      created_at: nowIso(),
-    };
-    repos.insertDeliveryLink(row);
+      password: body.password,
+      expiresInDays: body.expiresInDays,
+      createdBy: ctx.user.id,
+    });
     audit(req, ctx, 'create_delivery', 'delivery', row.id, title);
-    return { ok: true, delivery: { ...deliveryDto(row), path: `/d/${token}` } };
+    return { ok: true, delivery: { ...deliveryDto(row), path } };
   });
 
   app.get('/api/deliveries', async (req) => {
@@ -571,11 +568,47 @@ export function registerM7Routes(
     }
     repos.bumpDeliveryView(row.id);
     const c = deliveryContent(row);
+    // G-13：任务交付页内嵌同款分享卡图（带 token 的卡图 URL，token 校验同交付页，见下方路由）
+    const extra =
+      row.scope === 'task' && row.task_id
+        ? `<img class="sharecard" src="/d/${(req.params as { token: string }).token}/share-card.svg" alt="成果分享卡"/>`
+        : '';
     reply.type('text/html');
-    return reply.send(renderDeliveryHtml(c.title, c.body, c.meta));
+    return reply.send(renderDeliveryHtml(c.title, c.body, c.meta, extra));
   };
   app.get('/d/:token', async (req, reply) => serveDelivery(req, reply as never));
   app.post('/d/:token', async (req, reply) => serveDelivery(req, reply as never));
+
+  /**
+   * 交付页内嵌分享卡图（G-13）：token 校验同交付页（不存在/已撤销/已过期一律 404）。
+   * 卡面只有成果标题+摘要+空间名（交付页本身即对 token 持有者公开同一内容），不另泄漏。
+   */
+  app.get('/d/:token/share-card.svg', async (req, reply) => {
+    const { token } = req.params as { token: string };
+    const row = repos.getDeliveryByTokenHash(deliveryTokenHash(token));
+    if (
+      !row ||
+      row.kind !== 'delivery' ||
+      row.revoked === 1 ||
+      (row.expires_at && new Date(row.expires_at).getTime() <= Date.now()) ||
+      row.scope !== 'task' ||
+      !row.task_id
+    ) {
+      return reply.status(404).send('Not Found');
+    }
+    const t = repos.getTask(row.task_id, row.workspace_id);
+    if (!t) return reply.status(404).send('Not Found');
+    const ws = repos.getWorkspace(row.workspace_id);
+    reply.type('image/svg+xml');
+    return reply.send(
+      renderShareCardSvg({
+        title: row.title || t.title,
+        result: t.result,
+        workspaceName: ws?.name ?? '',
+        date: (t.finished_at ?? t.created_at).slice(0, 10),
+      }),
+    );
+  });
 
   /* ================= 渠道适配器（§12.4）+ MJ 直推（§11.2） ================= */
   const channelConfig = (ctx: RouteCtx & { workspaceId: string }): { cfg: ChannelConfig; raw: ChannelsSetting } => {

@@ -71,6 +71,10 @@ export const IMPORT_LIMITS = {
   MAX_ASSET_SECTIONS: 200,
 } as const;
 
+/** 交付/参观链接种类（G-13）：delivery 交付页 | visit 办公室参观页（同一张 delivery_links 表） */
+export const DELIVERY_LINK_KINDS = ['delivery', 'visit'] as const;
+export type DeliveryLinkKind = (typeof DELIVERY_LINK_KINDS)[number];
+
 /** 开放 API Token 权限位（G-07）：dispatch 发单 / read 查状态与成果 */
 export const API_TOKEN_SCOPES = ['dispatch', 'read'] as const;
 export type ApiTokenScope = (typeof API_TOKEN_SCOPES)[number];

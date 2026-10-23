@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../context';
 import PixelOffice from './PixelOffice';
 import { CapabilitiesShelf, OnboardingCard } from './Onboarding';
+import { VisitLinksCard } from './Settings';
 import { Button, Input, Textarea } from './ui';
 
 function MemberEditor({ memberId, onClose }: { memberId: string; onClose: () => void }) {
@@ -94,6 +95,8 @@ export default function Office() {
         </div>
       </div>
       <CapabilitiesShelf />
+      {/* G-13：参观链接管理卡（与设置页同一组件）：把办公室门面分享给外部看 */}
+      <VisitLinksCard />
     </>
   );
 }

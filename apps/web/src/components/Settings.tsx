@@ -5,6 +5,7 @@ import {
   fetchChannelPushes,
   fetchChannels,
   fetchPreferences,
+  fetchVisitLinks,
   fetchWebhookDeliveries,
   fetchWebhooks,
   putPreference,
@@ -19,6 +20,7 @@ import type {
   ApiToken,
   ChannelInfo,
   ChannelPush,
+  Delivery,
   Member,
   NotifyPrefs,
   Team,
@@ -511,6 +513,8 @@ export default function Settings() {
 
       <OpenApiCard />
 
+      <VisitLinksCard />
+
       <NotifyPrefsCard />
 
       <div className="card">
@@ -572,6 +576,107 @@ function HelpEntryCard() {
         <Button variant="gray" onClick={() => setFeedbackOpen(true)}>✉️ 意见反馈</Button>
       </div>
       {feedbackOpen && <FeedbackDialog onClose={() => setFeedbackOpen(false)} />}
+    </div>
+  );
+}
+
+/* ---------------- 参观链接（G-13）：建/复制/撤销；与交付页同一令牌机制，参观页只见成员与聚合 ---------------- */
+export function VisitLinksCard() {
+  const { S, post, send, toast } = useApp();
+  const { ask, confirmNode } = useConfirm();
+  const [links, setLinks] = useState<Delivery[]>([]);
+  const [password, setPassword] = useState('');
+  const [days, setDays] = useState('30');
+  const [createdPath, setCreatedPath] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setLinks(await fetchVisitLinks());
+    } catch {
+      /* 列表拉取失败不阻塞设置页 */
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!S) return null;
+
+  async function create() {
+    let res: Record<string, unknown>;
+    try {
+      res = await post('/api/visit-links', {
+        password: password.trim() ? password.trim() : undefined,
+        expiresInDays: days.trim() ? Number(days) : null,
+      });
+    } catch { return; }
+    const v = res.visitLink as (Delivery & { path?: string }) | undefined;
+    if (v?.path) setCreatedPath(window.location.origin + v.path);
+    setPassword('');
+    toast('参观链接已创建（链接只在创建时完整显示一次，请及时复制）');
+    void load();
+  }
+
+  function revoke(link: Delivery) {
+    ask({
+      title: '撤销参观链接',
+      message: `撤销后该链接立即失效（打开回 404）。浏览数 ${link.viewCount} 次的记录会保留在列表中。`,
+      confirmLabel: '撤销链接',
+      onConfirm: async () => {
+        try {
+          await send('DELETE', `/api/visit-links/${link.id}`);
+        } catch { return; }
+        toast('参观链接已撤销');
+        void load();
+      },
+    });
+  }
+
+  const copy = (text: string) => navigator.clipboard.writeText(text).then(() => toast('已复制'));
+
+  return (
+    <div className="card">
+      <h2>办公室参观链接 <span className="tag">把团队门面分享给外部看：只见空间名、成员与状态聚合、近 30 天完成数，不含任务内容与账目</span></h2>
+      <div className="row">
+        <div>
+          <label>访问口令（可空）</label>
+          <Input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="留空 = 无口令" />
+        </div>
+        <div>
+          <label>有效期（天，可空 = 长期）</label>
+          <Input type="number" min="1" max="365" value={days} onChange={(e) => setDays(e.target.value)} />
+        </div>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <Button variant="blue" onClick={create}>创建参观链接</Button>
+      </div>
+      {createdPath && (
+        <p className="hint" style={{ marginTop: 8 }}>
+          新链接：<code>{createdPath}</code>{' '}
+          <Button size="small" variant="gray" onClick={() => copy(createdPath)}>复制</Button>
+        </p>
+      )}
+      <div style={{ marginTop: 10 }}>
+        {links.length === 0 && <p className="hint">暂无参观链接。</p>}
+        {links.map((l) => (
+          <div key={l.id} className="apicard" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontWeight: 700 }}>{l.title || '参观链接'}</span>
+            {l.hasPassword && <Badge>有口令</Badge>}
+            {l.revoked ? (
+              <Badge variant="can">已撤销</Badge>
+            ) : l.expiresAt && new Date(l.expiresAt).getTime() < Date.now() ? (
+              <Badge variant="can">已过期</Badge>
+            ) : (
+              <Badge variant="done">有效</Badge>
+            )}
+            <span className="meta">浏览 {l.viewCount} 次 · 建于 {l.createdAt.slice(0, 10)}{l.expiresAt ? ` · 至 ${l.expiresAt.slice(0, 10)}` : ''}</span>
+            {!l.revoked && (
+              <Button size="small" variant="gray" onClick={() => revoke(l)}>撤销</Button>
+            )}
+          </div>
+        ))}
+      </div>
+      {confirmNode}
     </div>
   );
 }

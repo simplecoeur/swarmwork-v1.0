@@ -293,6 +293,12 @@ export const deliveryCreateSchema = z.object({
   expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
 });
 
+/** 参观链接创建（G-13）：有效期/口令口径与交付页 deliveryCreateSchema 同组字段 */
+export const visitLinkCreateSchema = z.object({
+  password: z.string().min(4, '口令至少 4 位').optional(),
+  expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
+});
+
 export const channelBindSchema = z.object({
   channelType: z.string().trim().min(1).default('mj'),
   baseUrl: z.string().trim().min(1, '渠道地址必填'),

@@ -202,6 +202,12 @@ export async function fetchDeliveries(): Promise<Delivery[]> {
   return (j.deliveries as Delivery[]) ?? [];
 }
 
+/** 参观链接列表（G-13：与交付页同一 DTO，kind='visit'） */
+export async function fetchVisitLinks(): Promise<Delivery[]> {
+  const j = await requestRaw('GET', '/api/visit-links');
+  return (j.visitLinks as Delivery[]) ?? [];
+}
+
 export async function fetchChannels(): Promise<ChannelInfo[]> {
   const j = await requestRaw('GET', '/api/channels');
   return (j.channels as ChannelInfo[]) ?? [];

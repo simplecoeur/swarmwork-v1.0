@@ -361,10 +361,12 @@ export interface SkillDto {
   updatedAt: string;
 }
 
-/** 只读交付页（§11.2）：管理视图（token 明文仅创建时返回一次） */
+/** 只读交付页（§11.2）：管理视图（token 明文仅创建时返回一次）。
+ * G-13 起同一 DTO 兼表参观链接：kind='visit' 时 scope='workspace'、taskId/projectId 为 null。 */
 export interface DeliveryLinkDto {
   id: string;
-  scope: 'task' | 'project';
+  kind: 'delivery' | 'visit';
+  scope: 'task' | 'project' | 'workspace';
   taskId: string | null;
   projectId: string | null;
   title: string;
