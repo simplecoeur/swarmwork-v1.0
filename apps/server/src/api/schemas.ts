@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PROVIDERS, TASK_TYPES } from '@swarm/shared';
+import { KB_SCOPES, PROVIDERS, TASK_TYPES } from '@swarm/shared';
 
 /** 入参 zod 校验（设计 §7：校验失败不进 domain） */
 export const apiSaveSchema = z.object({
@@ -70,11 +70,20 @@ export const projectCreateSchema = z.object({
 });
 
 export const kbCreateSchema = z.object({
-  scope: z.enum(['company', 'team']).default('company'),
-  teamId: z.string().nullable().optional(),
-  ownerMemberId: z.string().nullable().optional(),
-  kind: z.enum(['提示词', '资料', '成果', '标准']).default('资料'),
   title: z.string().trim().min(1, '标题必填'),
-  content: z.string().default(''),
+  body: z.string().default(''),
+  scope: z.enum(KB_SCOPES).default('company'),
+  scopeId: z.string().nullable().optional(),
   tags: z.array(z.string()).default([]),
+  enabled: z.boolean().default(true),
+});
+
+/** 局部更新：未传字段保持不变（scope 与 scopeId 的一致性在路由层按合并后取值校验） */
+export const kbUpdateSchema = z.object({
+  title: z.string().trim().min(1, '标题必填').optional(),
+  body: z.string().optional(),
+  scope: z.enum(KB_SCOPES).optional(),
+  scopeId: z.string().nullable().optional(),
+  tags: z.array(z.string()).optional(),
+  enabled: z.boolean().optional(),
 });

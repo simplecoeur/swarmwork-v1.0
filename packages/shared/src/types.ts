@@ -1,5 +1,5 @@
 import type { BlockedCode, ProjectStatus, TaskStatus } from './stateMachine';
-import type { LedgerStage, ProviderKind, Role, TaskType } from './constants';
+import type { KbScope, LedgerStage, ProviderKind, Role, TaskType } from './constants';
 
 /**
  * 线缆契约类型（设计 §7）。金额在线缆上一律以「元」为单位的 number 出现，
@@ -61,6 +61,8 @@ export interface TaskDto {
   blockedCode: BlockedCode | null;
   /** 老板裁决通过的单独标注（§15.2 统计口径） */
   adjudicated: boolean;
+  /** 本单实际注入的知识库条目 ids（注入审计，§10）；多次执行尝试取并集 */
+  injectedKbIds: string[];
   totalTokens: number;
   totalCost: number;
   createdAt: string;
@@ -112,16 +114,37 @@ export interface StateDto {
   purchases: PurchaseDto[];
 }
 
+/** 知识库条目（M3 一期，§10）：scope=company 全公司 / team 某小组 / member 某成员 */
 export interface KbEntryDto {
   id: string;
-  scope: 'company' | 'team';
-  teamId: string | null;
-  ownerMemberId: string | null;
-  kind: '提示词' | '资料' | '成果' | '标准';
   title: string;
-  content: string;
+  body: string;
+  scope: KbScope;
+  /** scope=team 时为小组 id，scope=member 时为成员 id，company 时为 null */
+  scopeId: string | null;
   tags: string[];
+  enabled: boolean;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface KbCreateDto {
+  title: string;
+  body?: string;
+  scope: KbScope;
+  scopeId?: string | null;
+  tags?: string[];
+  enabled?: boolean;
+}
+
+/** 更新为局部字段（未传的字段保持不变） */
+export interface KbUpdateDto {
+  title?: string;
+  body?: string;
+  scope?: KbScope;
+  scopeId?: string | null;
+  tags?: string[];
+  enabled?: boolean;
 }
 
 /** 总经理汇报（GET /api/cost/report，§7/§15） */

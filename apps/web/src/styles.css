@@ -51,3 +51,6 @@ th { color:#9aa0ae; font-weight:500; font-size:12px; }
 .kv div span { font-size:12px; color:#9aa0ae; }
 .apicard { border:1px solid #3a3d4a; border-radius:8px; padding:10px 12px; margin-bottom:10px; background:#22232c; }
 .toast { position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:#14151b; border:1px solid #454856; color:#fff; padding:8px 18px; border-radius:20px; font-size:13px; display:none; z-index:99;}
+/* 知识库 */
+input[type="checkbox"].chk { width:auto; margin:0; }
+.kb-off { opacity:.55; }

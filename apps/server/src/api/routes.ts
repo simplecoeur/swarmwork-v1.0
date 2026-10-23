@@ -22,7 +22,7 @@ import type { LlmGateway } from '../llm/gateway';
 import type { Logger } from '../logger';
 import { decryptKey, encryptKey, maskKey } from '../store/crypto';
 import { makeMemberRows } from '../store/seed';
-import type { ApiRow, Repos, TaskRow } from '../store/repositories';
+import type { ApiRow, KbRow, Repos, TaskRow } from '../store/repositories';
 import { nowIso, uid } from '../util';
 import {
   adjudicateSchema,
@@ -30,6 +30,7 @@ import {
   apiSaveSchema,
   defaultApiSchema,
   kbCreateSchema,
+  kbUpdateSchema,
   memberPromptSchema,
   paramsSchema,
   projectCreateSchema,
@@ -68,6 +69,29 @@ function apiDto(repos: Repos, row: ApiRow): ApiDto {
   };
 }
 
+function parseIdList(json: string): string[] {
+  try {
+    const v = JSON.parse(json || '[]') as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function kbDto(k: KbRow): KbEntryDto {
+  return {
+    id: k.id,
+    title: k.title,
+    body: k.body,
+    scope: k.scope as KbEntryDto['scope'],
+    scopeId: k.scope_id,
+    tags: parseIdList(k.tags),
+    enabled: k.enabled === 1,
+    createdAt: k.created_at,
+    updatedAt: k.updated_at,
+  };
+}
+
 function taskDto(row: TaskRow): TaskDto {
   return {
     id: row.id,
@@ -85,6 +109,7 @@ function taskDto(row: TaskRow): TaskDto {
     blockedReason: row.blocked_reason,
     blockedCode: row.blocked_code,
     adjudicated: row.adjudicated === 1,
+    injectedKbIds: parseIdList(row.injected_kb_ids),
     totalTokens: row.total_tokens,
     totalCost: milliToYuan(row.total_cost_milli),
     createdAt: row.created_at,
@@ -156,38 +181,83 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.get('/api/presets', async () => PROVIDER_PRESETS);
   app.get('/api/cost/report', async () => ({ ok: true, report: buildReport(repos) }));
 
-  /* ----- 知识库（§7 最小契约；注入与回流在 M3 增量实现） ----- */
-  app.get('/api/kb', async () => ({
-    ok: true,
-    entries: repos.listKb().map(
-      (k): KbEntryDto => ({
-        id: k.id,
-        scope: k.scope as KbEntryDto['scope'],
-        teamId: k.team_id,
-        ownerMemberId: k.owner_member_id,
-        kind: k.kind as KbEntryDto['kind'],
-        title: k.title,
-        content: k.content,
-        tags: JSON.parse(k.tags || '[]') as string[],
-        createdAt: k.created_at,
-      }),
-    ),
-  }));
+  /* ----- 知识库（M3 一期，§10）：CRUD + 成果回流 ----- */
+  /** scope/scopeId 一致性：company 强制 scopeId=null；team/member 必须给且目标存在 */
+  const normalizeKbScope = (scope: string, scopeId: string | null | undefined): string | null => {
+    if (scope === 'company') return null;
+    if (!scopeId) fail(ErrorCode.VALIDATION, `scope=${scope} 时必须指定 scopeId`);
+    if (scope === 'team' && !repos.getTeam(scopeId!)) fail(ErrorCode.VALIDATION, 'scopeId 指向的小组不存在');
+    if (scope === 'member' && !repos.getMember(scopeId!)) fail(ErrorCode.VALIDATION, 'scopeId 指向的成员不存在');
+    return scopeId!;
+  };
+
+  app.get('/api/kb', async () => ({ ok: true, entries: repos.listKb().map(kbDto) }));
   app.post('/api/kb', async (req) => {
     const body = kbCreateSchema.parse(req.body ?? {});
-    const id = uid('kb');
-    repos.insertKb({
-      id,
-      scope: body.scope,
-      team_id: body.teamId ?? null,
-      owner_member_id: body.ownerMemberId ?? null,
-      kind: body.kind,
+    const scopeId = normalizeKbScope(body.scope, body.scopeId ?? null);
+    const ts = nowIso();
+    const row: KbRow = {
+      id: uid('kb'),
       title: body.title,
-      content: body.content,
+      body: body.body,
+      scope: body.scope,
+      scope_id: scopeId,
       tags: JSON.stringify(body.tags),
-      created_at: nowIso(),
-    });
-    return { ok: true, id };
+      enabled: body.enabled ? 1 : 0,
+      created_at: ts,
+      updated_at: ts,
+    };
+    repos.insertKb(row);
+    return { ok: true, id: row.id, entry: kbDto(row) };
+  });
+  app.put('/api/kb/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    const cur = repos.getKb(id);
+    if (!cur) fail(ErrorCode.NOT_FOUND, '知识条目不存在', 404);
+    const body = kbUpdateSchema.parse(req.body ?? {});
+    const scope = body.scope ?? cur!.scope;
+    const scopeId = normalizeKbScope(scope, body.scopeId !== undefined ? body.scopeId : cur!.scope_id);
+    const next: KbRow = {
+      ...cur!,
+      title: body.title ?? cur!.title,
+      body: body.body ?? cur!.body,
+      scope,
+      scope_id: scopeId,
+      tags: body.tags !== undefined ? JSON.stringify(body.tags) : cur!.tags,
+      enabled: body.enabled !== undefined ? (body.enabled ? 1 : 0) : cur!.enabled,
+      updated_at: nowIso(),
+    };
+    repos.updateKb(next);
+    return { ok: true, entry: kbDto(next) };
+  });
+  app.delete('/api/kb/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    if (!repos.getKb(id)) fail(ErrorCode.NOT_FOUND, '知识条目不存在', 404);
+    repos.deleteKb(id);
+    return { ok: true };
+  });
+  /** 成果回流：已完成任务的成果一键存入知识库（标题=任务标题、scope 默认任务所属组、正文=成果全文） */
+  app.post('/api/kb/from-task/:taskId', async (req) => {
+    const { taskId } = req.params as { taskId: string };
+    const task = repos.getTask(taskId);
+    if (!task) fail(ErrorCode.NOT_FOUND, '任务不存在', 404);
+    if (task!.status !== TaskStatus.DONE) fail(ErrorCode.VALIDATION, '任务尚未完成，成果不可回流');
+    if (!task!.result) fail(ErrorCode.VALIDATION, '任务成果为空，无法回流');
+    const ts = nowIso();
+    const row: KbRow = {
+      id: uid('kb'),
+      title: task!.title,
+      body: task!.result,
+      scope: 'team',
+      scope_id: task!.team_id,
+      tags: '[]',
+      enabled: 1,
+      created_at: ts,
+      updated_at: ts,
+    };
+    repos.insertKb(row);
+    logger.info('api', '成果回流知识库', { taskId, kbId: row.id });
+    return { ok: true, id: row.id, entry: kbDto(row) };
   });
 
   /* ----- API 管理 ----- */
@@ -310,12 +380,21 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       total_tokens: 0,
       total_cost_milli: 0,
       heartbeat_at: null,
+      injected_kb_ids: '[]',
       created_at: nowIso(),
       claimed_at: null,
       finished_at: null,
     };
     repos.insertTask(row);
     return { ok: true, id };
+  });
+
+  /** 任务详情（回传注入审计等全量字段，§10） */
+  app.get('/api/tasks/:id', async (req) => {
+    const { id } = req.params as { id: string };
+    const task = repos.getTask(id);
+    if (!task) fail(ErrorCode.NOT_FOUND, '任务不存在', 404);
+    return { ok: true, task: taskDto(task!) };
   });
 
   const adjudicate = async (taskId: string) => {

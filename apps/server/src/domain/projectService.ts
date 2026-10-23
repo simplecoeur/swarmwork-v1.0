@@ -123,6 +123,7 @@ export async function createProject(
       total_tokens: 0,
       total_cost_milli: 0,
       heartbeat_at: null,
+      injected_kb_ids: '[]',
       created_at: nowIso(),
       claimed_at: null,
       finished_at: null,

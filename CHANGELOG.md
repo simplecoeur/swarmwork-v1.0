@@ -2,6 +2,22 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)，格式参考 Keep a Changelog。
 
+## [0.3.0] - 2026-10-23
+
+M3 知识库一期（见 docs/技术设计文档.md §10、§15.1、§13）。
+
+### Added
+
+- 知识库数据与接口：迁移 `002_kb.sql` 将 kb_entries 重建为新字段口径（title/body/scope(company|team|member)/scope_id/tags/enabled/created_at/updated_at），001 存量数据折算迁入（content→body、team_id→scope_id）；tasks 新增 `injected_kb_ids` 注入审计列。API：GET/POST `/api/kb`、PUT/DELETE `/api/kb/:id`（zod 校验 + scope/scopeId 一致性与目标存在性校验）、POST `/api/kb/from-task/:taskId` 成果回流（标题=任务标题、scope 默认任务所属组、正文=成果全文）、GET `/api/tasks/:id` 任务详情（含 injectedKbIds）。shared 补 KbEntryDto / KbCreateDto / KbUpdateDto、KB_SCOPES 与 KB_INJECTION 常量，TaskDto 增 injectedKbIds。
+- 执行时注入（domain/kbService + engine）：组装执行 prompt 时检索知识库——公司级全文注入，小组/成员级按任务标题/类型/说明关键词命中（标题/tags/正文）；优先级「公司 > 本组 > 本人 > 他组」，禁用条目排除、他人成员级不注入；注入总量上限 = 任务剩余预算的 30%（无预算上限时 8k token），按优先级整条纳入、超限跳过续选；实际注入条目 ids 落库（多次执行尝试取并集），任务详情/任务墙可查。
+- 前端「知识库」页签：条目按范围分组展示与筛选、新建/编辑/删除、启用开关、标签编辑；成果列表新增「存入知识库」按钮；任务墙在任务卡上展示本单注入的知识条目。
+- 测试：新增单元 8 项（关键词抽取/命中、范围优先级、截断上限与跳过续选）与集成 1 项（KB CRUD→发单→以 mock `/__requests` 回显断言注入内容确实到达模型侧→injectedKbIds 落库→成果回流生成条目）；mock-llm 新增 `/__requests` 回显接口。
+- ADR-006（产品形态定版 Web 端，主代理补录）随本次提交一并入库。
+
+### Changed
+
+- 前端 types.ts 切换为 import `@swarm/shared` 契约别名（M2 偏差 #4 落实），DTO 唯一事实来源收敛到 shared；web 包新增 `@swarm/shared` 依赖；Context 新增 send（PUT/DELETE）通道。
+
 ## [0.2.0] - 2026-10-23
 
 M2 工程基建 + 后端迁移（见 docs/技术设计文档.md §13、§15）。

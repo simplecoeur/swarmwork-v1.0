@@ -5,6 +5,7 @@ import Standards from './components/Standards';
 import TaskWall from './components/TaskWall';
 import Results from './components/Results';
 import CostCenter from './components/CostCenter';
+import KnowledgeBase from './components/KnowledgeBase';
 import Settings from './components/Settings';
 import type { TabKey } from './types';
 
@@ -26,6 +27,7 @@ function Shell() {
         </div>
         <nav>
           {navBtn('office', '办公室')}
+          {navBtn('kb', '知识库')}
           {navBtn('cost', '成本中心')}
           {navBtn('settings', '设置后台')}
         </nav>
@@ -47,6 +49,11 @@ function Shell() {
             </div>
             <TaskWall />
             <Results />
+          </section>
+        )}
+        {tab === 'kb' && (
+          <section>
+            <KnowledgeBase />
           </section>
         )}
         {tab === 'cost' && (

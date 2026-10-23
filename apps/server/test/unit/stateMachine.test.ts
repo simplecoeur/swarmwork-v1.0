@@ -38,6 +38,7 @@ function setup(): { repos: Repos; task: TaskRow } {
     total_tokens: 0,
     total_cost_milli: 0,
     heartbeat_at: null,
+    injected_kb_ids: '[]',
     created_at: new Date().toISOString(),
     claimed_at: null,
     finished_at: null,

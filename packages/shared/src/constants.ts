@@ -52,3 +52,15 @@ export const PROVIDER_PRESETS: Readonly<
 /** 账本阶段 */
 export const LEDGER_STAGES = ['执行', '审核', '重做'] as const;
 export type LedgerStage = (typeof LEDGER_STAGES)[number];
+
+/** 知识库条目范围（M3 一期：scope 仅作检索范围用，不做权限体系） */
+export const KB_SCOPES = ['company', 'team', 'member'] as const;
+export type KbScope = (typeof KB_SCOPES)[number];
+
+/** 知识库注入护栏（§10 + §15.1 上下文裁剪口径） */
+export const KB_INJECTION = {
+  /** 有单任务预算时：注入总量上限 = 剩余预算 × 此比例 */
+  BUDGET_SHARE: 0.3,
+  /** 无预算上限时的固定注入上限（token） */
+  NO_BUDGET_CAP_TOKENS: 8_000,
+} as const;

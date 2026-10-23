@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AppState, Presets, TabKey } from './types';
-import { fetchPresets, fetchState, postRaw } from './api';
+import { fetchPresets, fetchState, requestRaw } from './api';
 
 interface AppContextValue {
   S: AppState | null;
@@ -12,6 +12,8 @@ interface AppContextValue {
   refresh: () => Promise<void>;
   /** 语义与原生版 post() 一致：失败时先 toast「出错：…」再抛错 */
   post: (path: string, body?: unknown) => Promise<Record<string, unknown>>;
+  /** 任意方法版（知识库 PUT/DELETE 用），失败同样先 toast 再抛错 */
+  send: (method: 'PUT' | 'DELETE', path: string, body?: unknown) => Promise<Record<string, unknown>>;
   apiName: (id: string | null | undefined) => string;
   teamName: (id: string) => string;
   memberName: (id: string | null | undefined) => string;
@@ -51,7 +53,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const post = useCallback(
     async (path: string, body?: unknown) => {
       try {
-        return await postRaw(path, body);
+        return await requestRaw('POST', path, body);
+      } catch (e) {
+        toast('出错：' + (e instanceof Error ? e.message : String(e)));
+        throw e;
+      }
+    },
+    [toast],
+  );
+
+  const send = useCallback(
+    async (method: 'PUT' | 'DELETE', path: string, body?: unknown) => {
+      try {
+        return await requestRaw(method, path, body);
       } catch (e) {
         toast('出错：' + (e instanceof Error ? e.message : String(e)));
         throw e;
@@ -85,7 +99,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   return (
     <AppContext.Provider
-      value={{ S, presets, tab, setTab, toast, refresh, post, apiName, teamName, memberName }}
+      value={{ S, presets, tab, setTab, toast, refresh, post, send, apiName, teamName, memberName }}
     >
       {children}
       {toastMsg && <div className="toast" style={{ display: 'block' }}>{toastMsg}</div>}

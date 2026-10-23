@@ -8,6 +8,7 @@ import {
   type TaskType,
 } from '@swarm/shared';
 import { balanceMilli } from '../domain/costService';
+import { kbCapTokens, selectKbForInjection } from '../domain/kbService';
 import { DomainError, refreshProjectStatus, transitionTask, type TaskGuards } from '../domain/taskService';
 import { CircuitOpenError, LlmGateway } from '../llm/gateway';
 import type { Logger } from '../logger';
@@ -192,11 +193,30 @@ export class Engine {
       }
       if (!api) return; // transitionTask 守卫已保证 api 存在
 
+      /* —— 知识库注入（§10）：按范围优先级+关键词检索，拼入执行 prompt，并落库审计 —— */
+      const kbSel = selectKbForInjection(
+        this.repos.listKb(),
+        {
+          teamId: task.team_id,
+          memberId: worker.id,
+          queryText: `${task.title}\n${task.type}\n${task.brief}`,
+        },
+        kbCapTokens(this.params().taskBudgetTokens || 0, task.total_tokens),
+      );
+      if (kbSel.entries.length) {
+        this.repos.addTaskInjectedKb(
+          taskId,
+          kbSel.entries.map((e) => e.id),
+        );
+        this.logger.info('engine', `知识库注入 ${kbSel.entries.length} 条（估算 ${kbSel.totalTokens} token）`, { taskId });
+      }
+
       /* —— 执行 / 重做阶段 —— */
       const stage = isRedo ? ('重做' as const) : ('执行' as const);
       const workerSys =
         worker.persona + (worker.prompt ? `\n专属提示词（老板为该成员单独设定，务必遵循）：${worker.prompt}` : '');
       let workerUser =
+        kbSel.section +
         `任务标题：${task.title}\n任务类型：${task.type}\n任务说明：\n${task.brief || '（无补充说明）'}` +
         '\n请直接产出完整成果正文，不要输出与成果无关的解释。';
       if (isRedo) {

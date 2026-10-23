@@ -2,9 +2,16 @@ import { useApp } from '../context';
 import { yuan } from '../utils';
 
 export default function Results() {
-  const { S, toast, teamName, memberName } = useApp();
+  const { S, post, toast, teamName, memberName } = useApp();
   if (!S) return null;
   const done = S.tasks.filter((t) => t.status === '已完成');
+
+  async function saveToKb(id: string) {
+    try {
+      await post(`/api/kb/from-task/${id}`);
+    } catch { return; }
+    toast('已存入知识库（归属本任务小组，可在「知识库」页查看）');
+  }
 
   function copyResult(id: string) {
     const t = S!.tasks.find((x) => x.id === id);
@@ -36,7 +43,8 @@ export default function Results() {
               </div>
               <pre className="result">{t.result}</pre>
               <button className="btn small gray" onClick={() => copyResult(t.id)}>复制</button>{' '}
-              <button className="btn small gray" onClick={() => downloadResult(t.id)}>下载 .md</button>
+              <button className="btn small gray" onClick={() => downloadResult(t.id)}>下载 .md</button>{' '}
+              <button className="btn small gray" onClick={() => saveToKb(t.id)}>存入知识库</button>
             </div>
           ))
         ) : (

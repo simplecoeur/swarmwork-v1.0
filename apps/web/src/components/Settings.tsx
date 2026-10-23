@@ -21,7 +21,7 @@ function ApiForm({
   const [pricePerM, setPricePerM] = useState<string>(String(api ? api.pricePerM : 2));
 
   function onProviderChange(p: string) {
-    setProvider(p);
+    setProvider(p as ApiItem['provider']);
     // 与原生版 presetFill 一致：预设有值才带出
     const preset = presets[p];
     if (!preset) return;

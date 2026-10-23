@@ -10,6 +10,8 @@
  *     fail-always → 每次都不过（待裁决分支）
  * - 环境变量 MOCK_NO_USAGE=1 → 响应不带 usage（验证估算口径）
  * - 计次接口 GET /__counts → {chat, review} 调用次数（测试断言用）
+ * - 请求回显 GET /__requests → [{kind:'chat'|'review', user}] 历次请求的 user 内容
+ *   （截断 8000 字），供集成测试断言 prompt 注入确实到达模型侧
  */
 const http = require('http');
 const PORT = parseInt(process.env.MOCK_PORT || '8791', 10);
@@ -18,6 +20,7 @@ const NO_USAGE = process.env.MOCK_NO_USAGE === '1';
 
 let chatCount = 0;
 let reviewCount = 0;
+const seenRequests = [];
 
 const server = http.createServer((req, res) => {
   let s = '';
@@ -28,6 +31,10 @@ const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url.startsWith('/__counts')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ chat: chatCount, review: reviewCount }));
+    }
+    if (req.method === 'GET' && req.url.startsWith('/__requests')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify(seenRequests));
     }
     if (req.method !== 'POST' || !req.url.startsWith('/chat/completions')) {
       res.writeHead(404, { 'content-type': 'application/json' });
@@ -43,6 +50,7 @@ const server = http.createServer((req, res) => {
     const sys = (msgs.find((m) => m.role === 'system') || {}).content || '';
     const usr = (msgs.filter((m) => m.role === 'user').pop() || {}).content || '';
     const isReview = sys.includes('审核员') || usr.startsWith('请审核以下成果');
+    seenRequests.push({ kind: isReview ? 'review' : 'chat', user: usr.slice(0, 8000) });
     let content;
     if (isReview) {
       reviewCount++;

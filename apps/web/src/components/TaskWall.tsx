@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import { useApp } from '../context';
+import { fetchKb } from '../api';
 import { yuan } from '../utils';
 
 const chipCls: Record<string, string> = {
@@ -11,6 +13,16 @@ const chipCls: Record<string, string> = {
 
 export default function TaskWall() {
   const { S, post, refresh, toast, teamName, memberName } = useApp();
+  // 注入审计展示：把任务记录的 injectedKbIds 映射成条目标题（ids 变化时才重拉）
+  const [kbTitles, setKbTitles] = useState<Record<string, string>>({});
+  const injectedSig = S ? S.tasks.map((t) => t.injectedKbIds.join(',')).join('|') : '';
+  useEffect(() => {
+    if (!injectedSig.replace(/[|,]/g, '')) return;
+    fetchKb()
+      .then((entries) => setKbTitles(Object.fromEntries(entries.map((e) => [e.id, e.title]))))
+      .catch(() => {});
+  }, [injectedSig]);
+
   if (!S) return null;
 
   async function adjudicate(id: string) {
@@ -36,6 +48,9 @@ export default function TaskWall() {
                 {' · 全程 '}{t.totalTokens || 0} token / {yuan(t.totalCost)}
                 {t.rejectCount ? ` · 被打回 ${t.rejectCount} 次` : ''}
                 {t.reviewNote ? <><br />审核结论：{t.reviewNote}</> : null}
+                {t.injectedKbIds.length ? (
+                  <><br />本单注入知识：{t.injectedKbIds.map((id) => kbTitles[id] ?? id).join('、')}</>
+                ) : null}
               </div>
               {t.rejectReason ? <div className="reject">打回/裁决原因：{t.rejectReason}</div> : null}
               {t.blockedReason ? <div className="blocked">停工原因：{t.blockedReason}</div> : null}

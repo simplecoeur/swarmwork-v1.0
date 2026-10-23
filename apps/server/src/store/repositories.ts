@@ -63,6 +63,7 @@ export interface TaskRow {
   total_tokens: number;
   total_cost_milli: number;
   heartbeat_at: string | null;
+  injected_kb_ids: string;
   created_at: string;
   claimed_at: string | null;
   finished_at: string | null;
@@ -103,14 +104,14 @@ export interface LlmCallRow {
 
 export interface KbRow {
   id: string;
-  scope: string;
-  team_id: string | null;
-  owner_member_id: string | null;
-  kind: string;
   title: string;
-  content: string;
+  body: string;
+  scope: string;
+  scope_id: string | null;
   tags: string;
+  enabled: number;
   created_at: string;
+  updated_at: string;
 }
 
 const now = () => new Date().toISOString();
@@ -236,14 +237,14 @@ export class Repos {
       .prepare(
         `INSERT INTO tasks (id, project_id, team_id, assignee_id, title, type, brief, status, result,
           review_note, reject_reason, reject_count, blocked_reason, blocked_code, adjudicated,
-          idempotency_key, total_tokens, total_cost_milli, heartbeat_at, created_at, claimed_at, finished_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          idempotency_key, total_tokens, total_cost_milli, heartbeat_at, injected_kb_ids, created_at, claimed_at, finished_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id, row.project_id, row.team_id, row.assignee_id, row.title, row.type, row.brief, row.status,
         row.result, row.review_note, row.reject_reason, row.reject_count, row.blocked_reason, row.blocked_code,
         row.adjudicated, row.idempotency_key, row.total_tokens, row.total_cost_milli, row.heartbeat_at,
-        row.created_at, row.claimed_at, row.finished_at,
+        row.injected_kb_ids, row.created_at, row.claimed_at, row.finished_at,
       );
   }
   /** 状态迁移专用写入口（domain 层 transitionTask 调用），同时更新心跳 */
@@ -255,12 +256,12 @@ export class Repos {
       .prepare(
         `UPDATE tasks SET status=?, assignee_id=?, result=?, review_note=?, reject_reason=?, reject_count=?,
           blocked_reason=?, blocked_code=?, adjudicated=?, total_tokens=?, total_cost_milli=?,
-          heartbeat_at=?, claimed_at=?, finished_at=? WHERE id=?`,
+          heartbeat_at=?, injected_kb_ids=?, claimed_at=?, finished_at=? WHERE id=?`,
       )
       .run(
         next.status, next.assignee_id, next.result, next.review_note, next.reject_reason, next.reject_count,
         next.blocked_reason, next.blocked_code, next.adjudicated, next.total_tokens, next.total_cost_milli,
-        next.heartbeat_at, next.claimed_at, next.finished_at, id,
+        next.heartbeat_at, next.injected_kb_ids, next.claimed_at, next.finished_at, id,
       );
   }
   /** 累计任务总耗缓存（须与 ledger 同事务调用，§5） */
@@ -373,12 +374,39 @@ export class Repos {
   listKb(): KbRow[] {
     return this.db.prepare('SELECT * FROM kb_entries ORDER BY created_at, id').all() as unknown as KbRow[];
   }
+  getKb(id: string): KbRow | undefined {
+    return this.db.prepare('SELECT * FROM kb_entries WHERE id = ?').get(id) as unknown as KbRow | undefined;
+  }
   insertKb(row: KbRow): void {
     this.db
       .prepare(
-        'INSERT INTO kb_entries (id, scope, team_id, owner_member_id, kind, title, content, tags, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO kb_entries (id, title, body, scope, scope_id, tags, enabled, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
       )
-      .run(row.id, row.scope, row.team_id, row.owner_member_id, row.kind, row.title, row.content, row.tags, row.created_at);
+      .run(row.id, row.title, row.body, row.scope, row.scope_id, row.tags, row.enabled, row.created_at, row.updated_at);
+  }
+  updateKb(row: KbRow): void {
+    this.db
+      .prepare(
+        'UPDATE kb_entries SET title=?, body=?, scope=?, scope_id=?, tags=?, enabled=?, updated_at=? WHERE id=?',
+      )
+      .run(row.title, row.body, row.scope, row.scope_id, row.tags, row.enabled, row.updated_at, row.id);
+  }
+  deleteKb(id: string): void {
+    this.db.prepare('DELETE FROM kb_entries WHERE id = ?').run(id);
+  }
+  /** 记录本单注入的知识条目（与既有记录取并集，覆盖执行/重做多次尝试，§10 审计） */
+  addTaskInjectedKb(id: string, kbIds: string[]): void {
+    if (!kbIds.length) return;
+    const cur = this.getTask(id);
+    if (!cur) return;
+    let existing: string[] = [];
+    try {
+      existing = JSON.parse(cur.injected_kb_ids || '[]') as string[];
+    } catch {
+      existing = [];
+    }
+    const merged = [...new Set([...existing, ...kbIds])];
+    this.db.prepare('UPDATE tasks SET injected_kb_ids=? WHERE id=?').run(JSON.stringify(merged), id);
   }
 
   /* ----- settings ----- */
