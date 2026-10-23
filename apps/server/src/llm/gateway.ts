@@ -1,4 +1,5 @@
 import { LLM_GUARD, tokenCostMilli, type LedgerStage, type TaskStepKind } from '@swarm/shared';
+import { checkLowBalance } from '../domain/costService';
 import { decryptKey } from '../store/crypto';
 import type { ApiRow, Repos } from '../store/repositories';
 import type { Logger } from '../logger';
@@ -135,6 +136,8 @@ export class LlmGateway {
           }
         });
         this.breaker.onSuccess(params.api.id);
+        // G-08 旁路：回账后做一次低余额预警检查（同事务外、失败吞掉记日志，不拖慢回账主路径）
+        checkLowBalance(repos, params.workspaceId ?? 'ws_default', this.logger);
         this.logger.info('llm', `调用成功 stage=${params.stage} tokens=${total}`, {
           taskId: params.taskId,
           apiId: params.api.id,

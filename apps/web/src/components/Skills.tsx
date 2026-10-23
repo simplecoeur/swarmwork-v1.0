@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { fetchRegistry, fetchSkills } from '../api';
 import AssetRefPicker from './AssetRefPicker';
+import EstimateLine from './EstimateLine';
 import { Badge, Button, Checkbox, Dialog, EmptyState, Input, Select, Spinner, Textarea } from './ui';
 import type { AssetRef, RegistryRole, SkillInputField, SkillListItem } from '../types';
 
@@ -398,7 +399,16 @@ export default function Skills() {
         </div>
         {!loaded && <p><Spinner label="加载中…" /></p>}
         {loaded && own.length === 0 && (
-          <EmptyState>本空间还没有自建技能。点「新建技能」写一个，或到下方平台库安装官方技能。</EmptyState>
+          <EmptyState
+            example={<>示例技能：爆款标题生成 · 文案 · 参数表（剧名/题材/关键剧情）→ 编号标题列表</>}
+            action={
+              <Button size="small" onClick={startCreate}>
+                ＋ 新建技能
+              </Button>
+            }
+          >
+            本空间还没有自建技能。把你反复用的提示词存成技能，团队发单时一键套用；也可以到下方平台库安装官方技能。
+          </EmptyState>
         )}
         {own.map((s) => skillCard(s, true))}
       </div>
@@ -641,6 +651,7 @@ export default function Skills() {
                 <AssetRefPicker value={assetRefs} onChange={setAssetRefs} />
               </>
             )}
+            <EstimateLine skillId={dispatchSkill.id} />
             <div style={{ marginTop: 12 }}>
               <Button onClick={submitDispatch}>
                 {dispatchMode === 'test' ? '开始试运行' : '发单'}

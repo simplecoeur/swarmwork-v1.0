@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { fetchLedgerView } from '../api';
+import { fetchCostSettings, fetchLedgerView, requestRaw } from '../api';
 import { yuan } from '../utils';
 import ReportModal, { buildReport } from './ReportModal';
 import type { ReportData } from './ReportModal';
 import { Badge, Button, Input, Select, Spinner } from './ui';
-import type { LedgerViewItem } from '../types';
+import type { CostSummary, LedgerViewItem } from '../types';
 
 export default function CostCenter() {
   const { S, post, refresh, toast, apiName, teamName, memberName } = useApp();
@@ -39,6 +39,7 @@ export default function CostCenter() {
 
   return (
     <>
+      <CostSummaryCard />
       <div className="card">
         <h2>成本总览</h2>
         <div className="kv">
@@ -178,6 +179,86 @@ export default function CostCenter() {
 
       {report && <ReportModal report={report} onClose={() => setReport(null)} />}
     </>
+  );
+}
+
+/**
+ * 人话用量摘要卡（G-08）：数据来自 GET /api/cost/settings 的 summary 段（服务端由 purchases/ledger 推导）。
+ * 当前余额（自有/体验分开）、约还能跑 N 单、按近 30 天速度约够 M 天 + 低余额阈值设置入口。
+ */
+function CostSummaryCard() {
+  const { S, toast, refresh } = useApp();
+  const [summary, setSummary] = useState<CostSummary | null>(null);
+  const [threshold, setThreshold] = useState('');
+  const [effective, setEffective] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetchCostSettings();
+      setSummary(r.summary);
+      setEffective(r.effectiveThresholdYuan);
+      setThreshold(r.lowBalanceThresholdYuan === null ? '' : String(r.lowBalanceThresholdYuan));
+    } catch {
+      /* 拉取失败保持旧值 */
+    }
+  }, []);
+
+  // 任务/采购变化（state 轮询刷新）时同步摘要
+  useEffect(() => {
+    load();
+  }, [load, S?.tasks.length, S?.purchases.length, S?.ledger.length]);
+
+  async function saveThreshold() {
+    const v = threshold.trim();
+    const num = v === '' ? null : Number(v);
+    if (num !== null && !(num >= 0)) return toast('阈值要 ≥ 0，或留空恢复默认');
+    try {
+      await requestRaw('PUT', '/api/cost/settings', { lowBalanceThresholdYuan: num });
+      toast(num === null ? '已恢复默认预警线（最近一笔采购额的 20%）' : '预警线已保存');
+      load();
+      refresh();
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  if (!summary) return null;
+  return (
+    <div className="card">
+      <h2>用量摘要 <span className="tag">人话版：还剩多少、还能跑多久</span></h2>
+      <div className="kv">
+        <div>
+          <b>{yuan(summary.balanceYuan)}</b>
+          <span>自有余额（体验额度另有 {yuan(summary.trialBalanceYuan)}）</span>
+        </div>
+        <div>
+          <b>{summary.approxTasksRemaining === null ? '—' : `约 ${summary.approxTasksRemaining} 单`}</b>
+          <span>按近 30 天单均成本 {yuan(summary.avgCostPerTaskYuan)} 估算</span>
+        </div>
+        <div>
+          <b>{summary.approxDaysRemaining === null ? '—' : `约 ${summary.approxDaysRemaining} 天`}</b>
+          <span>按日均燃烧 {yuan(summary.burnPerDayYuan)}/天估算</span>
+        </div>
+      </div>
+      <div className="row" style={{ alignItems: 'flex-end', marginTop: 8 }}>
+        <div style={{ flex: '0 1 260px' }}>
+          <label>低余额预警线（元，余额跌破时站内提醒一次；留空 = 默认最近一笔采购额的 20%）</label>
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            value={threshold}
+            onChange={(e) => setThreshold(e.target.value)}
+            placeholder={effective === null ? '当前未启用预警' : `当前生效 ${effective}`}
+          />
+        </div>
+        <div>
+          <Button variant="blue" onClick={saveThreshold}>
+            保存预警线
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

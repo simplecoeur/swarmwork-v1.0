@@ -2,6 +2,7 @@ import { useEffect, useState} from 'react';
 import { useApp} from '../context';
 import { fetchRegistry} from '../api';
 import AssetRefPicker from './AssetRefPicker';
+import EstimateLine from './EstimateLine';
 import { Button, Input, Select, Tabs, Textarea} from './ui';
 import type { AssetRef, RegistryTaskType} from '../types';
 
@@ -165,6 +166,7 @@ onChange={(e) => setReferences(e.target.value)}
 />
 <label>资产引用（可按分段引用，发单时按当前版本落快照）</label>
 <AssetRefPicker value={assetRefs} onChange={setAssetRefs} />
+<EstimateLine type={type} />
 <div style={{ marginTop: 10}}>
 <Button onClick={createTask}>发布任务</Button>
 </div>
@@ -238,6 +240,7 @@ onChange={(e) => setBatchReferences(e.target.value)}
 />
 <label>资产引用（每单共用，可按分段引用）</label>
 <AssetRefPicker value={batchAssetRefs} onChange={setBatchAssetRefs} />
+<EstimateLine type={type} />
 <div style={{ marginTop: 10}}>
 <Button onClick={createBatch}>批量发布</Button>
 </div>
