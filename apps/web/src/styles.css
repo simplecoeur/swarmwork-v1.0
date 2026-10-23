@@ -134,7 +134,23 @@ a.btn{
 }
 a.btn:active{ transform:translate(3px,3px); box-shadow:none; }
 a.btn.blue{ background:var(--blue); color:#fff; }
+a.btn.gray{ background:var(--panel); color:var(--ink); }
 a.btn.small{ padding:4px 10px; font-size:12px; border-width:2px; }
+/* M7/M8：提醒铃铛（顶栏内相对定位，未读角标 + 下拉面板，沿用纸面/硬阴影语言） */
+.bell-wrap{ position:relative; }
+.bell-badge{
+  position:absolute; top:-7px; right:-7px; min-width:19px; height:19px; padding:0 4px;
+  background:var(--accent); color:#fff; border:2px solid var(--line);
+  font-size:11px; font-weight:900; line-height:15px; text-align:center;
+}
+.bell-panel{
+  position:absolute; right:0; top:calc(100% + 10px); width:350px; max-width:88vw; z-index:60;
+  background:var(--panel); border:3px solid var(--line); box-shadow:var(--shadow);
+  padding:12px 14px; max-height:60vh; overflow:auto; text-align:left;
+}
+.bell-item{ border-top:2px dashed var(--line); padding:7px 0; font-size:13px; }
+.bell-item:first-of-type{ border-top:none; }
+.bell-item.unread{ font-weight:700; }
 /* 成员表单（M5）：组块内的分隔条目 */
 .memberform{ border-top:2px dashed var(--line); padding:8px 0 4px; margin-top:8px; }
 .task .meta { font-size:12px; color:var(--ink-soft); margin-top:4px; line-height:1.7; }

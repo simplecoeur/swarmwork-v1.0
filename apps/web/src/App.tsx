@@ -10,6 +10,9 @@ import CostCenter from './components/CostCenter';
 import KnowledgeBase from './components/KnowledgeBase';
 import Settings from './components/Settings';
 import Admin from './components/Admin';
+import Skills from './components/Skills';
+import Assets from './components/Assets';
+import NotificationBell from './components/NotificationBell';
 import NewWorkspaceModal from './components/NewWorkspace';
 import { AuthGate, ChangePasswordGate } from './components/AuthGate';
 import type { TabKey } from './types';
@@ -74,11 +77,14 @@ function Shell() {
         </div>
         <nav>
           {navBtn('office', '办公室')}
+          {navBtn('skills', '技能')}
+          {navBtn('assets', '资产库')}
           {navBtn('kb', '知识库')}
           {navBtn('cost', '成本中心')}
           {navBtn('settings', '设置后台')}
           {user?.isPlatformAdmin && navBtn('admin', '管理台')}
         </nav>
+        <NotificationBell />
         <div className="userinfo">
           <span>
             {user?.displayName}（{user?.email}）{user?.isPlatformAdmin ? ' · 平台管理员' : ''}
@@ -120,6 +126,16 @@ function Shell() {
                 <Projects />
                 <TaskWall />
                 <Results />
+              </section>
+            )}
+            {tab === 'skills' && (
+              <section>
+                <Skills />
+              </section>
+            )}
+            {tab === 'assets' && (
+              <section>
+                <Assets />
               </section>
             )}
             {tab === 'kb' && (

@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
+import { fetchChannelPushes, fetchChannels, requestRaw } from '../api';
 import RegistryCard from './RegistryCard';
-import type { ApiItem, Member, Team } from '../types';
+import type { ApiItem, ChannelInfo, ChannelPush, Member, Team } from '../types';
 
 const PROVIDERS = ['deepseek', 'openai', 'anthropic', 'custom'];
 const ROLES = ['组长', '研究员', '文案', '程序员', '审核'];
@@ -462,6 +463,8 @@ export default function Settings() {
 
       <RegistryCard />
 
+      <ChannelCard />
+
       <div className="card">
         <h2>运行参数</h2>
         <div className="row">
@@ -504,5 +507,143 @@ export default function Settings() {
         </div>
       </div>
     </>
+  );
+}
+
+/* ---------------- 渠道绑定（M7：MJ 直推） ---------------- */
+function ChannelCard() {
+  const { toast } = useApp();
+  const [channel, setChannel] = useState<ChannelInfo | null>(null);
+  const [pushes, setPushes] = useState<ChannelPush[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [chs, ps] = await Promise.all([fetchChannels(), fetchChannelPushes()]);
+      setChannel(chs.find((c) => c.type === 'mj') ?? chs[0] ?? null);
+      setPushes(ps);
+    } catch {
+      /* 拉取失败保持旧状态 */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function refreshPush(p: ChannelPush) {
+    let res: Record<string, unknown>;
+    try {
+      res = await requestRaw('POST', `/api/channels/pushes/${p.id}/refresh`);
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
+    const m = res.metrics as { ok?: boolean; message?: string; metrics?: Record<string, unknown> } | undefined;
+    toast(`回查：${m?.message ?? ''}${m?.metrics ? ` · 指标 ${JSON.stringify(m.metrics)}` : ''}`);
+    load();
+  }
+
+  return (
+    <div className="card">
+      <h2>渠道绑定（MJ 直推） <span className="tag">绑定后成果库可一键把成果直推到 MJ 平台；令牌加密保存、页面不回显</span></h2>
+      {!loaded && <p className="hint">加载中…</p>}
+      {loaded && channel && (
+        <ChannelBindForm key={`${channel.baseUrl}|${channel.account}|${channel.bound}`} channel={channel} onSaved={load} />
+      )}
+      {loaded && !channel && <p className="hint">暂无可用渠道。</p>}
+
+      <label style={{ marginTop: 14 }}>推送记录</label>
+      {pushes.length === 0 && <p className="hint">暂无推送记录。在成果库对已完成成果点「推送 MJ」后会出现在这里。</p>}
+      {pushes.map((p) => (
+        <div className="task" key={p.id}>
+          <span className="tt">{p.channelType.toUpperCase()} 推送</span>
+          <span className={`chip ${p.status === 'ok' || p.status === 'success' ? 'done' : p.status === 'failed' ? 'rej' : 'adj'}`}>
+            {p.status}
+          </span>
+          <div className="meta">
+            {p.createdAt.slice(0, 16).replace('T', ' ')}
+            {p.remoteRef ? ` · 远程引用：${p.remoteRef}` : ''}
+            {p.taskId ? ` · 任务 ${p.taskId}` : ''}
+            {p.message ? <><br />{p.message}</> : null}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <button className="btn small gray" onClick={() => refreshPush(p)}>回查指标</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChannelBindForm({
+  channel,
+  onSaved,
+}: {
+  channel: ChannelInfo;
+  onSaved: () => Promise<void>;
+}) {
+  const { post, toast } = useApp();
+  const [baseUrl, setBaseUrl] = useState(channel.baseUrl ?? '');
+  const [token, setToken] = useState('');
+  const [account, setAccount] = useState(channel.account ?? '');
+  const [bindMsg, setBindMsg] = useState('');
+
+  async function bind() {
+    if (!baseUrl.trim()) return toast('先填 MJ 平台地址（baseUrl）');
+    let res: Record<string, unknown>;
+    try {
+      res = await post('/api/channels/bind', {
+        channelType: 'mj',
+        baseUrl: baseUrl.trim(),
+        token: token || undefined,
+        account: account.trim() || undefined,
+      });
+    } catch { return; }
+    const bind = res.bind as { bound?: boolean; accountLabel?: string; message?: string } | undefined;
+    setBindMsg(bind?.message ?? '');
+    setToken('');
+    toast(
+      bind?.bound
+        ? `MJ 已绑定${bind.accountLabel ? `：${bind.accountLabel}` : ''}${bind.message ? ` · ${bind.message}` : ''}`
+        : `绑定未完成：${bind?.message ?? '请检查地址与令牌'}`,
+    );
+    await onSaved();
+  }
+
+  return (
+    <div className="apicard">
+      <div style={{ fontWeight: 900, marginBottom: 4 }}>
+        {channel.name}（{channel.type}）· 当前状态：
+        {channel.bound ? (
+          <span style={{ color: 'var(--teal)' }}>已绑定{channel.account ? `（账号 ${channel.account}）` : ''}</span>
+        ) : (
+          <span className="warn">未绑定</span>
+        )}
+      </div>
+      <div className="row">
+        <div>
+          <label>平台地址 baseUrl</label>
+          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="如：https://mjdramacente.cn" />
+        </div>
+        <div>
+          <label>账号（可空，用于标注绑定身份）</label>
+          <input value={account} onChange={(e) => setAccount(e.target.value)} placeholder="如：MJ Drama 运营号" />
+        </div>
+      </div>
+      <label>访问令牌（密码框；留空 = 不修改已保存的令牌）</label>
+      <input
+        type="password"
+        value={token}
+        onChange={(e) => setToken(e.target.value)}
+        placeholder={channel.hasToken ? '已保存令牌，留空不改' : '尚未填写令牌'}
+      />
+      <div style={{ marginTop: 8 }}>
+        <button className="btn small blue" onClick={bind}>保存绑定</button>
+      </div>
+      {bindMsg && <p className="hint" style={{ marginTop: 6, fontWeight: 700 }}>{bindMsg}</p>}
+    </div>
   );
 }

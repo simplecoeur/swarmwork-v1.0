@@ -1,17 +1,28 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { fetchRegistry } from '../api';
-import type { RegistryTaskType } from '../types';
+import AssetRefPicker from './AssetRefPicker';
+import type { AssetRef, RegistryTaskType } from '../types';
 
 const FALLBACK_TYPES = ['文案', '调研', '代码'];
 
+type Mode = 'task' | 'project' | 'batch';
+
 export default function PublishForm() {
   const { S, post, refresh, toast } = useApp();
-  const [mode, setMode] = useState<'task' | 'project'>('task');
+  const [mode, setMode] = useState<Mode>('task');
   const [title, setTitle] = useState('');
   const [type, setType] = useState('文案');
   const [teamId, setTeamId] = useState('');
   const [brief, setBrief] = useState('');
+  // P1：单任务参考资料 + 资产引用
+  const [references, setReferences] = useState('');
+  const [assetRefs, setAssetRefs] = useState<AssetRef[]>([]);
+  // P1：批量发单（一行一单）
+  const [batchTitles, setBatchTitles] = useState('');
+  const [briefSuffix, setBriefSuffix] = useState('');
+  const [batchReferences, setBatchReferences] = useState('');
+  const [batchAssetRefs, setBatchAssetRefs] = useState<AssetRef[]>([]);
   // 方案下发（项目）模式字段
   const [pName, setPName] = useState('');
   const [pBrief, setPBrief] = useState('');
@@ -44,11 +55,43 @@ export default function PublishForm() {
   async function createTask() {
     if (!title.trim()) return toast('先填标题');
     try {
-      await post('/api/tasks', { title: title.trim(), type, brief, teamId });
+      await post('/api/tasks', {
+        title: title.trim(),
+        type,
+        brief,
+        references: references.trim() ? references : undefined,
+        assetRefs: assetRefs.length ? assetRefs : undefined,
+        teamId,
+      });
     } catch { return; }
     setTitle('');
     setBrief('');
+    setReferences('');
+    setAssetRefs([]);
     toast('已发布，进队列了');
+    refresh();
+  }
+
+  async function createBatch() {
+    const titles = batchTitles
+      .split('\n')
+      .map((t) => t.trim())
+      .filter(Boolean);
+    if (!titles.length) return toast('先填标题（一行一单）');
+    let res: Record<string, unknown>;
+    try {
+      res = await post('/api/tasks/batch', {
+        items: titles.map((t) => ({ title: t })),
+        type,
+        briefSuffix,
+        references: batchReferences.trim() ? batchReferences : undefined,
+        assetRefs: batchAssetRefs.length ? batchAssetRefs : undefined,
+        teamId,
+      });
+    } catch { return; }
+    const n = typeof res.count === 'number' ? res.count : titles.length;
+    setBatchTitles('');
+    toast(`批量发单完成，一共生成 ${n} 单进队列`);
     refresh();
   }
 
@@ -71,7 +114,7 @@ export default function PublishForm() {
     refresh();
   }
 
-  const modeBtn = (m: 'task' | 'project', label: string) => (
+  const modeBtn = (m: Mode, label: string) => (
     <button
       className={`btn small ${mode === m ? '' : 'gray'}`}
       onClick={() => setMode(m)}
@@ -80,15 +123,68 @@ export default function PublishForm() {
     </button>
   );
 
+  const typeTeamRow = (
+    <div className="row">
+      <div>
+        <label>类型</label>
+        <select value={type} onChange={(e) => setType(e.target.value)}>
+          {regTypes.length
+            ? regTypes.map((t) => (
+                <option key={t.typeId} value={t.typeId}>{t.name}</option>
+              ))
+            : FALLBACK_TYPES.map((t) => <option key={t}>{t}</option>)}
+        </select>
+      </div>
+      <div>
+        <label>交给哪个小组</label>
+        <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+          {S.teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+
   return (
     <div className="card" style={{ flex: 1.2 }}>
       <h2>发布真任务</h2>
       <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
         {modeBtn('task', '单任务')}
         {modeBtn('project', '方案下发（项目）')}
+        {modeBtn('batch', '批量发单')}
       </div>
 
-      {mode === 'task' ? (
+      {mode === 'batch' ? (
+        <>
+          <label>标题（一行一单，最多 100 单）</label>
+          <textarea
+            rows={6}
+            placeholder={'给《龙王归来》第1集写英文标题\n给《龙王归来》第2集写英文标题\n给《龙王归来》第3集写英文标题'}
+            value={batchTitles}
+            onChange={(e) => setBatchTitles(e.target.value)}
+          />
+          {typeTeamRow}
+          <label>统一说明后缀（拼到每单说明后面）</label>
+          <textarea
+            rows={2}
+            placeholder="如：统一要求：标题不超过 60 字符，带悬念钩子"
+            value={briefSuffix}
+            onChange={(e) => setBriefSuffix(e.target.value)}
+          />
+          <label>参考资料（链接 / 素材说明，每单共用）</label>
+          <textarea
+            rows={2}
+            placeholder="参考链接、原片信息、竞品标题……"
+            value={batchReferences}
+            onChange={(e) => setBatchReferences(e.target.value)}
+          />
+          <label>资产引用（每单共用，可按分段引用）</label>
+          <AssetRefPicker value={batchAssetRefs} onChange={setBatchAssetRefs} />
+          <div style={{ marginTop: 10 }}>
+            <button className="btn" onClick={createBatch}>批量发布</button>
+          </div>
+          <p className="hint">每行标题生成一单，共用上面的类型 / 小组 / 说明后缀 / 参考资料。</p>
+        </>
+      ) : mode === 'task' ? (
         <>
           <label>标题</label>
           <input
@@ -96,24 +192,7 @@ export default function PublishForm() {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
-          <div className="row">
-            <div>
-              <label>类型</label>
-              <select value={type} onChange={(e) => setType(e.target.value)}>
-                {regTypes.length
-                  ? regTypes.map((t) => (
-                      <option key={t.typeId} value={t.typeId}>{t.name}</option>
-                    ))
-                  : FALLBACK_TYPES.map((t) => <option key={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label>交给哪个小组</label>
-              <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-                {S.teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-            </div>
-          </div>
+          {typeTeamRow}
           <label>说明（越具体产出越好）</label>
           <textarea
             rows={4}
@@ -121,6 +200,15 @@ export default function PublishForm() {
             value={brief}
             onChange={(e) => setBrief(e.target.value)}
           />
+          <label>参考资料（链接 / 素材说明，会以【参考资料】段拼入说明）</label>
+          <textarea
+            rows={2}
+            placeholder="参考链接、原片信息、竞品标题……"
+            value={references}
+            onChange={(e) => setReferences(e.target.value)}
+          />
+          <label>资产引用（可按分段引用，发单时按当前版本落快照）</label>
+          <AssetRefPicker value={assetRefs} onChange={setAssetRefs} />
           <div style={{ marginTop: 10 }}>
             <button className="btn" onClick={createTask}>发布任务</button>
           </div>

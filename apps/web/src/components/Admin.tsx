@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
 import { requestRaw } from '../api';
 import { yuan } from '../utils';
-import type { AdminUser, AdminWorkspace, IndustryPack, TrialApi } from '../types';
+import type { AdminUser, AdminWorkspace, IndustryPack, SkillListItem, TrialApi } from '../types';
 
 const PROVIDERS = ['deepseek', 'openai', 'anthropic', 'custom'];
 
@@ -195,6 +195,9 @@ export default function Admin() {
         </table>
       </div>
 
+      {/* ---------- skill 上架审核（M7） ---------- */}
+      <SkillReviewCard />
+
       {/* ---------- 行业包（只读） ---------- */}
       <div className="card">
         <h2>行业包 <span className="tag">只读列表；包的编辑走服务端种子/接口，本台不做编辑</span></h2>
@@ -227,6 +230,74 @@ export default function Admin() {
         </div>
       )}
     </>
+  );
+}
+
+/* ---------------- skill 上架审核（M7） ---------------- */
+function SkillReviewCard() {
+  const { post, toast } = useApp();
+  const [pending, setPending] = useState<SkillListItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const j = await requestRaw('GET', '/api/admin/skills/pending');
+      setPending((j.skills as SkillListItem[]) ?? []);
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoaded(true);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function approve(s: SkillListItem) {
+    try {
+      await post(`/api/admin/skills/${s.id}/approve`);
+    } catch { return; }
+    toast(`已通过「${s.name}」，已上架平台库`);
+    load();
+  }
+
+  async function reject(s: SkillListItem) {
+    const reason = window.prompt(`驳回「${s.name}」的原因（会记入审计）：`, '');
+    if (reason === null) return;
+    try {
+      await post(`/api/admin/skills/${s.id}/reject`, { reason });
+    } catch { return; }
+    toast(`已驳回「${s.name}」，退回提交方空间可见状态`);
+    load();
+  }
+
+  return (
+    <div className="card">
+      <h2>Skill 上架审核 <span className="tag">用户提交上架的技能在此过审：通过 → 进平台库公开；驳回 → 退回本空间可见</span></h2>
+      {!loaded && <p className="hint">加载中…</p>}
+      {loaded && pending.length === 0 && <p className="hint">暂无待审核的 skill。</p>}
+      {pending.map((s) => (
+        <div className="task" key={s.id}>
+          <span className="tt">{s.name}</span>
+          <span className="chip">{s.role}</span>
+          <span className="chip">v{s.version}</span>
+          <span className="chip adj">待审核</span>
+          <div className="meta">
+            {s.description || '（无说明）'}
+            <br />
+            slug：{s.slug} · 参数 {(s.inputSchema ?? []).length} 个 · 提交于 {s.updatedAt.slice(0, 16).replace('T', ' ')}
+            {s.changelog ? <><br />变更说明：{s.changelog}</> : null}
+          </div>
+          <pre className="result" style={{ maxHeight: 160 }}>{s.promptTemplate}</pre>
+          <button className="btn small green" onClick={() => approve(s)}>通过上架</button>{' '}
+          <button className="btn small gray" onClick={() => reject(s)}>驳回</button>
+        </div>
+      ))}
+      <div style={{ marginTop: 8 }}>
+        <button className="btn small gray" onClick={load}>刷新</button>
+      </div>
+    </div>
   );
 }
 

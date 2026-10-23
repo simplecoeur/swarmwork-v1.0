@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
+import { fetchLedgerView } from '../api';
 import { yuan } from '../utils';
 import ReportModal, { buildReport } from './ReportModal';
 import type { ReportData } from './ReportModal';
+import type { LedgerViewItem } from '../types';
 
 export default function CostCenter() {
   const { S, post, refresh, toast, apiName, teamName, memberName } = useApp();
@@ -165,7 +167,62 @@ export default function CostCenter() {
         )}
       </div>
 
+      <LedgerViewCard />
+
       {report && <ReportModal report={report} onClose={() => setReport(null)} />}
     </>
+  );
+}
+
+/**
+ * 工作台账（M8 §5.1）：GET /api/ledger-view 的统一时间线（任务事件 + 操作审计），
+ * 最近 50 条展示；按月导出走 /api/ledger-view/export?month=YYYY-MM 直下 CSV。
+ */
+function LedgerViewCard() {
+  const [items, setItems] = useState<LedgerViewItem[]>([]);
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setItems(await fetchLedgerView());
+    } catch {
+      /* 拉取失败保持旧列表 */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="card">
+      <h2>工作台账 <span className="tag">任务事件与操作审计的统一时间线（最近 50 条）</span></h2>
+      <div className="row" style={{ alignItems: 'flex-end', marginBottom: 10 }}>
+        <div style={{ flex: '0 0 200px' }}>
+          <label>导出月份</label>
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        </div>
+        <div>
+          <a className="btn small blue" href={`/api/ledger-view/export?month=${month}`} download>
+            导出该月台账 CSV
+          </a>{' '}
+          <button className="btn small gray" onClick={load}>刷新时间线</button>
+        </div>
+      </div>
+      {!loaded && <p className="hint">加载中…</p>}
+      {loaded && items.length === 0 && <p className="hint">暂无台账记录。</p>}
+      {items.slice(0, 50).map((it, i) => (
+        <div className="subtask" key={`${it.ts}-${i}`} style={{ cursor: 'default' }}>
+          <span className="meta">{it.ts.slice(0, 16).replace('T', ' ')}</span>{' '}
+          <span className={`chip ${it.kind === 'audit' ? 'rev' : 'run'}`}>
+            {it.kind === 'audit' ? '操作审计' : '任务事件'}
+          </span>{' '}
+          <span>{it.text}</span>
+        </div>
+      ))}
+    </div>
   );
 }

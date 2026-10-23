@@ -1,11 +1,21 @@
 import type {
   AppState,
+  AppNotification,
+  Asset,
+  AssetType,
   AuthUser,
+  ChannelInfo,
+  ChannelPush,
+  Delivery,
   IndustryPack,
   KbEntry,
+  LedgerViewItem,
+  PipelineTemplate,
   Presets,
   RegistryRole,
   RegistryTaskType,
+  ResultItem,
+  SkillListItem,
   Workspace,
 } from './types';
 
@@ -85,4 +95,70 @@ export async function fetchRegistry(): Promise<RegistryResult> {
 export async function fetchIndustryPacks(): Promise<IndustryPack[]> {
   const j = await requestRaw('GET', '/api/industry-packs');
   return (j.packs as IndustryPack[]) ?? [];
+}
+
+/* ---------- M7/M8 ---------- */
+
+/** 本空间 skill + 平台库合并列表（行带 installedCopyId） */
+export async function fetchSkills(): Promise<SkillListItem[]> {
+  const j = await requestRaw('GET', '/api/skills');
+  return (j.skills as SkillListItem[]) ?? [];
+}
+
+export async function fetchAssetTypes(): Promise<AssetType[]> {
+  const j = await requestRaw('GET', '/api/asset-types');
+  return (j.assetTypes as AssetType[]) ?? [];
+}
+
+export async function fetchAssets(): Promise<Asset[]> {
+  const j = await requestRaw('GET', '/api/assets');
+  return (j.assets as Asset[]) ?? [];
+}
+
+export interface NotificationsResult {
+  notifications: AppNotification[];
+  unread: number;
+}
+
+export async function fetchNotifications(): Promise<NotificationsResult> {
+  const j = await requestRaw('GET', '/api/notifications');
+  return {
+    notifications: (j.notifications as AppNotification[]) ?? [],
+    unread: Number(j.unread ?? 0),
+  };
+}
+
+/** 成果库（飞轮）：q 关键词 / verifiedOnly 只看已验证有效 */
+export async function fetchResults(q: string, verifiedOnly: boolean): Promise<ResultItem[]> {
+  const qs = new URLSearchParams();
+  if (q.trim()) qs.set('q', q.trim());
+  if (verifiedOnly) qs.set('verified', '1');
+  const s = qs.toString();
+  const j = await requestRaw('GET', '/api/results' + (s ? `?${s}` : ''));
+  return (j.results as ResultItem[]) ?? [];
+}
+
+export async function fetchDeliveries(): Promise<Delivery[]> {
+  const j = await requestRaw('GET', '/api/deliveries');
+  return (j.deliveries as Delivery[]) ?? [];
+}
+
+export async function fetchChannels(): Promise<ChannelInfo[]> {
+  const j = await requestRaw('GET', '/api/channels');
+  return (j.channels as ChannelInfo[]) ?? [];
+}
+
+export async function fetchChannelPushes(): Promise<ChannelPush[]> {
+  const j = await requestRaw('GET', '/api/channels/pushes');
+  return (j.pushes as ChannelPush[]) ?? [];
+}
+
+export async function fetchPipelineTemplates(): Promise<PipelineTemplate[]> {
+  const j = await requestRaw('GET', '/api/pipelines/templates');
+  return (j.templates as PipelineTemplate[]) ?? [];
+}
+
+export async function fetchLedgerView(): Promise<LedgerViewItem[]> {
+  const j = await requestRaw('GET', '/api/ledger-view');
+  return (j.timeline as LedgerViewItem[]) ?? [];
 }
