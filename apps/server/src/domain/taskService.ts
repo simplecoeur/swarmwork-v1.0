@@ -6,6 +6,7 @@ import {
   type TaskStatus as TaskStatusT,
 } from '@swarm/shared';
 import type { Repos, TaskRow } from '../store/repositories';
+import { recordTaskStep } from './taskSteps';
 
 export class DomainError extends Error {
   constructor(
@@ -95,6 +96,26 @@ export function transitionTask(
     to_status: to,
     note: actor?.note ?? '',
   });
+  // G-04 旁路步：裁决相关迁移各落一步（转待裁决 / 老板裁决通过），失败不阻断迁移（recordTaskStep 内部吞异常）
+  if (to === TaskStatus.ADJUDICATION) {
+    recordTaskStep(repos, {
+      taskId: task.id,
+      workspaceId: task.workspace_id ?? null,
+      kind: 'adjudicated',
+      summary: `转待裁决：${actor?.note ?? ''}`.slice(0, 200),
+      detail: { fromStatus: task.status, toStatus: to, note: actor?.note ?? '', rejectCount: updated.reject_count },
+      callKey: `adjudicated:${task.id}:enter:${updated.reject_count}`,
+    });
+  } else if (task.status === TaskStatus.ADJUDICATION && to === TaskStatus.DONE) {
+    recordTaskStep(repos, {
+      taskId: task.id,
+      workspaceId: task.workspace_id ?? null,
+      kind: 'adjudicated',
+      summary: '老板裁决通过',
+      detail: { fromStatus: task.status, toStatus: to, note: actor?.note ?? '' },
+      callKey: `adjudicated:${task.id}:done`,
+    });
+  }
   return updated;
 }
 

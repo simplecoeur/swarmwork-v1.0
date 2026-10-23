@@ -1,4 +1,4 @@
-import { LLM_GUARD, tokenCostMilli, type LedgerStage } from '@swarm/shared';
+import { LLM_GUARD, tokenCostMilli, type LedgerStage, type TaskStepKind } from '@swarm/shared';
 import { decryptKey } from '../store/crypto';
 import type { ApiRow, Repos } from '../store/repositories';
 import type { Logger } from '../logger';
@@ -24,6 +24,12 @@ export interface GatewayCall<T> {
   /** 调用幂等键：同键已完成的调用直接复用结果且不重复记账（§8） */
   idempotencyKey: string;
   run: (provider: LlmProvider) => Promise<{ text: string; usage: Usage; payload: T }>;
+  /**
+   * G-04 步骤投影（可选）：调用成功后在回账同一事务内落/补全一步，call_key = idempotencyKey，
+   * usage/耗时/cost 与本次 ledger 行同源同值，保证时间线可与账本对账。引擎可在调用前以同
+   * call_key 先落「开始」步，网关在此按 call_key 补全指标（不产生重复步）。
+   */
+  step?: { kind: TaskStepKind; actorMemberId?: string | null; summary: string; detail?: Record<string, unknown> };
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -59,6 +65,7 @@ export class LlmGateway {
 
     const { probe } = this.breaker.beforeCall(params.api.id);
     repos.startLlmCall(params.idempotencyKey, params.api.id);
+    const callStartedAt = Date.now();
     const baseMs = Number(process.env.LLM_RETRY_BASE_MS || LLM_GUARD.RETRY_BASE_MS);
     let lastError: unknown = null;
 
@@ -90,6 +97,42 @@ export class LlmGateway {
             out.usage.estimated ? 1 : 0,
           );
           repos.addTaskTotals(params.taskId, total, costMilli);
+          // G-04：同事务落/补全步骤（与上方 ledger 行同源：同一 usage 与 costMilli）。
+          // 旁路记录失败只记日志，绝不让步骤问题回滚回账或阻断调用结果。
+          if (params.step) {
+            try {
+              const metrics = {
+                summary: params.step.summary,
+                duration_ms: Date.now() - callStartedAt,
+                prompt_tokens: out.usage.promptTokens,
+                completion_tokens: out.usage.completionTokens,
+                cost_milli: costMilli,
+              };
+              const existingStep = repos.getTaskStepByCallKey(params.taskId, params.idempotencyKey);
+              if (existingStep) {
+                repos.updateTaskStepMetrics(existingStep.id, {
+                  ...metrics,
+                  detail: params.step.detail !== undefined ? JSON.stringify(params.step.detail) : undefined,
+                });
+              } else {
+                repos.insertTaskStep({
+                  task_id: params.taskId,
+                  workspace_id: params.workspaceId ?? 'ws_default',
+                  kind: params.step.kind,
+                  actor_member_id: params.step.actorMemberId ?? null,
+                  detail: JSON.stringify(params.step.detail ?? {}),
+                  call_key: params.idempotencyKey,
+                  ...metrics,
+                });
+              }
+            } catch (stepErr) {
+              this.logger.warn(
+                'llm',
+                `任务步骤落库失败（已忽略，不影响回账）：${stepErr instanceof Error ? stepErr.message : String(stepErr)}`,
+                { taskId: params.taskId, apiId: params.api.id },
+              );
+            }
+          }
         });
         this.breaker.onSuccess(params.api.id);
         this.logger.info('llm', `调用成功 stage=${params.stage} tokens=${total}`, {

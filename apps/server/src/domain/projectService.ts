@@ -5,6 +5,7 @@ import type { Logger } from '../logger';
 import { decryptKey } from '../store/crypto';
 import type { Repos, TaskRow } from '../store/repositories';
 import { nowIso, uid } from '../util';
+import { patchTaskStep, recordTaskStep } from './taskSteps';
 
 interface SubtaskSpec {
   title: string;
@@ -83,6 +84,13 @@ export async function createProject(
         api,
         stage: '执行',
         idempotencyKey: `${projectId}:split:0`,
+        // G-04：拆单步与拆单账本行同源（task_id = 项目 id、同一 cost），解析出子任务后再回填清单
+        step: {
+          kind: 'split',
+          actorMemberId: leader.id,
+          summary: '组长拆单完成',
+          detail: { projectName: input.name },
+        },
         run: async (provider) => {
           const r = await provider.chat({
             model: api.model,
@@ -145,6 +153,60 @@ export async function createProject(
     repos.insertTask(row);
     taskIds.push(id);
   }
+  // G-04 时间线步：项目级 split 步回填子任务清单（网关已落步时补全；无可用 API 等兜底路径则在此落 cost=0 的步）
+  const subtaskPlan = specs.map((s, i) => ({ index: i + 1, title: s.title, type: s.type }));
+  patchTaskStep(
+    repos,
+    projectId,
+    `${projectId}:split:0`,
+    {
+      summary: `拆单完成：共 ${specs.length} 个子任务`,
+      detail: { projectName: input.name, subtasks: subtaskPlan },
+    },
+    logger,
+  );
+  recordTaskStep(
+    repos,
+    {
+      taskId: projectId,
+      workspaceId: ws,
+      kind: 'split',
+      actorMemberId: leader?.id ?? null,
+      summary: `拆单完成：共 ${specs.length} 个子任务`,
+      detail: { projectName: input.name, subtasks: subtaskPlan },
+      callKey: `${projectId}:split:0`,
+    },
+    logger,
+  );
+  // 每个子任务落 split 副本步（cost=0，项目拆单成本只记在项目级步上）+ plan 步（本步计划摘要）
+  specs.forEach((spec, i) => {
+    const childId = taskIds[i];
+    recordTaskStep(
+      repos,
+      {
+        taskId: childId,
+        workspaceId: ws,
+        kind: 'split',
+        actorMemberId: leader?.id ?? null,
+        summary: `方案拆单：共 ${specs.length} 个子任务，本单为第 ${i + 1} 个`,
+        detail: { projectId, projectName: input.name, subtasks: subtaskPlan },
+        callKey: `split:${projectId}`,
+      },
+      logger,
+    );
+    recordTaskStep(
+      repos,
+      {
+        taskId: childId,
+        workspaceId: ws,
+        kind: 'plan',
+        summary: `计划第 ${i + 1} 步：《${spec.title}》（${spec.type}）`,
+        detail: { projectId, index: i + 1, title: spec.title, type: spec.type, brief: spec.brief },
+        callKey: `plan:${childId}`,
+      },
+      logger,
+    );
+  });
   logger.info('project', `方案下发：拆为 ${taskIds.length} 个子任务`, { taskId: projectId });
   return { projectId, taskIds };
 }

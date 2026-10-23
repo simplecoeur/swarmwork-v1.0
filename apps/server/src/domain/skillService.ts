@@ -2,6 +2,7 @@ import { TaskStatus, type SkillInputFieldDto, type SkillKbBindingDto} from '@swa
 import { nowIso, uid} from '../util';
 import type { Repos, SkillRow, TaskRow} from '../store/repositories';
 import { DomainError} from './taskService';
+import { recordTaskStep} from './taskSteps';
 
 /**
 * skill 域服务（方案 §7）：skill 渲染成普通任务进现有状态机/账本，引擎与审核机制全复用。
@@ -161,6 +162,15 @@ actor_id: input.userId,
 from_status: null,
 to_status: TaskStatus.PENDING,
 note: input.isTest? `skill 试运行发单（${skill.name} v${skill.version}）`: `skill 发单（${skill.name} v${skill.version}）`,
+});
+// G-04：skill 发单落 plan 步（时间线起点；流水线子任务随后由 runPipeline 补全环节细节）
+recordTaskStep(repos, {
+taskId: id,
+workspaceId,
+kind: 'plan',
+summary: input.isTest? `skill 试运行计划：《${skill.name}》v${skill.version}`: `skill 发单计划：《${skill.name}》v${skill.version}`,
+detail: { title: row.title, type, skillId: skill.id, skillName: skill.name, skillVersion: skill.version},
+callKey: `plan:${id}`,
 });
 return row;
 }

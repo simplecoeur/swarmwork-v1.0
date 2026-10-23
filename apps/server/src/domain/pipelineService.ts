@@ -2,6 +2,7 @@ import { nowIso, uid } from '../util';
 import type { Repos, SkillRow } from '../store/repositories';
 import { createTaskFromSkill, mergeSkillParams } from './skillService';
 import { DomainError } from './taskService';
+import { patchTaskStep, recordTaskStep } from './taskSteps';
 
 /**
  * 成套流水线（方案 §11.1）：流水线 = 预置项目模板 + 一组 skill 的编排，不是新引擎。
@@ -108,6 +109,7 @@ export function runPipeline(
     workspace_id: workspaceId,
   });
   const taskIds: string[] = [];
+  const stepPlan = template.steps.map((s, i) => ({ index: i + 1, title: s.title, type: skills[i].name }));
   template.steps.forEach((step, i) => {
     const task = createTaskFromSkill(repos, {
       skill: skills[i],
@@ -123,6 +125,19 @@ export function runPipeline(
       .prepare('UPDATE tasks SET seq = ? WHERE id = ?')
       .run(i + 1, task.id);
     taskIds.push(task.id);
+    // G-04：流水线子任务落 split 副本步（模板编排即计划来源，cost=0）并补全 plan 步细节（计划卡同源）
+    recordTaskStep(repos, {
+      taskId: task.id,
+      workspaceId,
+      kind: 'split',
+      summary: `流水线「${template.name}」共 ${template.steps.length} 个环节，本单为第 ${i + 1} 个`,
+      detail: { projectId, templateId: template.id, templateName: template.name, subtasks: stepPlan },
+      callKey: `split:${projectId}`,
+    });
+    patchTaskStep(repos, task.id, `plan:${task.id}`, {
+      summary: `计划第 ${i + 1} 步：《${step.title}》（流水线环节）`,
+      detail: { projectId, index: i + 1, title: step.title, skillSlug: step.skillSlug },
+    });
   });
   return { projectId, taskIds };
 }

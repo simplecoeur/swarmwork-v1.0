@@ -11,6 +11,7 @@ import { balanceMilli, trialBalanceMilli} from '../domain/costService';
 import { notifyOwner } from '../domain/notify';
 import { kbCapTokens, selectKbForInjection} from '../domain/kbService';
 import { DomainError, refreshProjectStatus, transitionTask, type TaskGuards} from '../domain/taskService';
+import { patchTaskStep, recordTaskStep} from '../domain/taskSteps';
 import { CircuitOpenError, LlmGateway} from '../llm/gateway';
 import { estimateTokens } from '../llm/parse';
 import type { Logger} from '../logger';
@@ -71,6 +72,13 @@ recoverOnStartup(): void {
 for (const task of this.allTasks()) {
 if (task.status === TaskStatus.RUNNING) {
 this.repos.updateTaskStatus(task.id, TaskStatus.PENDING, { heartbeat_at: null});
+recordTaskStep(this.repos, {
+taskId: task.id,
+workspaceId: task.workspace_id ?? null,
+kind: 'recovered',
+summary: '进程重启回收：执行中任务已重新排队',
+callKey: `recovered:${task.id}:${this.repos.countTaskSteps(task.id, 'recovered') + 1}`,
+}, this.logger);
 this.logger.warn('engine', '启动回收：running 任务回 pending', { taskId: task.id});
 }
 }
@@ -85,6 +93,13 @@ if (task.status!== TaskStatus.RUNNING && task.status!== TaskStatus.REVIEWING) co
 const hb = task.heartbeat_at? new Date(task.heartbeat_at).getTime(): 0;
 if (hb < cutoff) {
 this.repos.updateTaskStatus(task.id, TaskStatus.PENDING, { heartbeat_at: null});
+recordTaskStep(this.repos, {
+taskId: task.id,
+workspaceId: task.workspace_id ?? null,
+kind: 'recovered',
+summary: '失联回收：超过 10 分钟无心跳，任务已重新排队',
+callKey: `recovered:${task.id}:${this.repos.countTaskSteps(task.id, 'recovered') + 1}`,
+}, this.logger);
 this.logger.warn('engine', '回收失联任务（>10 分钟无心跳）回 pending', { taskId: task.id});
 }
 }
@@ -324,6 +339,26 @@ kbSel.entries.map((e) => e.id),
 );
 this.logger.info('engine', `知识库注入 ${kbSel.entries.length} 条（估算 ${kbSel.totalTokens} token）`, { taskId});
 }
+/* G-04 注入步：组装完成即落步，detail 记实际命中的知识条目名与资产名（用户语言，与注入审计同源） */
+{
+const kbNames = kbSel.entries.map((e) => ({ id: e.id, title: e.title}));
+const assetNames = kbSel.assetIds.map((ref) => {
+const assetId = ref.split('@')[0];
+return { ref, name: this.repos.getAsset(assetId)?.name ?? ref};
+});
+recordTaskStep(this.repos, {
+taskId,
+workspaceId: ws,
+kind: 'inject',
+actorMemberId: worker.id,
+summary:
+kbNames.length || assetNames.length
+? `注入知识 ${kbNames.length} 条、资产 ${assetNames.length} 份`
+: '本次无知识/资产注入',
+detail: { kb: kbNames, assets: assetNames, totalTokens: kbSel.totalTokens},
+callKey: `${taskId}:inject:${task.reject_count}`,
+}, this.logger);
+}
 
 /* —— 执行 / 重做阶段 —— */
 const stage = isRedo? ('重做' as const): ('执行' as const);
@@ -364,6 +399,28 @@ personalSection +
 if (isRedo) {
 workerUser += `\n\n上次成果被审核打回，理由：${task.reject_reason || ''}\n请针对该理由修改，重新产出完整成果。`;
 }
+/* G-04：重做先落 retry 步（引用打回理由），再落 execute「开始」步（call_key = 本次调用幂等键，
+   网关返回后按同键补全 usage/耗时/成本，不产生第二条 execute 步） */
+if (isRedo) {
+recordTaskStep(this.repos, {
+taskId,
+workspaceId: ws,
+kind: 'retry',
+actorMemberId: worker.id,
+summary: `按打回意见重做（第 ${task.reject_count} 次打回后）`,
+detail: { rejectReason: task.reject_reason || '', rejectCount: task.reject_count},
+callKey: `retry:${taskId}:${task.reject_count}`,
+}, this.logger);
+}
+recordTaskStep(this.repos, {
+taskId,
+workspaceId: ws,
+kind: 'execute',
+actorMemberId: worker.id,
+summary: isRedo? '开始重做执行': '开始执行',
+detail: { stage, workerName: worker.name, role},
+callKey: `${taskId}:${stage}:${task.reject_count}`,
+}, this.logger);
 let execOut: { text: string};
 try {
 execOut = await this.gateway.call({
@@ -373,6 +430,12 @@ workspaceId: ws,
 api,
 stage,
 idempotencyKey: `${taskId}:${stage}:${task.reject_count}`,
+step: {
+kind: 'execute',
+actorMemberId: worker.id,
+summary: isRedo? '重做执行完成': '执行完成',
+detail: { stage, workerName: worker.name, role},
+},
 run: async (provider) => {
 const r = await provider.chat({
 model: api.model,
@@ -464,6 +527,16 @@ clientNeeds: baseStandards.clientNeeds,
 }
 }
 
+/* G-04：先落 review「开始」步（call_key = 审核调用幂等键），网关返回后补全指标、结论出来后再回填要点摘要 */
+recordTaskStep(this.repos, {
+taskId,
+workspaceId: ws,
+kind: 'review',
+actorMemberId: reviewer.id,
+summary: '开始审核',
+detail: { reviewerName: reviewer.name},
+callKey: `${taskId}:审核:${task.reject_count}`,
+}, this.logger);
 let verdict: { pass: boolean; reason: string};
 try {
 const out = await this.gateway.call<{ pass: boolean; reason: string}>({
@@ -473,6 +546,12 @@ workspaceId: ws,
 api,
 stage: '审核',
 idempotencyKey: `${taskId}:审核:${task.reject_count}`,
+step: {
+kind: 'review',
+actorMemberId: reviewer.id,
+summary: '审核完成',
+detail: { reviewerName: reviewer.name},
+},
 run: async (provider) => {
 const r = await provider.review({
 model: api.model,
@@ -505,6 +584,11 @@ return; // 保持 reviewing，下个 tick 从审核阶段续跑（不重跑执�
 
 const fresh = this.repos.getTask(taskId);
 if (!fresh) return;
+/* G-04：审核结论回填 review 步（要点摘要进 detail，供时间线呈现与验收核对） */
+patchTaskStep(this.repos, taskId, `${taskId}:审核:${task.reject_count}`, {
+summary: verdict.pass? '审核通过': '审核不通过',
+detail: { reviewerName: reviewer.name, pass: verdict.pass, reason: verdict.reason || ''},
+}, this.logger);
 if (this.overBudget(fresh)) {
 this.toAdjudication(fresh, `单任务累计 token 已超预算上限 ${this.params(ws).taskBudgetTokens}`);
 return;
