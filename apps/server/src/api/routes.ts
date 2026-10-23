@@ -96,6 +96,9 @@ const API_TEST_TIMEOUT_MS = 15_000;
 /** 体验额度专用停工文案（§8.1，与 engine 口径一致） */
 export const TRIAL_EXHAUSTED_REASON = '体验额度已用完，请到设置后台填自己的 API Key';
 
+/** 体验额度单笔上限（元，§8.1：小额、¥10 量级；一次性发放、不可续发叠加） */
+export const TRIAL_GRANT_MAX_YUAN = 10;
+
 export interface ApiDeps {
   repos: Repos;
   gateway: LlmGateway;
@@ -1314,6 +1317,16 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const trial = repos.getTrialApi();
     if (!trial) {
       fail(ErrorCode.VALIDATION, '平台体验 API 未配置（先经 POST /api/admin/trial-api 配置体验 API）');
+    }
+    // §8.1 口径：小额（单笔 ≤ ¥10）、一次性、不可续发叠加
+    if (body.amountYuan > TRIAL_GRANT_MAX_YUAN) {
+      fail(ErrorCode.VALIDATION, `体验额度单笔上限 ¥${TRIAL_GRANT_MAX_YUAN}（小额冷启动口径，§8.1）`);
+    }
+    if (repos.trialGrantedSum(trial!.id, body.workspaceId) > 0) {
+      fail(
+        ErrorCode.VALIDATION,
+        '该空间已发放过体验额度：体验额度一次性发放、不可续发叠加（§8.1）；继续使用请空间自备 API Key',
+      );
     }
     repos.insertPurchase(trial!.id, yuanToMilli(body.amountYuan), body.workspaceId, 'trial_grant');
     audit(req, ctx, 'trial_grant', 'workspace', body.workspaceId, `发放体验额度 ${body.amountYuan} 元`);

@@ -455,6 +455,18 @@ describe('M6 Rig B：体验额度 + 注册表端到端 + 个人 KB 注入隔离�
       expect(grant.json.ok).toBe(true);
       expect(grant.json.trialRemainingYuan).toBeCloseTo(0.003, 9);
 
+      /* §8.1 口径：一次性不可续发叠加 + 单笔上限 ¥10 */
+      const grantAgain = await rig.admin.post('/api/admin/trial-grants', {
+        workspaceId: wsT,
+        amountYuan: 0.001,
+      });
+      expect(grantAgain.json.ok).toBe(false);
+      const grantBig = await rig.admin.post('/api/admin/trial-grants', {
+        workspaceId: 'ws_default',
+        amountYuan: 11,
+      });
+      expect(grantBig.json.ok).toBe(false);
+
       const task1 = await clientT.post('/api/tasks', {
         title: '体验第一单',
         type: '文案',

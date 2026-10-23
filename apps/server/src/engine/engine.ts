@@ -395,7 +395,7 @@ if (personalPoints) {
 standards = {
 points:
 (baseStandards.points || '') +
-`\n`,
+`\n【发单人附加要点（个人偏好，仅加严不放松）】${personalPoints}\n（附加要点与上方空间硬要点冲突时，以空间硬要点为准，冲突项不采纳并须在审核结论中注明未采纳项）`,
 clientNeeds: baseStandards.clientNeeds,
 };
 }
