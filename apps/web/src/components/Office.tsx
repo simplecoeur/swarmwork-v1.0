@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../context';
 import PixelOffice from './PixelOffice';
+import CheckinCard from './CheckinCard';
+import BriefingCard from './BriefingCard';
 import { CapabilitiesShelf, OnboardingCard } from './Onboarding';
 import { VisitLinksCard } from './Settings';
 import { yuan } from '../utils';
@@ -153,6 +155,9 @@ export default function Office() {
       <LiveStatusBar />
       <Dock />
       <QuickPublish />
+      {/* v1.3.0 G：签到卡 + 晨报卡（实况栏之后、新手卡之前） */}
+      <CheckinCard />
+      <BriefingCard />
       {/* G-02：新手三步卡（顶部）+ 能力货架（画布下方新区块，画布本身不碰） */}
       <OnboardingCard />
       <div className="card office-card office-hero">

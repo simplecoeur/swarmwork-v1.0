@@ -425,3 +425,76 @@ export async function fetchStyleTemplates(): Promise<import('./types').OfficeSty
   const j = await requestRaw('GET', '/api/office-style/templates');
   return (j.templates as import('./types').OfficeStyleTemplate[]) ?? [];
 }
+
+/* ---------- v1.3.0 G 晨报与签到 ---------- */
+
+export interface CheckinState {
+  checkedToday: boolean;
+  streak: number;
+  /** 本月已签到日期（YYYY-MM-DD） */
+  monthDays: string[];
+  lastCheckinDate: string | null;
+  /** POST /api/checkin 专用：本次是否新建签到 */
+  created?: boolean;
+}
+
+export async function fetchCheckin(): Promise<CheckinState> {
+  const j = await requestRaw('GET', '/api/checkin');
+  return {
+    checkedToday: Boolean(j.checkedToday),
+    streak: Number(j.streak ?? 0),
+    monthDays: (j.monthDays as string[]) ?? [],
+    lastCheckinDate: (j.lastCheckinDate as string | null) ?? null,
+  };
+}
+
+export async function doCheckin(): Promise<CheckinState> {
+  const j = await requestRaw('POST', '/api/checkin');
+  return {
+    checkedToday: Boolean(j.checkedToday),
+    streak: Number(j.streak ?? 0),
+    monthDays: (j.monthDays as string[]) ?? [],
+    lastCheckinDate: (j.lastCheckinDate as string | null) ?? null,
+    created: Boolean(j.created),
+  };
+}
+
+export interface BriefingItem {
+  id: string;
+  date: string;
+  contentMd: string;
+  createdAt: string;
+}
+
+export async function fetchTodayBriefing(): Promise<BriefingItem | null> {
+  const j = await requestRaw('GET', '/api/briefings/today');
+  return (j.briefing as BriefingItem | null) ?? null;
+}
+
+/** 往期晨报（最近 7 份） */
+export async function fetchBriefings(): Promise<BriefingItem[]> {
+  const j = await requestRaw('GET', '/api/briefings');
+  return (j.briefings as BriefingItem[]) ?? [];
+}
+
+export type NewsTopic = 'short_drama' | 'film' | 'ai' | 'general';
+
+export interface DailySettings {
+  briefingEnabled: boolean;
+  briefingTime: string;
+  checkinReminderEnabled: boolean;
+  checkinReminderTime: string;
+  newsTopic: NewsTopic;
+  supervisionItems: string;
+  mailStatus: 'not_configured' | 'configured';
+}
+
+export async function fetchDailySettings(): Promise<DailySettings> {
+  const j = await requestRaw('GET', '/api/daily-settings');
+  return j.settings as DailySettings;
+}
+
+export async function putDailySettings(settings: Partial<DailySettings>): Promise<DailySettings> {
+  const j = await requestRaw('PUT', '/api/daily-settings', { settings });
+  return j.settings as DailySettings;
+}

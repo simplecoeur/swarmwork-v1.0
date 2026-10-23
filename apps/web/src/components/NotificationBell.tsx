@@ -21,6 +21,8 @@ export const NOTIFICATION_TYPE_LABELS: Record<string, string> = {
   transfer: '空间所有权转让',
   skill_featured: '技能精选',
   skill_unfeatured: '取消精选',
+  checkin_reminder: '签到提醒',
+  daily_briefing: '总经理晨报',
 };
 
 export function notificationTypeLabel(type: string): string {

@@ -4,13 +4,16 @@ import {
   fetchApiTokens,
   fetchChannelPushes,
   fetchChannels,
+  fetchDailySettings,
   fetchPreferences,
   fetchVisitLinks,
   fetchWebhookDeliveries,
   fetchWebhooks,
   lookupUserByEmail,
+  putDailySettings,
   putPreference,
   requestRaw,
+  type DailySettings,
 } from '../api';
 import RegistryCard from './RegistryCard';
 import FeedbackDialog from './FeedbackDialog';
@@ -519,6 +522,8 @@ export default function Settings() {
 
       <NotifyPrefsCard />
 
+      <DailySettingsCard />
+
       <WorkspaceTransferCard />
 
       <div className="card">
@@ -1001,6 +1006,138 @@ function OpenApiCard() {
         </div>
       </Dialog>
       {confirmNode}
+    </div>
+  );
+}
+
+/* ---------------- 每日晨报与签到（v1.3.0 G）：GET/PUT /api/daily-settings ---------------- */
+const NEWS_TOPIC_OPTIONS = [
+  { value: 'short_drama', label: '短剧' },
+  { value: 'film', label: '影视娱乐' },
+  { value: 'ai', label: 'AI 行业' },
+  { value: 'general', label: '综合' },
+] as const;
+
+function DailySettingsCard() {
+  const { toast } = useApp();
+  const [settings, setSettings] = useState<DailySettings | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setSettings(await fetchDailySettings());
+    } catch {
+      /* 服务端未就绪时保持空态 */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const patch = (p: Partial<DailySettings>) =>
+    setSettings((s) => (s ? { ...s, ...p } : s));
+
+  async function save() {
+    if (!settings) return;
+    const timeOk = (t: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
+    if (!timeOk(settings.briefingTime) || !timeOk(settings.checkinReminderTime)) {
+      return toast('时间格式不对，请用 HH:MM（如 09:00）');
+    }
+    setSaving(true);
+    try {
+      const saved = await putDailySettings({
+        briefingEnabled: settings.briefingEnabled,
+        briefingTime: settings.briefingTime,
+        checkinReminderEnabled: settings.checkinReminderEnabled,
+        checkinReminderTime: settings.checkinReminderTime,
+        newsTopic: settings.newsTopic,
+        supervisionItems: settings.supervisionItems,
+      });
+      setSettings(saved);
+      toast('每日晨报与签到设置已保存');
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>每日晨报与签到 <span className="tag">总经理每天按时发晨报；忘了签到会站内提醒你</span></h2>
+      {!loaded && <p><Spinner label="加载中…" /></p>}
+      {loaded && !settings && <p className="hint">设置加载失败，稍后刷新重试。</p>}
+      {settings && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+            <span style={{ flex: 1, fontSize: 13.5, fontWeight: 700 }}>总经理晨报</span>
+            <Switch
+              checked={settings.briefingEnabled}
+              onCheckedChange={(on) => patch({ briefingEnabled: on })}
+              ariaLabel="总经理晨报开关"
+            />
+            <span className="hint">{settings.briefingEnabled ? '开' : '关'}</span>
+          </div>
+          <div className="row">
+            <div>
+              <label>晨报时间（HH:MM）</label>
+              <Input
+                type="time"
+                value={settings.briefingTime}
+                onChange={(e) => patch({ briefingTime: e.target.value })}
+              />
+            </div>
+            <div>
+              <label>新闻主题</label>
+              <Select
+                value={settings.newsTopic}
+                onValueChange={(v) => patch({ newsTopic: v as DailySettings['newsTopic'] })}
+                options={NEWS_TOPIC_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+              />
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0' }}>
+            <span style={{ flex: 1, fontSize: 13.5, fontWeight: 700 }}>签到提醒</span>
+            <Switch
+              checked={settings.checkinReminderEnabled}
+              onCheckedChange={(on) => patch({ checkinReminderEnabled: on })}
+              ariaLabel="签到提醒开关"
+            />
+            <span className="hint">{settings.checkinReminderEnabled ? '开' : '关'}</span>
+          </div>
+          <div className="row">
+            <div>
+              <label>签到提醒时间（HH:MM，未签到才提醒）</label>
+              <Input
+                type="time"
+                value={settings.checkinReminderTime}
+                onChange={(e) => patch({ checkinReminderTime: e.target.value })}
+              />
+            </div>
+          </div>
+          <label>督促事项（总经理会在晨报里盯这些事）</label>
+          <Textarea
+            rows={3}
+            placeholder="如：每天发一集短剧"
+            value={settings.supervisionItems}
+            onChange={(e) => patch({ supervisionItems: e.target.value })}
+          />
+          <p className="hint" style={{ marginTop: 8 }}>
+            {settings.mailStatus === 'configured'
+              ? '邮件通道：已接入'
+              : '邮件通道：未接入（晨报与提醒目前只走站内通知）'}
+          </p>
+          <div style={{ marginTop: 8 }}>
+            <Button variant="blue" onClick={save} disabled={saving}>
+              {saving ? '保存中…' : '保存'}
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
