@@ -411,3 +411,60 @@ export interface PipelineTemplateDto {
   commonParams: Array<{ key: string; label: string; required: boolean }>;
   steps: Array<{ skillSlug: string; title: string; available: boolean }>;
 }
+
+/* ---------- G-04 任务过程时间线（v1.2.0） ---------- */
+
+/**
+ * 任务步骤类型：plan 计划（建单/拆单落位）/ split 拆单 / inject 注入组装 /
+ * execute 执行调用 / review 审核调用 / retry 打回重做 / blocked 停工 /
+ * recovered 失联回收 / adjudicated 裁决相关。步骤为只读投影 + 旁路记录，不参与状态机。
+ */
+export type TaskStepKind =
+  | 'plan'
+  | 'split'
+  | 'inject'
+  | 'execute'
+  | 'review'
+  | 'retry'
+  | 'blocked'
+  | 'recovered'
+  | 'adjudicated';
+
+export interface TaskStepDto {
+  id: number;
+  /** 归属任务 id；拆单步的 taskId 为项目 id（与拆单账本行同口径），子任务上另有 split 副本步 */
+  taskId: string;
+  /** 同一 taskId 内的步序（1 起） */
+  seq: number;
+  kind: TaskStepKind;
+  actorMemberId: string | null;
+  summary: string;
+  /** 结构化细节：注入步含 kb/assets 命中名单（名称，用户语言）、审核步含 pass/reason 要点摘要等 */
+  detail: Record<string, unknown>;
+  /** 调用幂等键（Provider 步 = 网关 idempotencyKey），同 (taskId, callKey) 唯一 */
+  callKey: string;
+  durationMs: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  /** 本步成本（厘，与 ledger 对应行同源同值；非调用步为 0） */
+  costMilli: number;
+  costYuan: number;
+  createdAt: string;
+}
+
+/** task_events 状态流水（时间线的辅助轨） */
+export interface TaskTimelineEventDto {
+  id: number;
+  fromStatus: string | null;
+  toStatus: string;
+  actorType: string;
+  actorId: string | null;
+  note: string;
+  createdAt: string;
+}
+
+/** GET /api/tasks/:id/timeline 响应体（steps 为主、events 为辅，各自按时间升序） */
+export interface TaskTimelineDto {
+  steps: TaskStepDto[];
+  events: TaskTimelineEventDto[];
+}

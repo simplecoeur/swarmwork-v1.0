@@ -334,6 +334,24 @@ export interface NotificationRow {
   created_at: string;
 }
 
+/* ----- G-04 任务步骤（task_steps，迁移 008） ----- */
+export interface TaskStepRow {
+  id: number;
+  task_id: string;
+  workspace_id: string | null;
+  seq: number;
+  kind: string;
+  actor_member_id: string | null;
+  summary: string;
+  detail: string;
+  call_key: string;
+  duration_ms: number | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  cost_milli: number;
+  created_at: string;
+}
+
 const now = () => new Date().toISOString();
 const wsOf = (v: string | null | undefined): string => v ?? DEFAULT_WORKSPACE_ID;
 
@@ -556,7 +574,30 @@ export class Repos {
       .run(tokens, costMilli, id);
   }
   setBlocked(id: string, code: BlockedCode | null, reason: string): void {
+    const cur = this.getTask(id);
     this.db.prepare('UPDATE tasks SET blocked_code=?, blocked_reason=? WHERE id=?').run(code, reason, id);
+    // G-04 旁路步：仅在「新进入一种停工」时落 blocked 步（同 code 反复 set 不重复落，避免 tick 刷步）；
+    // 落步失败吞掉不阻断停工主流程（口径同 task_events 旁路）。
+    if (cur && code !== null && cur.blocked_code !== code) {
+      try {
+        const n = this.countTaskSteps(id, 'blocked') + 1;
+        this.insertTaskStep({
+          task_id: id,
+          workspace_id: cur.workspace_id ?? null,
+          kind: 'blocked',
+          actor_member_id: null,
+          summary: `停工：${reason}`.slice(0, 200),
+          detail: JSON.stringify({ code, reason }),
+          call_key: `blocked:${id}:${n}`,
+          duration_ms: null,
+          prompt_tokens: null,
+          completion_tokens: null,
+          cost_milli: 0,
+        });
+      } catch {
+        /* 旁路落步失败不阻断主流程 */
+      }
+    }
   }
   touchHeartbeat(ids: string[]): void {
     if (!ids.length) return;
@@ -1261,5 +1302,73 @@ export class Repos {
     return this.db
       .prepare('SELECT * FROM audit_logs WHERE workspace_id = ? ORDER BY id DESC LIMIT ?')
       .all(workspaceId, limit) as unknown as Array<Record<string, unknown>>;
+  }
+
+  /* ----- 任务步骤（G-04，迁移 008）：旁路记录，只读投影，不参与状态机/回账决策 ----- */
+  /**
+   * 落一步（seq 在同 task_id 内自动递增）。UNIQUE(task_id, call_key) 冲突时抛错——
+   * 调用方（domain/taskSteps 的 recordTaskStep）负责吞掉并记日志，保证重复写步被拒绝且不阻断主流程。
+   */
+  insertTaskStep(row: Omit<TaskStepRow, 'id' | 'seq' | 'created_at'>): TaskStepRow {
+    const r = this.db
+      .prepare(
+        `INSERT INTO task_steps (task_id, workspace_id, seq, kind, actor_member_id, summary, detail,
+           call_key, duration_ms, prompt_tokens, completion_tokens, cost_milli, created_at)
+         VALUES (?,?,(SELECT COALESCE(MAX(seq),0)+1 FROM task_steps WHERE task_id=?),?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.task_id, row.workspace_id, row.task_id, row.kind, row.actor_member_id, row.summary,
+        row.detail, row.call_key, row.duration_ms, row.prompt_tokens, row.completion_tokens,
+        row.cost_milli, now(),
+      );
+    const saved = this.db
+      .prepare('SELECT * FROM task_steps WHERE id = ?')
+      .get(Number(r.lastInsertRowid)) as unknown as TaskStepRow;
+    return saved;
+  }
+  getTaskStepByCallKey(taskId: string, callKey: string): TaskStepRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM task_steps WHERE task_id = ? AND call_key = ?')
+      .get(taskId, callKey) as unknown as TaskStepRow | undefined;
+  }
+  /** 补全已存在步的调用指标（网关回账时把「开始」步补成带 usage/耗时/成本的完整步） */
+  updateTaskStepMetrics(
+    id: number,
+    patch: {
+      summary?: string;
+      detail?: string;
+      duration_ms?: number | null;
+      prompt_tokens?: number | null;
+      completion_tokens?: number | null;
+      cost_milli?: number;
+    },
+  ): void {
+    const cur = this.db.prepare('SELECT * FROM task_steps WHERE id = ?').get(id) as unknown as TaskStepRow | undefined;
+    if (!cur) return;
+    this.db
+      .prepare(
+        'UPDATE task_steps SET summary=?, detail=?, duration_ms=?, prompt_tokens=?, completion_tokens=?, cost_milli=? WHERE id=?',
+      )
+      .run(
+        patch.summary ?? cur.summary,
+        patch.detail ?? cur.detail,
+        patch.duration_ms !== undefined ? patch.duration_ms : cur.duration_ms,
+        patch.prompt_tokens !== undefined ? patch.prompt_tokens : cur.prompt_tokens,
+        patch.completion_tokens !== undefined ? patch.completion_tokens : cur.completion_tokens,
+        patch.cost_milli !== undefined ? patch.cost_milli : cur.cost_milli,
+        id,
+      );
+  }
+  /** 按插入顺序（id 升序 = 时间顺序）取某任务全部步骤 */
+  listTaskSteps(taskId: string): TaskStepRow[] {
+    return this.db
+      .prepare('SELECT * FROM task_steps WHERE task_id = ? ORDER BY id')
+      .all(taskId) as unknown as TaskStepRow[];
+  }
+  countTaskSteps(taskId: string, kind?: string): number {
+    const r = kind
+      ? (this.db.prepare('SELECT COUNT(*) AS c FROM task_steps WHERE task_id = ? AND kind = ?').get(taskId, kind) as { c: number })
+      : (this.db.prepare('SELECT COUNT(*) AS c FROM task_steps WHERE task_id = ?').get(taskId) as { c: number });
+    return r.c;
   }
 }
