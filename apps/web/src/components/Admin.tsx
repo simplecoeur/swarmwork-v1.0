@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { requestRaw } from '../api';
+import { adminFeatureSkill, fetchSkills, requestRaw } from '../api';
 import { yuan } from '../utils';
 import { Badge, Button, Dialog, Field, Input, Select, Spinner, useConfirm } from './ui';
 import type { AdminUser, AdminWorkspace, FeedbackItem, IndustryPack, SkillListItem, TrialApi } from '../types';
@@ -233,6 +233,9 @@ export default function Admin() {
       {/* ---------- skill 上架审核（M7） ---------- */}
       <SkillReviewCard />
 
+      {/* ---------- skill 精选管理（v1.3.0 生态） ---------- */}
+      <SkillFeaturedCard />
+
       {/* ---------- 用户反馈（G-05） ---------- */}
       <FeedbackCard />
 
@@ -444,6 +447,85 @@ function SkillReviewCard() {
           </div>
         </Dialog>
       )}
+    </div>
+  );
+}
+
+/* ---------------- skill 精选管理（v1.3.0 生态） ----------------
+ * 操作走 api.ts 的 adminFeatureSkill(id, featured)（外壳子任务契约，开工后已落地）；
+ * 失败时 toast 抛出的后端原文 message，成功后本地刷新列表。 */
+function SkillFeaturedCard() {
+  const { toast } = useApp();
+  const [items, setItems] = useState<SkillListItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [busyId, setBusyId] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      const all = await fetchSkills();
+      setItems(all.filter((s) => s.ownerType === 'workspace' && s.visibility === 'public'));
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoaded(true);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function toggle(s: SkillListItem, featured: boolean) {
+    setBusyId(s.id);
+    try {
+      await adminFeatureSkill(s.id, featured);
+    } catch (e) {
+      setBusyId('');
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
+    setBusyId('');
+    toast(featured ? `「${s.name}」已晋升官方精选` : `「${s.name}」已取消官方精选`);
+    load();
+  }
+
+  return (
+    <div className="card">
+      <h2>精选管理 <span className="tag">已上架的用户贡献技能可晋升「官方精选」，在平台库置顶成区展示；取消精选即撤下</span></h2>
+      {!loaded && <p><Spinner label="加载中…" /></p>}
+      {loaded && items.length === 0 && <p className="hint">暂无已上架的用户贡献技能。</p>}
+      {items.map((s) => (
+        <div className="task" key={s.id}>
+          <span className="tt">{s.name}</span>
+          <Badge>{s.role}</Badge>
+          <Badge>v{s.version}</Badge>
+          {s.featured && <Badge variant="adj">官方精选</Badge>}
+          <div className="meta">
+            {s.description || '（无说明）'}
+            <br />
+            {s.contributorWorkspaceName || s.contributorName
+              ? `由 ${s.contributorWorkspaceName ?? ''}${s.contributorWorkspaceName && s.contributorName ? ' · ' : ''}${s.contributorName ?? ''} 贡献`
+              : '平台用户贡献'}
+            {' '}· 已被安装 {s.installCount} 次
+            {s.listedAt ? ` · 上架于 ${s.listedAt.slice(0, 16).replace('T', ' ')}` : ''}
+            {s.featuredAt ? ` · 精选于 ${s.featuredAt.slice(0, 16).replace('T', ' ')}` : ''}
+          </div>
+          <div style={{ marginTop: 6 }}>
+            {s.featured ? (
+              <Button size="small" variant="gray" disabled={busyId === s.id} onClick={() => toggle(s, false)}>
+                取消精选
+              </Button>
+            ) : (
+              <Button size="small" variant="green" disabled={busyId === s.id} onClick={() => toggle(s, true)}>
+                晋升官方精选
+              </Button>
+            )}
+          </div>
+        </div>
+      ))}
+      <div style={{ marginTop: 8 }}>
+        <Button size="small" variant="gray" onClick={load}>刷新</Button>
+      </div>
     </div>
   );
 }

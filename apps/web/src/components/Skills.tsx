@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { fetchRegistry, fetchSkills } from '../api';
+import { fetchRegistry, fetchSkillActivity, fetchSkills } from '../api';
 import AssetRefPicker from './AssetRefPicker';
 import EstimateLine from './EstimateLine';
 import ResultView from './ResultView';
 import { SkillParamFields } from './SkillParamFields';
 import { Badge, Button, Checkbox, Dialog, EmptyState, Input, Select, Spinner, Textarea } from './ui';
-import type { AssetRef, RegistryRole, SkillInputField, SkillListItem } from '../types';
+import type { AssetRef, RegistryRole, SkillActivityItem, SkillInputField, SkillListItem } from '../types';
 
 const STATUS_LABEL: Record<string, string> = { draft: '草稿', published: '已发布', archived: '已归档' };
 const VIS_LABEL: Record<string, string> = {
@@ -25,6 +25,33 @@ const KB_SCOPE_LABEL: Record<string, string> = {
 };
 
 type ParamValue = string | number | boolean;
+
+/* ---------------- v1.3.0 生态：最新动态 / 署名 ----------------
+ * 数据走 api.ts 的 fetchSkillActivity() 与 types 的 SkillActivityItem（外壳子任务契约，开工后已落地）。 */
+
+/** 用户贡献署名行：字段齐全时「由 {空间} · {贡献者} 贡献」，任一为空回退「平台用户贡献」 */
+export function contributorLine(s: {
+  contributorName?: string | null;
+  contributorWorkspaceName?: string | null;
+}): string {
+  const ws = s.contributorWorkspaceName?.trim();
+  const name = s.contributorName?.trim();
+  if (ws && name) return `由 ${ws} · ${name} 贡献`;
+  if (ws || name) return `由 ${ws || name} 贡献`;
+  return '平台用户贡献';
+}
+
+/** 相对时间（动态区用）：刚刚 / N 分钟前 / N 小时前 / N 天前，超过 30 天回日期 */
+export function relTime(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return iso ? iso.slice(0, 10) : '';
+  const diff = Date.now() - t;
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  if (diff < 30 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
+  return iso.slice(0, 10);
+}
 
 /* ---------------- 参数表编辑行 ---------------- */
 interface ParamRow {
@@ -142,6 +169,7 @@ function defaultParams(s: SkillListItem): Record<string, ParamValue> {
 export default function Skills() {
   const { S, post, send, toast, refresh, setTab, currentWorkspace, user, openSchedules } = useApp();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
+  const [activity, setActivity] = useState<SkillActivityItem[]>([]);
   const [roles, setRoles] = useState<RegistryRole[]>([]);
   const [loaded, setLoaded] = useState(false);
   // 编辑器：editing=null 且 editorOpen=false 时关闭；editing 为空表示新建
@@ -169,6 +197,7 @@ export default function Skills() {
   useEffect(() => {
     load();
     fetchRegistry().then((r) => setRoles(r.roles)).catch(() => setRoles([]));
+    fetchSkillActivity().then(setActivity).catch(() => setActivity([]));
   }, [load]);
 
   useEffect(() => {
@@ -355,12 +384,26 @@ export default function Skills() {
         </Badge>
         <Badge>{VIS_LABEL[s.visibility] ?? s.visibility}</Badge>
         <Badge>安装 {s.installCount}</Badge>
+        {s.ownerType === 'platform' && <Badge variant="done">官方</Badge>}
+        {s.featured && <Badge variant="adj">官方精选</Badge>}
         {s.sourceSkillId && <Badge>安装副本</Badge>}
         {mine && s.hasNewerSource && <Badge variant="rej">来源有新版</Badge>}
         <div className="meta">
           {s.description || '（无说明）'}
           <br />
           slug：{s.slug} · 更新于 {s.updatedAt.slice(0, 16).replace('T', ' ')}
+          {!mine && s.ownerType === 'workspace' && (
+            <>
+              <br />
+              {contributorLine(s)} · 已被安装 {s.installCount} 次
+            </>
+          )}
+          {mine && s.visibility === 'public' && (
+            <>
+              <br />
+              已上架 · 被安装 {s.installCount} 次
+            </>
+          )}
           {s.verifiedNotes ? (
             <>
               <br />
@@ -409,8 +452,33 @@ export default function Skills() {
     );
   }
 
+  const featuredLib = library.filter((s) => s.featured);
+  const restLib = library.filter((s) => !s.featured);
+
   return (
     <>
+      {activity.length > 0 && (
+        <div className="card">
+          <h2>最新动态 <span className="tag">平台库的上架与官方精选动态</span></h2>
+          {activity.map((a, i) => (
+            <div className="task" key={`${a.skillId}-${a.kind}-${a.at}-${i}`}>
+              <span className="tt">{a.name}</span>
+              {a.kind === 'featured' ? (
+                <Badge variant="adj">官方精选</Badge>
+              ) : (
+                <Badge variant="done">新上架</Badge>
+              )}
+              <div className="meta">
+                {a.kind === 'featured' ? '晋升官方精选' : '上架平台库'} · {relTime(a.at)}
+                {(a.contributorWorkspaceName || a.contributorName) && (
+                  <> · {contributorLine(a)}</>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="card">
         <h2>
           本空间技能{' '}
@@ -445,7 +513,22 @@ export default function Skills() {
       <div className="card">
         <h2>平台库 <span className="tag">官方技能 + 已上架公开技能；安装后在本空间生成副本，来源出新版可一键升级</span></h2>
         {loaded && library.length === 0 && <p className="hint">平台库暂无可安装的技能。</p>}
-        {library.map((s) => skillCard(s, false))}
+        {featuredLib.length > 0 && (
+          <>
+            <h3 style={{ margin: '4px 0 8px', fontSize: 14 }}>⭐ 官方精选</h3>
+            {featuredLib.map((s) => skillCard(s, false))}
+          </>
+        )}
+        {library.length > 0 && (
+          <>
+            <h3 style={{ margin: '14px 0 8px', fontSize: 14 }}>全部上架</h3>
+            {restLib.length > 0 ? (
+              restLib.map((s) => skillCard(s, false))
+            ) : (
+              <p className="hint">除官方精选外，暂无其他上架技能。</p>
+            )}
+          </>
+        )}
       </div>
 
       {/* ---------- 新建 / 编辑 ---------- */}
@@ -617,6 +700,17 @@ export default function Skills() {
           onClose={() => setDispatchSkill(null)}
           title={<>{dispatchMode === 'test' ? '试运行' : '发单'} · {dispatchSkill.name}<Badge>v{dispatchSkill.version}</Badge></>}
         >
+            {dispatchSkill.ownerType === 'platform' && (
+              <p className="hint">
+                <Badge variant="done">官方</Badge> 平台官方技能
+              </p>
+            )}
+            {dispatchSkill.ownerType === 'workspace' && (
+              <p className="hint">
+                {dispatchSkill.featured && <Badge variant="adj">官方精选</Badge>}{' '}
+                {contributorLine(dispatchSkill)} · 已被安装 {dispatchSkill.installCount} 次
+              </p>
+            )}
             {/* 参数表单渲染与定时任务表单共用 SkillParamFields（G-10 复用点） */}
             <SkillParamFields
               fields={dispatchSkill.inputSchema ?? []}

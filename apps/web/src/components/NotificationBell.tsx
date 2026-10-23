@@ -19,6 +19,8 @@ export const NOTIFICATION_TYPE_LABELS: Record<string, string> = {
   webhook_failed: 'Webhook 投递失败',
   impersonation: '管理员代入查看',
   transfer: '空间所有权转让',
+  skill_featured: '技能精选',
+  skill_unfeatured: '取消精选',
 };
 
 export function notificationTypeLabel(type: string): string {
