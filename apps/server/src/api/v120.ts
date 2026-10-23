@@ -4,6 +4,7 @@ import {
   ACCOUNT_DELETION_GRACE_MS,
   AVATAR_LIMITS,
   ErrorCode,
+  EXPORT_LIMITS,
   IMPORT_LIMITS,
   KB_SCOPES,
   SCHEDULE_SCAN_MS,
@@ -47,6 +48,7 @@ import {
   renderDeliveryHtml,
   renderDeliveryPasswordHtml,
 } from '../domain/deliveryService';
+import { buildWorkspaceExport } from '../domain/exportService';
 import { parseAssetSectionsFromFile, parseKbDrafts } from '../domain/importService';
 import { buildVisitPageData, renderShareCardSvg, renderVisitHtml } from '../domain/visitService';
 import { createKbEntry } from '../domain/kbService';
@@ -895,6 +897,46 @@ export function registerV120Routes(
         date: (task!.finished_at ?? task!.created_at).slice(0, 10),
       }),
     );
+  });
+
+  /* ================= G-16 所有者一键全量导出（批次三） =================
+   * POST /api/workspaces/:id/export（所有者本人，非所有者成员 403、非成员 404 不泄漏存在性）→
+   * 同步组装 zip 附件（exportService；密钥零明文）；组装后 >50MB 回 VALIDATION 并提示走
+   * 管理员整库备份通道；落 audit（范围与大小）。 */
+  app.post('/api/workspaces/:id/export', async (req: FastifyRequest, reply: FastifyReply) => {
+    const baseCtx = auth(req);
+    const { id } = req.params as { id: string };
+    const ws = repos.getWorkspace(id);
+    if (!ws || ws.status !== 'active') fail(ErrorCode.NOT_FOUND, '空间不存在', 404);
+    const mine = repos.getMembership(baseCtx.user.id, id);
+    if (!mine || mine.status !== 'active') fail(ErrorCode.NOT_FOUND, '空间不存在', 404);
+    if (mine!.role !== 'owner') fail(ErrorCode.FORBIDDEN, '只有空间所有者可以导出全量数据', 403);
+    const ctx = { ...baseCtx, workspaceId: id };
+    const { buffer, counts, elapsedMs } = await buildWorkspaceExport(repos, id);
+    if (buffer.length > EXPORT_LIMITS.MAX_ZIP_BYTES) {
+      fail(
+        ErrorCode.VALIDATION,
+        `导出包约 ${(buffer.length / 1024 / 1024).toFixed(1)}MB，超过 50MB 上限；请联系平台管理员走整库备份通道导出`,
+      );
+    }
+    audit(
+      req,
+      ctx,
+      'export_workspace',
+      'workspace',
+      id,
+      `全量导出 ${(buffer.length / 1024).toFixed(1)}KB · 任务 ${counts.tasks} / 成果 ${counts.results} / 知识 ${counts.kb} / 资产 ${counts.assets} / skill ${counts.skills}`,
+    );
+    logger.info(
+      'export',
+      `空间 ${id} 全量导出 ${(buffer.length / 1024).toFixed(1)}KB，组装耗时 ${elapsedMs}ms`,
+    );
+    reply.header('content-type', 'application/zip');
+    reply.header(
+      'content-disposition',
+      `attachment; filename="workspace-export-${id}.zip"`,
+    );
+    return reply.send(buffer);
   });
 
   /* ================= G-10 定时任务（批次二） =================

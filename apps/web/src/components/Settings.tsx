@@ -557,6 +557,14 @@ export default function Settings() {
             下载备份（swarm.db）
           </a>
         </div>
+        <p className="hint" style={{ marginTop: 12 }}>
+          三种导出口径别混：成果导出 = 单份成果的 md/csv（在成果库里逐份导）；下方「导出本空间全部数据」
+          = 本空间全量数据包 zip（任务/成果/知识/资产/skill/账本/设置，密钥只出掩码，仅空间所有者）；
+          上方「下载备份」= 整库数据库文件（管理员运维恢复用，含全部空间）。
+        </p>
+        <div style={{ marginTop: 8 }}>
+          <WorkspaceExportButton />
+        </div>
       </div>
 
       <HelpEntryCard />
@@ -678,6 +686,43 @@ export function VisitLinksCard() {
       </div>
       {confirmNode}
     </div>
+  );
+}
+
+/* ---------------- 全量导出（G-16）：所有者一键导出本空间数据包 zip ---------------- */
+function WorkspaceExportButton() {
+  const { S, toast } = useApp();
+  const [busy, setBusy] = useState(false);
+  if (!S?.workspace) return null;
+  const workspaceId = S.workspace.id;
+
+  async function doExport() {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/workspaces/${workspaceId}/export`, { method: 'POST' });
+      if (!r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { error?: { message?: string } };
+        throw new Error(j.error?.message || `导出失败（${r.status}）`);
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `workspace-export-${workspaceId}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast('全量数据包已开始下载');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : '导出失败');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Button variant="blue" disabled={busy} onClick={doExport}>
+      {busy ? '正在组装…' : '导出本空间全部数据（zip）'}
+    </Button>
   );
 }
 

@@ -71,6 +71,11 @@ export const IMPORT_LIMITS = {
   MAX_ASSET_SECTIONS: 200,
 } as const;
 
+/** 全量导出上限（G-16）：组装后 zip 超过此字节数回 VALIDATION，提示走管理员整库备份 */
+export const EXPORT_LIMITS = {
+  MAX_ZIP_BYTES: 50 * 1024 * 1024,
+} as const;
+
 /** 交付/参观链接种类（G-13）：delivery 交付页 | visit 办公室参观页（同一张 delivery_links 表） */
 export const DELIVERY_LINK_KINDS = ['delivery', 'visit'] as const;
 export type DeliveryLinkKind = (typeof DELIVERY_LINK_KINDS)[number];
