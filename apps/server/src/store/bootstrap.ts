@@ -6,6 +6,7 @@ import { nowIso, uid } from '../util';
 import { copySkillSnapshot } from '../domain/skillService';
 import { ensureShortDramaPack, parseManifest, registerPackExtensions } from './industry';
 import { ensureOfficialSkills } from './officialSkills';
+import { ensureOfficialStyleTemplates } from './styleTemplates';
 import { ensureTaskTemplates } from './taskTemplates';
 import {
   DEFAULT_WORKSPACE_ID,
@@ -33,6 +34,7 @@ export async function ensurePlatform(
   if (pack) registerPackExtensions(repos, pack);
   ensureOfficialSkills(repos);
   ensureTaskTemplates(repos);
+  ensureOfficialStyleTemplates(repos);
 
   if (repos.getUser(ADMIN_USER_ID)) return;
   const email = (process.env.SWARM_ADMIN_EMAIL || 'admin@swarm.local').toLowerCase();

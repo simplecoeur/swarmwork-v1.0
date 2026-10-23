@@ -547,3 +547,34 @@ export const skillFeatureSchema = z.object({
   featured: z.boolean(),
 });
 
+/** 办公室风格配置（宽松校验：palette 三色字符串、floorPattern 枚举、furniture 任意槽位映射） */
+export const officeStyleConfigSchema = z.object({
+  palette: z.object({
+    wall: z.string().max(64),
+    floor: z.string().max(64),
+    accent: z.string().max(64),
+  }),
+  floorPattern: z.enum(['plain', 'wood', 'tile', 'checker']),
+  furniture: z.record(z.string(), z.string().nullable()),
+  poster: z.object({ imageFileId: z.string().nullable() }),
+  sign: z.object({
+    mode: z.enum(['text', 'image']),
+    text: z.string().max(100),
+    imageFileId: z.string().nullable(),
+  }),
+});
+
+/** PUT /api/office-style：兼容 { style } 包裹与直接传配置本体两种形态 */
+export const officeStyleSchema = z.union([
+  z.object({ style: officeStyleConfigSchema }),
+  officeStyleConfigSchema,
+]);
+
+export const styleTemplateCreateSchema = z.object({
+  name: z.string().trim().min(1, '模板名必填').max(100),
+  config: officeStyleConfigSchema,
+});
+
+export const styleTemplateRejectSchema = z.object({
+  reason: z.string().trim().min(1, '驳回原因必填'),
+});
