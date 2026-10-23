@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AppState, AssetRef, AuthUser, Impersonation, Presets, TabKey, Workspace } from './types';
+import type { AppState, AssetRef, AuthUser, Impersonation, OfficeStyleConfig, Presets, TabKey, Workspace } from './types';
 
 /** G-10「设为定时」快捷入口的预填（skill 发单弹窗 / 流水线入口 → 定时任务页新建表单） */
 export interface SchedulePrefill {
@@ -11,13 +11,13 @@ export interface SchedulePrefill {
   params?: Record<string, unknown>;
   assetRefs?: AssetRef[];
 }
-import { fetchMe, fetchPresets, fetchState, requestRaw } from './api';
+import { fetchMe, fetchOfficeStyle, fetchPresets, fetchState, requestRaw } from './api';
 
 export type AuthStatus = 'loading' | 'anon' | 'authed';
 
 /* ----- v1.3.0 E 外壳：功能弹窗契约（办公室为唯一主场景，其余功能以弹窗打开） ----- */
 export interface ActiveDialog {
-  name: 'publish' | 'tasks' | 'skills' | 'assets' | 'kb' | 'cost' | 'schedules' | 'settings' | 'member';
+  name: 'publish' | 'tasks' | 'skills' | 'assets' | 'kb' | 'cost' | 'schedules' | 'settings' | 'member' | 'style';
   memberId?: string;
   section?: 'projects' | 'taskwall' | 'results';
 }
@@ -68,6 +68,11 @@ interface AppContextValue {
   closeDialog: () => void;
   publishPrefill: PublishPrefill | null;
   setPublishPrefill: (p: PublishPrefill | null) => void;
+  /* ----- v1.3.0 F 办公室风格（PixelOffice 画布与装修面板共用） ----- */
+  officeStyle: OfficeStyleConfig | null;
+  /** 直接写入本地风格（装修面板即时预览用；不落库，保存走 PUT、取消靠 refreshOfficeStyle 回滚） */
+  setOfficeStyle: (s: OfficeStyleConfig | null) => void;
+  refreshOfficeStyle: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -105,6 +110,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setS(await fetchState());
     } catch {
       /* 服务重启瞬间忽略，与原生版一致 */
+    }
+  }, []);
+
+  /* ----- F 办公室风格 ----- */
+  const [officeStyle, setOfficeStyle] = useState<OfficeStyleConfig | null>(null);
+  const refreshOfficeStyle = useCallback(async () => {
+    try {
+      setOfficeStyle(await fetchOfficeStyle());
+    } catch {
+      /* 接口未就绪/服务重启瞬间忽略，画布用本地默认观感 */
     }
   }, []);
 
@@ -171,6 +186,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTab('office');
     setDialog(null);
     setPublishPrefill(null);
+    setOfficeStyle(null);
     setAuthStatus('anon');
   }, []);
 
@@ -178,10 +194,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (workspaceId: string) => {
       await requestRaw('POST', '/api/auth/switch-workspace', { workspaceId });
       setS(null);
+      setOfficeStyle(null);
       await refreshAuth();
       await refresh();
+      await refreshOfficeStyle();
     },
-    [refreshAuth, refresh],
+    [refreshAuth, refresh, refreshOfficeStyle],
   );
 
   const [schedulePrefill, setSchedulePrefill] = useState<SchedulePrefill | null>(null);
@@ -215,12 +233,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (authStatus !== 'authed') return;
     fetchPresets().then(setPresets).catch(() => {});
     refresh();
+    refreshOfficeStyle();
     // 每 2 秒轮询；在设置后台（v1.3.0 起为设置弹窗）时不刷新，避免冲掉正在编辑的表单（与原生版一致）
     const iv = window.setInterval(() => {
       if (tabRef.current !== 'settings' && dialogRef.current?.name !== 'settings') refresh();
     }, 2000);
     return () => window.clearInterval(iv);
-  }, [authStatus, refresh]);
+  }, [authStatus, refresh, refreshOfficeStyle]);
 
   const apiName = useCallback(
     (id: string | null | undefined) => S?.apis.find((a) => a.id === id)?.name || '（已删除）',
@@ -242,6 +261,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         authStatus, user, workspaces, currentWorkspace, impersonation, refreshAuth, login, logout, switchWorkspace,
         schedulePrefill, openSchedules, clearSchedulePrefill,
         dialog, openDialog, closeDialog, publishPrefill, setPublishPrefill,
+        officeStyle, setOfficeStyle, refreshOfficeStyle,
       }}
     >
       {children}
