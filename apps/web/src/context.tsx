@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AppState, AssetRef, AuthUser, Presets, TabKey, Workspace } from './types';
+import type { AppState, AssetRef, AuthUser, Impersonation, Presets, TabKey, Workspace } from './types';
 
 /** G-10「设为定时」快捷入口的预填（skill 发单弹窗 / 流水线入口 → 定时任务页新建表单） */
 export interface SchedulePrefill {
@@ -34,6 +34,8 @@ interface AppContextValue {
   user: AuthUser | null;
   workspaces: Workspace[];
   currentWorkspace: Workspace | null;
+  /** G-14 代入态（平台管理员代入查看中时非空，全站红色横幅据此呈现） */
+  impersonation: Impersonation | null;
   /** 重新拉 /api/auth/me 刷新登录态（登录/注册/改密/开公司后调用） */
   refreshAuth: () => Promise<void>;
   /** 登录：失败抛错（message 为后端原文），由登录页红字展示，不走 toast */
@@ -70,6 +72,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
+  const [impersonation, setImpersonation] = useState<Impersonation | null>(null);
 
   const toast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -115,11 +118,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setUser(me.user);
       setWorkspaces(me.workspaces);
       setCurrentWorkspace(me.workspace);
+      setImpersonation(me.impersonation);
       setAuthStatus('authed');
     } catch {
       setUser(null);
       setWorkspaces([]);
       setCurrentWorkspace(null);
+      setImpersonation(null);
       setAuthStatus('anon');
     }
   }, []);
@@ -142,6 +147,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setWorkspaces([]);
     setCurrentWorkspace(null);
+    setImpersonation(null);
     setTab('office');
     setAuthStatus('anon');
   }, []);
@@ -196,7 +202,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider
       value={{
         S, presets, tab, setTab, toast, refresh, post, send, apiName, teamName, memberName,
-        authStatus, user, workspaces, currentWorkspace, refreshAuth, login, logout, switchWorkspace,
+        authStatus, user, workspaces, currentWorkspace, impersonation, refreshAuth, login, logout, switchWorkspace,
         schedulePrefill, openSchedules, clearSchedulePrefill,
       }}
     >

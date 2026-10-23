@@ -27,7 +27,8 @@ import type { TabKey } from './types';
 function Shell() {
   const {
     S, tab, setTab,
-    authStatus, user, workspaces, currentWorkspace, switchWorkspace, logout, toast,
+    authStatus, user, workspaces, currentWorkspace, impersonation,
+    switchWorkspace, logout, toast, post, refresh, refreshAuth,
   } = useApp();
   const [showNewWs, setShowNewWs] = useState(false);
   // G-05 全站反馈弹窗 / G-03 移动端通知中心（全屏）
@@ -102,6 +103,16 @@ function Shell() {
     setTab('search');
   };
 
+  /* G-14 退出代入：清 session 代入态并切回管理员默认空间，随后整页刷新登录态与数据 */
+  async function exitImpersonation() {
+    try {
+      await post('/api/admin/impersonate/stop');
+    } catch { return; }
+    toast('已退出代入查看');
+    await refreshAuth();
+    await refresh();
+  }
+
   async function onSwitch(id: string) {
     if (!id || id === currentWorkspace?.id) return;
     try {
@@ -174,6 +185,16 @@ function Shell() {
       {showNewWs && <NewWorkspaceModal onClose={() => setShowNewWs(false)} />}
       {feedbackOpen && <FeedbackDialog onClose={() => setFeedbackOpen(false)} />}
       <NotificationCenterDialog open={notifOpen} onClose={() => setNotifOpen(false)} />
+
+      {impersonation && (
+        <div className="banner-impersonation" role="alert">
+          <span>
+            <b>平台管理员代入查看中（只读）</b> · 正在查看空间「{impersonation.workspaceName}」
+            （所有者 {impersonation.ownerEmail}），写操作已被禁用；该空间既存任务照常运行，不受代入影响。
+          </span>
+          <Button size="small" variant="gray" onClick={() => void exitImpersonation()}>退出代入</Button>
+        </div>
+      )}
 
       {!currentWorkspace ? (
         <main>

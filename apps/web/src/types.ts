@@ -17,6 +17,7 @@ import type {
   CostSummaryDto,
   DeliveryLinkDto,
   FeedbackDto,
+  ImpersonationDto,
   IndustryPackDto,
   KbEntryDto,
   KbImportConfirmDto,
@@ -182,6 +183,9 @@ export interface ResultItem {
   mark: OutcomeMark | null;
 }
 
+/** G-14 代入态（GET /api/auth/me 顶层字段） */
+export type Impersonation = ImpersonationDto;
+
 /** GET /api/channels 的行 */
 export interface ChannelInfo {
   type: string;
@@ -190,6 +194,12 @@ export interface ChannelInfo {
   account: string;
   hasToken: boolean;
   bound: boolean;
+  /** G-17 通用 Webhook 专用字段（MJ 行无此组字段） */
+  url?: string;
+  hasSecret?: boolean;
+  secretMasked?: string;
+  events?: string[];
+  supportsMetrics?: boolean;
 }
 
 /** GET /api/ledger-view 的时间线行 */

@@ -24,7 +24,7 @@ const STATUS_LABEL: Record<string, string> = {
  * 空间聚合表、行业包只读列表。后端错误 message 直接 toast（post 包装已处理）。
  */
 export default function Admin() {
-  const { post, toast } = useApp();
+  const { post, toast, refreshAuth, refresh, setTab } = useApp();
   const { ask, confirmNode } = useConfirm();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [workspaces, setWorkspaces] = useState<AdminWorkspace[]>([]);
@@ -121,6 +121,17 @@ export default function Admin() {
     });
   }
 
+  /* G-14 代入查看（只读）：进入后全站红色横幅提示，写操作被服务端守卫拦截 */
+  async function impersonateWorkspace(w: AdminWorkspace) {
+    try {
+      await post(`/api/admin/impersonate/${w.id}`);
+    } catch { return; }
+    toast(`已代入查看空间「${w.name}」（只读）`);
+    await refreshAuth();
+    await refresh();
+    setTab('office');
+  }
+
   return (
     <>
       {/* ---------- 用户管理 ---------- */}
@@ -193,7 +204,7 @@ export default function Admin() {
           <thead>
             <tr>
               <th>空间</th><th>所有者</th><th>任务数</th><th>总消费</th>
-              <th>自有余额</th><th>体验额度（已发 / 剩余）</th><th>状态</th>
+              <th>自有余额</th><th>体验额度（已发 / 剩余）</th><th>状态</th><th>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -206,10 +217,13 @@ export default function Admin() {
                 <td>{yuan(w.balanceYuan)}</td>
                 <td>{yuan(w.trialGrantedYuan)} / {yuan(w.trialRemainingYuan)}</td>
                 <td>{STATUS_LABEL[w.status] ?? w.status}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <Button size="small" variant="gray" onClick={() => impersonateWorkspace(w)}>代入查看</Button>
+                </td>
               </tr>
             ))}
             {workspaces.length === 0 && (
-              <tr><td colSpan={7} className="hint">暂无空间（或加载失败）。</td></tr>
+              <tr><td colSpan={8} className="hint">暂无空间（或加载失败）。</td></tr>
             )}
           </tbody>
           </table>

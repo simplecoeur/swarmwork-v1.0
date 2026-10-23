@@ -758,6 +758,44 @@ export interface SearchResponseDto {
   results: SearchResultItemDto[];
 }
 
+/* ---------- G-14 管理员代入查看（v1.2.0 批次三） ---------- */
+
+/**
+ * 管理员代入态（sessions.impersonation JSON 的线缆形，迁移 014）：
+ * 平台管理员代入某空间只读查看期间，GET /api/auth/me 顶层带本对象（非代入为 null），
+ * 前端据此挂红色横幅；写接口被全局守卫回 403 IMPERSONATION_READ_ONLY（见 §8 隐私口径：
+ * 代入强制留痕 audit + 所有者站内通知 impersonation 即时知情）。
+ */
+export interface ImpersonationDto {
+  adminUserId: string;
+  adminEmail: string;
+  workspaceId: string;
+  workspaceName: string;
+  ownerUserId: string;
+  ownerEmail: string;
+  startedAt: string;
+}
+
+/** 渠道类型（G-17 起注册表两家：MJ 直推 / 通用 Webhook 生态足点） */
+export const CHANNEL_TYPES = ['mj', 'generic_webhook'] as const;
+export type ChannelTypeName = (typeof CHANNEL_TYPES)[number];
+
+/**
+ * 通用 Webhook 渠道配置（G-17，存 settings.channels.generic_webhook，secret 加密口径同 MJ）：
+ * 线缆形只回掩码与绑定状态，明文 secret 永不出接口（与 MJ token 同口径）。
+ */
+export interface GenericWebhookChannelDto {
+  type: 'generic_webhook';
+  name: string;
+  url: string;
+  secretMasked: string;
+  hasSecret: boolean;
+  events: string[];
+  bound: boolean;
+  /** 通用 Webhook 不做数据回流：fetchMetrics 恒 unsupported，UI 据此显示「该渠道不支持数据回流」 */
+  supportsMetrics: boolean;
+}
+
 /* ---------- G-15 空间所有权转让（v1.2.0 批次二接口先行，页面留批次三） ---------- */
 
 /** POST /api/workspaces/:id/transfer 入参：所有者本人操作 + 验密二次确认 */

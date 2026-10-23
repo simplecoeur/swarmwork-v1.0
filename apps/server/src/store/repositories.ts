@@ -182,6 +182,8 @@ export interface SessionRow {
   user_agent: string;
   created_at: string;
   last_seen_at: string;
+  /** G-14 代入态 JSON（迁移 014）：{ adminUserId, workspaceId, startedAt }；非代入为 null */
+  impersonation?: string | null;
 }
 
 export interface RoleRow {
@@ -993,17 +995,17 @@ export class Repos {
   insertSession(row: SessionRow): void {
     this.db
       .prepare(
-        'INSERT INTO sessions (id, user_id, current_workspace_id, expires_at, created_ip, user_agent, created_at, last_seen_at) VALUES (?,?,?,?,?,?,?,?)',
+        'INSERT INTO sessions (id, user_id, current_workspace_id, expires_at, created_ip, user_agent, created_at, last_seen_at, impersonation) VALUES (?,?,?,?,?,?,?,?,?)',
       )
-      .run(row.id, row.user_id, row.current_workspace_id, row.expires_at, row.created_ip, row.user_agent, row.created_at, row.last_seen_at);
+      .run(row.id, row.user_id, row.current_workspace_id, row.expires_at, row.created_ip, row.user_agent, row.created_at, row.last_seen_at, row.impersonation ?? null);
   }
   getSession(idHash: string): SessionRow | undefined {
     return this.db.prepare('SELECT * FROM sessions WHERE id = ?').get(idHash) as unknown as SessionRow | undefined;
   }
   updateSession(row: SessionRow): void {
     this.db
-      .prepare('UPDATE sessions SET current_workspace_id=?, expires_at=?, last_seen_at=? WHERE id=?')
-      .run(row.current_workspace_id, row.expires_at, row.last_seen_at, row.id);
+      .prepare('UPDATE sessions SET current_workspace_id=?, expires_at=?, last_seen_at=?, impersonation=? WHERE id=?')
+      .run(row.current_workspace_id, row.expires_at, row.last_seen_at, row.impersonation ?? null, row.id);
   }
   deleteSession(idHash: string): void {
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(idHash);

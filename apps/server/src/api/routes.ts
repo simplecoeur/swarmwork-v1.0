@@ -8,6 +8,7 @@ import {
   yuanToMilli,
   type ApiDto,
   type AuthUserDto,
+  type ImpersonationDto,
   type IndustryPackDto,
   type KbEntryDto,
   type LedgerEntryDto,
@@ -39,6 +40,7 @@ import {
   verifyPassword,
 } from '../auth/auth';
 import { balanceMilli, buildReport, checkLowBalance, trialBalanceMilli } from '../domain/costService';
+import { notifyOwner } from '../domain/notify';
 import { createProject } from '../domain/projectService';
 import { cancelTask, deleteTask, refreshProjectStatus, retryTask, transitionTask } from '../domain/taskService';
 import { recordTaskStep } from '../domain/taskSteps';
@@ -118,10 +120,33 @@ function fail(code: string, message: string, status = 400): never {
   throw Object.assign(new Error(message), { code, statusCode: status });
 }
 
+/** G-14：session.impersonation JSON 的内部形态（迁移 014） */
+interface ImpersonationState {
+  adminUserId: string;
+  workspaceId: string;
+  startedAt: string;
+}
+
+function parseImpersonation(raw: string | null | undefined): ImpersonationState | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as Partial<ImpersonationState>;
+    if (typeof v.adminUserId === 'string' && typeof v.workspaceId === 'string' && typeof v.startedAt === 'string') {
+      return { adminUserId: v.adminUserId, workspaceId: v.workspaceId, startedAt: v.startedAt };
+    }
+  } catch {
+    /* 损坏的 JSON 视作未代入 */
+  }
+  return null;
+}
+
 interface AuthCtx {
   user: UserRow;
   session: SessionRow;
   workspaceId: string | null;
+  /** G-14 代入态（仅平台管理员会话可持有）；非空时全站写接口被只读守卫拦截。
+   *  可选是为与 m7.ts 的 RouteCtx 最小契约保持结构兼容（helpers 注入）。 */
+  impersonation?: ImpersonationState | null;
 }
 
 type AuthedRequest = FastifyRequest & { authCtx?: AuthCtx };
@@ -343,6 +368,17 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       sess = { ...sess, expires_at: new Date(nowMs + SESSION_TTL_MS).toISOString(), last_seen_at: nowIso() };
       repos.updateSession(sess);
     }
+    // G-14：代入态下当前空间 = 被代入空间（管理员通常不是其成员），跳过成员回落；
+    // 代入目标空间已不存在/停用时，代入随之失效并清列回落默认空间。
+    const imp = parseImpersonation(sess.impersonation);
+    if (imp) {
+      const target = repos.getWorkspace(imp.workspaceId);
+      if (target && target.status === 'active' && imp.adminUserId === user!.id) {
+        return { user: user!, session: sess, workspaceId: imp.workspaceId, impersonation: imp };
+      }
+      sess = { ...sess, impersonation: null };
+      repos.updateSession(sess);
+    }
     // 当前空间必须仍是本人 active membership；失效则回落到第一个空间
     let workspaceId = sess.current_workspace_id;
     if (workspaceId) {
@@ -357,7 +393,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
         repos.updateSession(sess);
       }
     }
-    return { user: user!, session: sess, workspaceId };
+    return { user: user!, session: sess, workspaceId, impersonation: null };
   };
 
   const PUBLIC_PATHS = new Set(['/api/health', '/api/auth/login', '/api/auth/register']);
@@ -384,6 +420,27 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     }
     if (ctx.user.must_change_password === 1 && !MUST_CHANGE_EXEMPT.has(url)) {
       fail(ErrorCode.FORBIDDEN, '请先修改初始密码后再继续使用', 403);
+    }
+    // G-14 只读守卫（单点）：代入态除白名单外一切写操作 403 IMPERSONATION_READ_ONLY。
+    // 白名单逐项核对：全部 GET/HEAD 读取、退出代入、登出、通知标已读。
+    // POST /api/admin/impersonate/:id 在代入态由路由自身回 VALIDATION（设计断言④），故放行到路由。
+    if (ctx.impersonation) {
+      const method = (req.method || 'GET').toUpperCase();
+      const isRead = method === 'GET' || method === 'HEAD';
+      const whitelisted =
+        isRead ||
+        url === '/api/admin/impersonate/stop' ||
+        url.startsWith('/api/admin/impersonate/') ||
+        url === '/api/auth/logout' ||
+        url === '/api/notifications/read-all' ||
+        /^\/api\/notifications\/[^/]+\/read$/.test(url);
+      if (!whitelisted) {
+        fail(
+          ErrorCode.IMPERSONATION_READ_ONLY,
+          '平台管理员代入查看中（只读）：写操作已禁用，退出代入后恢复',
+          403,
+        );
+      }
     }
   });
 
@@ -574,6 +631,22 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     return { ok: true };
   });
 
+  /** G-14：代入态 DTO（me 顶层字段，前端红色横幅与管理台据此呈现） */
+  const impersonationDto = (ctx: AuthCtx): ImpersonationDto | null => {
+    if (!ctx.impersonation) return null;
+    const ws = repos.getWorkspace(ctx.impersonation.workspaceId);
+    const owner = ws ? repos.getUser(ws.owner_user_id) : undefined;
+    return {
+      adminUserId: ctx.impersonation.adminUserId,
+      adminEmail: ctx.user.email,
+      workspaceId: ctx.impersonation.workspaceId,
+      workspaceName: ws?.name ?? '',
+      ownerUserId: ws?.owner_user_id ?? '',
+      ownerEmail: owner?.email ?? '',
+      startedAt: ctx.impersonation.startedAt,
+    };
+  };
+
   app.get('/api/auth/me', async (req) => {
     const ctx = auth(req);
     const workspaces = repos
@@ -587,6 +660,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       user: userDto(ctx.user),
       workspace: current ? workspaceDto(ctx.user, current) : null,
       workspaces,
+      impersonation: impersonationDto(ctx),
     };
   });
 
@@ -1506,6 +1580,94 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     });
     return { ok: true, workspaces };
   });
+
+  /* ----- G-14 管理员代入查看（只读）：强制留痕 + 所有者即时知情（技术设计 §8） ----- */
+  app.post('/api/admin/impersonate/:workspaceId', async (req) => {
+    const ctx = requireAdmin(req);
+    if (ctx.impersonation) {
+      fail(ErrorCode.VALIDATION, '当前已处于代入查看中，请先退出代入再切换空间');
+    }
+    const { workspaceId } = req.params as { workspaceId: string };
+    const ws = repos.getWorkspace(workspaceId);
+    if (!ws || ws.status !== 'active') fail(ErrorCode.NOT_FOUND, '空间不存在或已停用', 404);
+    const owner = repos.getUser(ws!.owner_user_id);
+    const state: ImpersonationState = {
+      adminUserId: ctx.user.id,
+      workspaceId: ws!.id,
+      startedAt: nowIso(),
+    };
+    repos.updateSession({
+      ...ctx.session,
+      current_workspace_id: ws!.id,
+      impersonation: JSON.stringify(state),
+      last_seen_at: nowIso(),
+    });
+    // 审计落在目标空间（所有者台账 ledger-view 按空间合并 audit 流，可见起止两条）
+    repos.insertAudit({
+      workspace_id: ws!.id,
+      user_id: ctx.user.id,
+      action: 'impersonate_start',
+      target_type: 'workspace',
+      target_id: ws!.id,
+      detail: `平台管理员 ${ctx.user.email} 开始代入查看空间「${ws!.name}」（所有者 ${owner?.email ?? ws!.owner_user_id}）`,
+      ip: req.ip ?? '',
+    });
+    // 所有者即时知情（G-03 通知通道，type=impersonation 已注册）
+    notifyOwner(
+      repos,
+      ws!.id,
+      'impersonation',
+      '平台管理员正在查看你的空间',
+      `平台管理员 ${ctx.user.email} 已开始代入查看空间「${ws!.name}」（只读）。代入期间你的任务仍会照常运行。`,
+      null,
+    );
+    logger.info('admin', `代入查看开始：${ctx.user.email} → ${ws!.id}`, {});
+    return {
+      ok: true,
+      impersonation: {
+        adminUserId: ctx.user.id,
+        adminEmail: ctx.user.email,
+        workspaceId: ws!.id,
+        workspaceName: ws!.name,
+        ownerUserId: ws!.owner_user_id,
+        ownerEmail: owner?.email ?? '',
+        startedAt: state.startedAt,
+      } satisfies ImpersonationDto,
+    };
+  });
+
+  app.post('/api/admin/impersonate/stop', async (req) => {
+    const ctx = requireAdmin(req);
+    if (!ctx.impersonation) {
+      fail(ErrorCode.VALIDATION, '当前未处于代入查看中');
+    }
+    const imp = ctx.impersonation;
+    const ws = repos.getWorkspace(imp.workspaceId);
+    const durationSec = Math.max(
+      0,
+      Math.round((Date.now() - new Date(imp.startedAt).getTime()) / 1000),
+    );
+    const first = repos.listMembershipsByUser(ctx.user.id)[0];
+    const backTo = first ? first.workspace_id : null;
+    repos.updateSession({
+      ...ctx.session,
+      current_workspace_id: backTo,
+      impersonation: null,
+      last_seen_at: nowIso(),
+    });
+    repos.insertAudit({
+      workspace_id: imp.workspaceId,
+      user_id: ctx.user.id,
+      action: 'impersonate_stop',
+      target_type: 'workspace',
+      target_id: imp.workspaceId,
+      detail: `平台管理员 ${ctx.user.email} 结束代入查看空间「${ws?.name ?? imp.workspaceId}」，时长 ${durationSec} 秒`,
+      ip: req.ip ?? '',
+    });
+    logger.info('admin', `代入查看结束：${ctx.user.email} → ${imp.workspaceId}（${durationSec}s）`, {});
+    return { ok: true, durationSec };
+  });
+
   app.post('/api/admin/trial-grants', async (req) => {
     const ctx = requireAdmin(req);
     const body = trialGrantSchema.parse(req.body ?? {});

@@ -9,6 +9,7 @@ import type {
   ChannelInfo,
   ChannelPush,
   Delivery,
+  Impersonation,
   IndustryPack,
   KbEntry,
   KbImportConfirm,
@@ -71,6 +72,8 @@ export interface MeResult {
   user: AuthUser;
   workspace: Workspace | null;
   workspaces: Workspace[];
+  /** G-14 代入态（非代入时为 null） */
+  impersonation: Impersonation | null;
 }
 
 /** 未登录时 requestRaw 抛 401 的后端 message，调用方据此进登录页 */
@@ -80,7 +83,16 @@ export async function fetchMe(): Promise<MeResult> {
     user: j.user as AuthUser,
     workspace: (j.workspace as Workspace | null) ?? null,
     workspaces: (j.workspaces as Workspace[]) ?? [],
+    impersonation: (j.impersonation as Impersonation | null) ?? null,
   };
+}
+
+/** G-15 转让页：按邮箱精确查用户（只读补口；查不到抛 404 的后端 message） */
+export async function lookupUserByEmail(
+  email: string,
+): Promise<{ id: string; email: string; displayName: string; status: string }> {
+  const j = await requestRaw('GET', `/api/users/lookup?email=${encodeURIComponent(email)}`);
+  return j.user as { id: string; email: string; displayName: string; status: string };
 }
 
 export interface RegistryResult {
