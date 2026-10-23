@@ -307,6 +307,13 @@ export async function fetchSearch(
   };
 }
 
+/* ---------- G-10 定时任务 ---------- */
+
+export async function fetchSchedules(): Promise<import('./types').ScheduleItem[]> {
+  const j = await requestRaw('GET', '/api/schedules');
+  return (j.schedules as import('./types').ScheduleItem[]) ?? [];
+}
+
 /** G-04 任务过程时间线：步骤流 + 状态流水（执行中轮询增量刷新、已完成即回放，同一接口） */
 export async function fetchTaskTimeline(taskId: string): Promise<TaskTimelineData> {
   const j = await requestRaw('GET', `/api/tasks/${taskId}/timeline`);

@@ -4,6 +4,7 @@ import {
   ErrorCode,
   IMPORT_LIMITS,
   KB_SCOPES,
+  SCHEDULE_SCAN_MS,
   TaskStatus,
   milliToYuan,
   yuanToMilli,
@@ -11,6 +12,7 @@ import {
   type FeedbackDto,
   type KbImportItemResultDto,
   type OpenTaskDto,
+  type ScheduleDto,
   type WebhookDeliveryDto,
   type WebhookDto,
 } from '@swarm/shared';
@@ -25,6 +27,12 @@ import {
 } from '../domain/costService';
 import { parseAssetSectionsFromFile, parseKbDrafts } from '../domain/importService';
 import { createKbEntry } from '../domain/kbService';
+import {
+  computeNextRunAt,
+  parseScheduleParams,
+  runDueSchedules,
+  validateScheduleInput,
+} from '../domain/scheduleService';
 import { searchWorkspace } from '../domain/searchService';
 import { resolveTypeForSkill } from '../domain/skillService';
 import { assertSafeOutboundUrl } from '../domain/ssrf';
@@ -35,6 +43,7 @@ import type {
   ApiTokenRow,
   FeedbackRow,
   Repos,
+  ScheduleRow,
   SessionRow,
   TaskRow,
   UserRow,
@@ -50,6 +59,8 @@ import {
   feedbackHandleSchema,
   kbImportConfirmSchema,
   openTaskCreateSchema,
+  scheduleCreateSchema,
+  scheduleUpdateSchema,
   webhookCreateSchema,
   webhookUpdateSchema,
   workspaceTransferSchema,
@@ -760,4 +771,189 @@ export function registerV120Routes(
     const result = searchWorkspace(repos, ctx.workspaceId, ctx.user.id, query, types);
     return { ok: true, ...result };
   });
+
+  /* ================= G-10 定时任务（批次二） =================
+   * 建改校验复用发单同一套函数（validateScheduleInput）；next_run_at 服务端按 timezone 计算。
+   * 调度器挂在本注册函数末尾的进程内定时扫描上（与 G-11 注销到期扫描共用同一 tick 基础设施）。 */
+  const scheduleDto = (r: ScheduleRow): ScheduleDto => ({
+    id: r.id,
+    kind: r.kind as ScheduleDto['kind'],
+    skillId: r.skill_id,
+    pipelineTemplateId: r.pipeline_template_id,
+    teamId: r.team_id,
+    title: r.title,
+    brief: r.brief,
+    type: r.type,
+    params: parseScheduleParams(r),
+    freq: r.freq as ScheduleDto['freq'],
+    weekday: r.weekday,
+    timeLocal: r.time_local,
+    timezone: r.timezone,
+    enabled: r.enabled === 1,
+    nextRunAt: r.next_run_at,
+    lastRunAt: r.last_run_at,
+    lastTaskId: r.last_task_id,
+    lastResult: r.last_result as ScheduleDto['lastResult'],
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  });
+
+  const getScheduleOr404 = (ctx: RouteCtx & { workspaceId: string }, id: string): ScheduleRow => {
+    const row = repos.getSchedule(id, ctx.workspaceId);
+    if (!row) fail(ErrorCode.NOT_FOUND, '定时计划不存在', 404);
+    return row!;
+  };
+
+  app.post('/api/schedules', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const body = scheduleCreateSchema.parse(req.body ?? {});
+    if (body.freq === 'weekly' && (body.weekday === undefined || body.weekday === null)) {
+      fail(ErrorCode.VALIDATION, '每周计划必须指定星期（weekday 0-6）');
+    }
+    // timezone 缺省取空间设置（settings.timezone，未设时 Asia/Shanghai）
+    const timezone =
+      (req.body as { timezone?: string } | undefined)?.timezone ??
+      repos.getSetting<string>('timezone', 'Asia/Shanghai', ctx.workspaceId);
+    const norm = validateScheduleInput(repos, ctx.workspaceId, {
+      kind: body.kind,
+      skillId: body.skillId ?? null,
+      pipelineTemplateId: body.pipelineTemplateId ?? null,
+      teamId: body.teamId,
+      title: body.title,
+      type: body.type,
+      params: body.params,
+      assetRefs: body.assetRefs,
+    });
+    const title =
+      body.title ||
+      (body.kind === 'skill'
+        ? (repos.getSkill(norm.skillId ?? '')?.name ?? '定时 skill')
+        : body.kind === 'pipeline'
+          ? '定时流水线'
+          : '');
+    const ts = nowIso();
+    const row: ScheduleRow = {
+      id: uid('sch'),
+      workspace_id: ctx.workspaceId,
+      created_by_user_id: ctx.user.id,
+      kind: body.kind,
+      skill_id: norm.skillId,
+      pipeline_template_id: norm.pipelineTemplateId,
+      team_id: body.teamId,
+      title,
+      brief: body.brief,
+      type: body.type,
+      params: JSON.stringify(norm.params),
+      freq: body.freq,
+      weekday: body.freq === 'weekly' ? (body.weekday ?? null) : null,
+      time_local: body.timeLocal,
+      timezone,
+      enabled: body.enabled ? 1 : 0,
+      next_run_at: computeNextRunAt(
+        { freq: body.freq, weekday: body.weekday ?? null, time_local: body.timeLocal, timezone },
+        new Date(),
+      ),
+      last_run_at: null,
+      last_task_id: null,
+      last_result: null,
+      created_at: ts,
+      updated_at: ts,
+    };
+    repos.insertSchedule(row);
+    audit(req, ctx, 'create_schedule', 'schedule', row.id, `${row.kind} ${row.freq} ${row.time_local}`);
+    return { ok: true, schedule: scheduleDto(row) };
+  });
+
+  app.get('/api/schedules', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    return { ok: true, schedules: repos.listSchedules(ctx.workspaceId).map(scheduleDto) };
+  });
+
+  app.put('/api/schedules/:id', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    const cur = getScheduleOr404(ctx, id);
+    const body = scheduleUpdateSchema.parse(req.body ?? {});
+    const merged = {
+      kind: body.kind ?? cur.kind,
+      skillId: body.skillId !== undefined ? body.skillId : cur.skill_id,
+      pipelineTemplateId:
+        body.pipelineTemplateId !== undefined ? body.pipelineTemplateId : cur.pipeline_template_id,
+      teamId: body.teamId ?? cur.team_id,
+      title: body.title ?? cur.title,
+      brief: body.brief ?? cur.brief,
+      type: body.type ?? cur.type,
+      params: body.params ?? parseScheduleParams(cur),
+      freq: body.freq ?? cur.freq,
+      weekday: body.weekday !== undefined ? body.weekday : cur.weekday,
+      timeLocal: body.timeLocal ?? cur.time_local,
+      timezone: body.timezone ?? cur.timezone,
+    };
+    if (merged.freq === 'weekly' && (merged.weekday === undefined || merged.weekday === null)) {
+      fail(ErrorCode.VALIDATION, '每周计划必须指定星期（weekday 0-6）');
+    }
+    const norm = validateScheduleInput(repos, ctx.workspaceId, {
+      kind: merged.kind,
+      skillId: merged.skillId,
+      pipelineTemplateId: merged.pipelineTemplateId,
+      teamId: merged.teamId,
+      title: merged.title,
+      type: merged.type,
+      params: merged.params,
+      assetRefs: body.assetRefs,
+    });
+    const enabled = body.enabled !== undefined ? body.enabled : cur.enabled === 1;
+    const next: ScheduleRow = {
+      ...cur,
+      kind: merged.kind,
+      skill_id: norm.skillId,
+      pipeline_template_id: norm.pipelineTemplateId,
+      team_id: merged.teamId,
+      title: merged.title,
+      brief: merged.brief,
+      type: merged.type,
+      params: JSON.stringify(norm.params),
+      freq: merged.freq,
+      weekday: merged.freq === 'weekly' ? (merged.weekday ?? null) : null,
+      time_local: merged.timeLocal,
+      timezone: merged.timezone,
+      enabled: enabled ? 1 : 0,
+      // 任一改动都按新口径重算下一次（从当前时刻起的最近周期），停用时该值保留但不被扫描
+      next_run_at: computeNextRunAt(
+        {
+          freq: merged.freq,
+          weekday: merged.weekday ?? null,
+          time_local: merged.timeLocal,
+          timezone: merged.timezone,
+        },
+        new Date(),
+      ),
+      updated_at: nowIso(),
+    };
+    repos.updateSchedule(next);
+    audit(req, ctx, 'update_schedule', 'schedule', id, next.enabled === 1 ? '启用' : '停用');
+    return { ok: true, schedule: scheduleDto(next) };
+  });
+
+  app.delete('/api/schedules/:id', async (req: FastifyRequest) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    getScheduleOr404(ctx, id);
+    repos.deleteSchedule(id);
+    audit(req, ctx, 'delete_schedule', 'schedule', id);
+    return { ok: true };
+  });
+
+  /* ================= 定时扫描基础设施（G-10 调度器；G-11 注销到期扫描共用同一 tick） =================
+   * 与引擎 1s tick 分开的进程内 interval（默认 SCHEDULE_SCAN_MS=30s，测试可用
+   * SWARM_SCHEDULE_TICK_MS 覆盖）；进程未运行期间不发单（页面已注明「平台运行期间生效」）。 */
+  const scheduleTickMs = Number(process.env.SWARM_SCHEDULE_TICK_MS || SCHEDULE_SCAN_MS) || SCHEDULE_SCAN_MS;
+  const scheduleTimer = setInterval(() => {
+    try {
+      runDueSchedules(repos, { createTask: helpers.createTask, logger }, new Date());
+    } catch (e) {
+      logger.error('schedule', `调度扫描异常：${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, scheduleTickMs);
+  scheduleTimer.unref?.();
 }

@@ -51,7 +51,7 @@ export default function Projects() {
  * 模板步骤的 available 由服务端按本空间可见 skill 标注，缺 skill 的步骤标红提示（先去技能页安装）。
  */
 function PipelineCard() {
-  const { S, post, toast, refresh } = useApp();
+  const { S, post, toast, refresh, openSchedules } = useApp();
   const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
   const [templateId, setTemplateId] = useState('');
   const [teamId, setTeamId] = useState('');
@@ -168,7 +168,24 @@ function PipelineCard() {
                 </div>
               ))}
               <div style={{ marginTop: 10 }}>
-                <Button onClick={run}>启动流水线</Button>
+                <Button onClick={run}>启动流水线</Button>{' '}
+                <Button
+                  variant="gray"
+                  onClick={() => {
+                    if (!tpl) return toast('先选流水线模板');
+                    if (!teamId) return toast('先选小组');
+                    // G-10 快捷钮：带当前模板/小组/公共参数跳定时任务页预填（周期在那边定）
+                    openSchedules({
+                      kind: 'pipeline',
+                      pipelineTemplateId: tpl.id,
+                      teamId,
+                      params: { ...params },
+                    });
+                    toast('已带参数跳到定时任务页，选好周期保存即可');
+                  }}
+                >
+                  设为定时
+                </Button>
               </div>
             </>
           )}

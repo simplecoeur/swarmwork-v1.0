@@ -126,6 +126,10 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 .subtask{ border-top:2px dashed var(--line); padding:6px 2px; cursor:pointer; font-size:13px; }
 .subtask:hover{ background:var(--panel2); }
 .task.flash{ outline:3px solid var(--amber); outline-offset:2px; }
+/* G-10 定时任务列表行：标题/徽标/下次运行同排，启停与操作靠右成组（移动端在 ≤768px 块内改卡片纵排） */
+.schedule-row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.schedule-row .hint{ flex:1 1 260px; }
+.schedule-actions{ display:inline-flex; align-items:center; gap:8px; margin-left:auto; }
 /* G-04 任务过程时间线：纵向步骤流（左轨图标 + 右侧内容），步骤为主、状态流水为弱化辅行 */
 .timeline{ border-top:2px dashed var(--line); margin-top:8px; padding-top:6px; }
 .tl-row{ display:flex; gap:8px; padding:5px 0; border-bottom:1px dashed var(--panel2); }
@@ -590,6 +594,10 @@ header{ flex-wrap:wrap; }
 
   /* ---- 底部栏锚点跳转时避开 sticky 顶栏 ---- */
   #publish-anchor, #projects-anchor, #taskwall-anchor, #results-anchor{ scroll-margin-top:132px; }
+
+  /* ---- G-10 定时任务：列表卡片化（操作组整行右对齐→改左对齐纵排），表单行单列 ---- */
+  .schedule-row{ flex-direction:column; align-items:flex-start; }
+  .schedule-actions{ margin-left:0; }
 
   /* ---- G-09 全局搜索：顶栏只留图标，点击展开全屏搜索层 ---- */
   .globalsearch{ flex:0 0 auto; min-width:0; margin-left:auto; }

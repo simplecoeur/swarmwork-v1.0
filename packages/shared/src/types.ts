@@ -760,3 +760,58 @@ export interface WorkspaceTransferDto {
   targetUserId: string;
   password: string;
 }
+
+/* ---------- G-10 定时任务（v1.2.0 批次二） ---------- */
+
+export type ScheduleKind = 'skill' | 'pipeline' | 'task';
+export type ScheduleFreq = 'daily' | 'weekly';
+/** 一次计划的执行结果：已发单 / 被守卫拦截（如零余额）/ 发单失败（目标失效等） */
+export type ScheduleLastResult = 'dispatched' | 'blocked' | 'failed';
+
+/**
+ * 定时计划（schedules）：到点按与手动完全相同的路径发单（skill dispatch / runPipeline / createOneTask）。
+ * params 为发单参数快照（skill 参数 / 流水线公共参数；资产引用在 params.assetRefs 内同存）。
+ * nextRunAt 为服务端按 timezone 计算的 UTC 时刻；计划仅在平台运行期间生效。
+ */
+export interface ScheduleDto {
+  id: string;
+  kind: ScheduleKind;
+  skillId: string | null;
+  pipelineTemplateId: string | null;
+  teamId: string;
+  title: string;
+  brief: string;
+  type: string;
+  params: Record<string, unknown>;
+  freq: ScheduleFreq;
+  /** 0-6（0=周日），仅 weekly 用 */
+  weekday: number | null;
+  /** 当地时间 HH:MM */
+  timeLocal: string;
+  timezone: string;
+  enabled: boolean;
+  nextRunAt: string;
+  lastRunAt: string | null;
+  lastTaskId: string | null;
+  lastResult: ScheduleLastResult | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** POST /api/schedules 入参（assetRefs 与手动发单同口径，服务端并入 params 快照） */
+export interface ScheduleCreateDto {
+  kind: ScheduleKind;
+  skillId?: string | null;
+  pipelineTemplateId?: string | null;
+  teamId: string;
+  title?: string;
+  brief?: string;
+  type?: string;
+  params?: Record<string, unknown>;
+  assetRefs?: Array<{ assetId: string; sections?: string[] }>;
+  freq: ScheduleFreq;
+  weekday?: number | null;
+  timeLocal: string;
+  timezone?: string;
+  enabled?: boolean;
+}

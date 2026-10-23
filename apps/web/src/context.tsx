@@ -1,6 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AppState, AuthUser, Presets, TabKey, Workspace } from './types';
+import type { AppState, AssetRef, AuthUser, Presets, TabKey, Workspace } from './types';
+
+/** G-10「设为定时」快捷入口的预填（skill 发单弹窗 / 流水线入口 → 定时任务页新建表单） */
+export interface SchedulePrefill {
+  kind: 'skill' | 'pipeline' | 'task';
+  skillId?: string;
+  pipelineTemplateId?: string;
+  teamId?: string;
+  params?: Record<string, unknown>;
+  assetRefs?: AssetRef[];
+}
 import { fetchMe, fetchPresets, fetchState, requestRaw } from './api';
 
 export type AuthStatus = 'loading' | 'anon' | 'authed';
@@ -31,6 +41,11 @@ interface AppContextValue {
   logout: () => Promise<void>;
   /** 切换当前空间：服务端切换 session 后整页数据 refresh */
   switchWorkspace: (workspaceId: string) => Promise<void>;
+  /* ----- G-10 定时任务预填 ----- */
+  schedulePrefill: SchedulePrefill | null;
+  /** 跳到定时任务页并预填新建表单（消费后由页面 clearSchedulePrefill） */
+  openSchedules: (prefill: SchedulePrefill) => void;
+  clearSchedulePrefill: () => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -141,6 +156,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [refreshAuth, refresh],
   );
 
+  const [schedulePrefill, setSchedulePrefill] = useState<SchedulePrefill | null>(null);
+  const openSchedules = useCallback((prefill: SchedulePrefill) => {
+    setSchedulePrefill(prefill);
+    setTab('schedules');
+  }, []);
+  const clearSchedulePrefill = useCallback(() => setSchedulePrefill(null), []);
+
   // 启动先探登录态；未登录不拉 /api/state、不启动轮询
   useEffect(() => {
     refreshAuth();
@@ -175,6 +197,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       value={{
         S, presets, tab, setTab, toast, refresh, post, send, apiName, teamName, memberName,
         authStatus, user, workspaces, currentWorkspace, refreshAuth, login, logout, switchWorkspace,
+        schedulePrefill, openSchedules, clearSchedulePrefill,
       }}
     >
       {children}

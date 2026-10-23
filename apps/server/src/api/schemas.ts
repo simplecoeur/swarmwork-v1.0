@@ -451,6 +451,47 @@ export const workspaceTransferSchema = z.object({
   password: z.string().min(1, '密码必填（转让须验密确认）'),
 });
 
+/* ---------- G-10 定时任务（v1.2.0 批次二） ---------- */
+
+const scheduleTimeSchema = z
+  .string()
+  .regex(/^\d{2}:\d{2}$/, '时间须为 HH:MM 格式');
+
+export const scheduleCreateSchema = z.object({
+  kind: z.enum(['skill', 'pipeline', 'task']),
+  skillId: z.string().min(1).nullable().optional(),
+  pipelineTemplateId: z.string().min(1).nullable().optional(),
+  teamId: z.string().min(1, '必须指定小组'),
+  title: z.string().trim().max(200).default(''),
+  brief: z.string().default(''),
+  type: z.string().trim().min(1).default('文案'),
+  params: z.record(z.string(), z.unknown()).default({}),
+  assetRefs: z.array(assetRefSchema).optional(),
+  freq: z.enum(['daily', 'weekly']),
+  weekday: z.number().int().min(0).max(6).nullable().optional(),
+  timeLocal: scheduleTimeSchema,
+  timezone: z.string().trim().min(1).default('Asia/Shanghai'),
+  enabled: z.boolean().default(true),
+});
+
+/** 计划更新：未传字段保持不变；改目标/参数时路由层按合并后取值重新走建单校验 */
+export const scheduleUpdateSchema = z.object({
+  kind: z.enum(['skill', 'pipeline', 'task']).optional(),
+  skillId: z.string().min(1).nullable().optional(),
+  pipelineTemplateId: z.string().min(1).nullable().optional(),
+  teamId: z.string().min(1).optional(),
+  title: z.string().trim().max(200).optional(),
+  brief: z.string().optional(),
+  type: z.string().trim().min(1).optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
+  assetRefs: z.array(assetRefSchema).optional(),
+  freq: z.enum(['daily', 'weekly']).optional(),
+  weekday: z.number().int().min(0).max(6).nullable().optional(),
+  timeLocal: scheduleTimeSchema.optional(),
+  timezone: z.string().trim().min(1).optional(),
+  enabled: z.boolean().optional(),
+});
+
 /* ---------- G-09 全局搜索（v1.2.0 批次二）：q 必填，types 为逗号分隔过滤（路由层解析） ---------- */
 
 /** 资产导入 confirm：sections 上限 200 整体校验（超限 VALIDATION 且零落库）；资产为单行创建，字段在此收紧 */

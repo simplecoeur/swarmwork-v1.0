@@ -110,7 +110,7 @@ export interface TrialApi {
 
 export type Presets = Record<string, { baseUrl: string; model: string }>;
 
-export type TabKey = 'office' | 'cost' | 'settings' | 'kb' | 'admin' | 'skills' | 'assets' | 'help' | 'search';
+export type TabKey = 'office' | 'cost' | 'settings' | 'kb' | 'admin' | 'skills' | 'assets' | 'help' | 'search' | 'schedules' | 'account';
 
 /* ---------- G-06 文件导入 ---------- */
 export type KbImportDraft = KbImportDraftDto;
@@ -121,6 +121,7 @@ export type AssetImportConfirm = AssetImportConfirmDto;
 
 /* ---------- G-07/G-09（v1.2.0 批次二） ---------- */
 export type ApiToken = ApiTokenDto;
+export type ScheduleItem = import('@swarm/shared').ScheduleDto;
 export type ApiTokenCreated = ApiTokenCreatedDto;
 export type WebhookItem = WebhookDto;
 export type WebhookDelivery = WebhookDeliveryDto;

@@ -86,6 +86,11 @@ export const WEBHOOK_DELIVERY = {
   TIMEOUT_MS: 10_000,
 } as const;
 
+/** 定时任务调度（G-10）：进程内扫描间隔（与引擎 1s tick 分开，避免高频查表） */
+export const SCHEDULE_SCAN_MS = 30_000;
+/** 星期标签（下标 = weekday，0=周日，与 JS Date.getDay / Intl 口径一致） */
+export const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const;
+
 /** 全局搜索实体类型（G-09）：result = done 且 result 非空的 tasks 子集 */
 export const SEARCH_TYPES = ['task', 'result', 'kb', 'asset', 'skill', 'project'] as const;
 export type SearchEntityType = (typeof SEARCH_TYPES)[number];

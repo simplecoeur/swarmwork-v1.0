@@ -387,6 +387,32 @@ export interface WebhookDeliveryRow {
   updated_at: string;
 }
 
+/* ----- G-10 定时任务（schedules，迁移 011） ----- */
+export interface ScheduleRow {
+  id: string;
+  workspace_id: string;
+  created_by_user_id: string;
+  kind: string;
+  skill_id: string | null;
+  pipeline_template_id: string | null;
+  team_id: string;
+  title: string;
+  brief: string;
+  type: string;
+  params: string;
+  freq: string;
+  weekday: number | null;
+  time_local: string;
+  timezone: string;
+  enabled: number;
+  next_run_at: string;
+  last_run_at: string | null;
+  last_task_id: string | null;
+  last_result: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /* ----- G-04 任务步骤（task_steps，迁移 008） ----- */
 export interface TaskStepRow {
   id: number;
@@ -1695,6 +1721,58 @@ export class Repos {
   listAssetsForSearch(workspaceId: string): AssetRow[] {
     return this.listAssets(workspaceId);
   }
+  /* ----- 定时任务（G-10，迁移 011）：计划行 CRUD + 到期扫描 ----- */
+  insertSchedule(row: ScheduleRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO schedules (id, workspace_id, created_by_user_id, kind, skill_id, pipeline_template_id,
+          team_id, title, brief, type, params, freq, weekday, time_local, timezone, enabled,
+          next_run_at, last_run_at, last_task_id, last_result, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.id, row.workspace_id, row.created_by_user_id, row.kind, row.skill_id, row.pipeline_template_id,
+        row.team_id, row.title, row.brief, row.type, row.params, row.freq, row.weekday, row.time_local,
+        row.timezone, row.enabled, row.next_run_at, row.last_run_at, row.last_task_id, row.last_result,
+        row.created_at, row.updated_at,
+      );
+  }
+  getSchedule(id: string, workspaceId?: string): ScheduleRow | undefined {
+    if (workspaceId !== undefined) {
+      return this.db
+        .prepare('SELECT * FROM schedules WHERE id = ? AND workspace_id = ?')
+        .get(id, workspaceId) as unknown as ScheduleRow | undefined;
+    }
+    return this.db.prepare('SELECT * FROM schedules WHERE id = ?').get(id) as unknown as ScheduleRow | undefined;
+  }
+  listSchedules(workspaceId: string): ScheduleRow[] {
+    return this.db
+      .prepare('SELECT * FROM schedules WHERE workspace_id = ? ORDER BY created_at, id')
+      .all(workspaceId) as unknown as ScheduleRow[];
+  }
+  updateSchedule(row: ScheduleRow): void {
+    this.db
+      .prepare(
+        `UPDATE schedules SET kind=?, skill_id=?, pipeline_template_id=?, team_id=?, title=?, brief=?, type=?,
+          params=?, freq=?, weekday=?, time_local=?, timezone=?, enabled=?, next_run_at=?,
+          last_run_at=?, last_task_id=?, last_result=?, updated_at=? WHERE id=?`,
+      )
+      .run(
+        row.kind, row.skill_id, row.pipeline_template_id, row.team_id, row.title, row.brief, row.type,
+        row.params, row.freq, row.weekday, row.time_local, row.timezone, row.enabled, row.next_run_at,
+        row.last_run_at, row.last_task_id, row.last_result, row.updated_at, row.id,
+      );
+  }
+  deleteSchedule(id: string): void {
+    this.db.prepare('DELETE FROM schedules WHERE id = ?').run(id);
+  }
+  /** 到期计划（enabled 且 next_run_at 已到），按 next_run_at 升序——调度器单轮处理口径 */
+  listDueSchedules(nowIsoStr: string): ScheduleRow[] {
+    return this.db
+      .prepare('SELECT * FROM schedules WHERE enabled = 1 AND next_run_at <= ? ORDER BY next_run_at, id')
+      .all(nowIsoStr) as unknown as ScheduleRow[];
+  }
+
   searchProjects(workspaceId: string, pattern: string, limit: number): ProjectRow[] {
     return this.db
       .prepare(

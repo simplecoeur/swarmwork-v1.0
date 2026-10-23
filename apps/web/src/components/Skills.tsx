@@ -3,6 +3,7 @@ import { useApp } from '../context';
 import { fetchRegistry, fetchSkills } from '../api';
 import AssetRefPicker from './AssetRefPicker';
 import EstimateLine from './EstimateLine';
+import { SkillParamFields } from './SkillParamFields';
 import { Badge, Button, Checkbox, Dialog, EmptyState, Input, Select, Spinner, Textarea } from './ui';
 import type { AssetRef, RegistryRole, SkillInputField, SkillListItem } from '../types';
 
@@ -138,7 +139,7 @@ function defaultParams(s: SkillListItem): Record<string, ParamValue> {
  * 列表走 GET /api/skills（本空间 + 平台库合并返回，前端按 workspaceId 分段）。
  */
 export default function Skills() {
-  const { S, post, send, toast, refresh, setTab, currentWorkspace, user } = useApp();
+  const { S, post, send, toast, refresh, setTab, currentWorkspace, user, openSchedules } = useApp();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
   const [roles, setRoles] = useState<RegistryRole[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -314,6 +315,27 @@ export default function Skills() {
     setDispatchSkill(null);
     refresh();
     setTab('office');
+  }
+
+  /* G-10 快捷钮：把当前发单参数带到定时任务页预填新建表单（不直接建计划，周期在那边定） */
+  function makeSchedule() {
+    if (!dispatchSkill) return;
+    if (!teamId) return toast('先选小组');
+    const clean: Record<string, unknown> = {};
+    for (const f of dispatchSkill.inputSchema ?? []) {
+      const v = params[f.key];
+      if (f.required && (v === '' || v === undefined)) return toast(`参数「${f.label}」必填`);
+      if (v !== '' && v !== undefined) clean[f.key] = f.type === 'number' ? Number(v) : v;
+    }
+    openSchedules({
+      kind: 'skill',
+      skillId: dispatchSkill.id,
+      teamId,
+      params: clean,
+      assetRefs: assetRefs.length ? assetRefs : undefined,
+    });
+    setDispatchSkill(null);
+    toast('已带参数跳到定时任务页，选好周期保存即可');
   }
 
   const canEdit = (s: SkillListItem) =>
@@ -588,42 +610,12 @@ export default function Skills() {
           onClose={() => setDispatchSkill(null)}
           title={<>{dispatchMode === 'test' ? '试运行' : '发单'} · {dispatchSkill.name}<Badge>v{dispatchSkill.version}</Badge></>}
         >
-            {(dispatchSkill.inputSchema ?? []).map((f) => (
-              <div key={f.key}>
-                <label>
-                  {f.label}
-                  {f.required ? ' *' : ''}
-                </label>
-                {f.type === 'textarea' ? (
-                  <Textarea
-                    rows={3}
-                    placeholder={f.placeholder}
-                    value={String(params[f.key] ?? '')}
-                    onChange={(e) => setParams({ ...params, [f.key]: e.target.value })}
-                  />
-                ) : f.type === 'select' ? (
-                  <Select
-                    value={String(params[f.key] ?? '')}
-                    onValueChange={(v) => setParams({ ...params, [f.key]: v })}
-                    placeholder="请选择"
-                    options={(f.options ?? []).map((o) => ({ value: o, label: o }))}
-                  />
-                ) : f.type === 'checkbox' ? (
-                  <Checkbox
-                    checked={!!params[f.key]}
-                    onCheckedChange={(on) => setParams({ ...params, [f.key]: on })}
-                    label="是"
-                  />
-                ) : (
-                  <Input
-                    type={f.type === 'number' ? 'number' : 'text'}
-                    placeholder={f.placeholder}
-                    value={String(params[f.key] ?? '')}
-                    onChange={(e) => setParams({ ...params, [f.key]: e.target.value })}
-                  />
-                )}
-              </div>
-            ))}
+            {/* 参数表单渲染与定时任务表单共用 SkillParamFields（G-10 复用点） */}
+            <SkillParamFields
+              fields={dispatchSkill.inputSchema ?? []}
+              values={params}
+              onChange={setParams}
+            />
             <div className="row">
               <div>
                 <label>交给哪个小组</label>
@@ -656,6 +648,11 @@ export default function Skills() {
               <Button onClick={submitDispatch}>
                 {dispatchMode === 'test' ? '开始试运行' : '发单'}
               </Button>{' '}
+              {dispatchMode === 'dispatch' && (
+                <>
+                  <Button variant="gray" onClick={makeSchedule}>设为定时</Button>{' '}
+                </>
+              )}
               <Button variant="gray" onClick={() => setDispatchSkill(null)}>取消</Button>
             </div>
         </Dialog>

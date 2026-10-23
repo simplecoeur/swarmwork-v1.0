@@ -11,6 +11,7 @@ import KnowledgeBase from './components/KnowledgeBase';
 import Settings from './components/Settings';
 import Admin from './components/Admin';
 import Skills from './components/Skills';
+import Schedules from './components/Schedules';
 import Assets from './components/Assets';
 import HelpCenter from './components/HelpCenter';
 import { GlobalSearch, SearchResultsPage } from './components/GlobalSearch';
@@ -82,7 +83,7 @@ function Shell() {
     scrollToAnchor(anchor);
   };
   const moreActive =
-    tab === 'assets' || tab === 'kb' || tab === 'cost' || tab === 'settings' || tab === 'admin' || tab === 'help';
+    tab === 'assets' || tab === 'kb' || tab === 'cost' || tab === 'settings' || tab === 'admin' || tab === 'help' || tab === 'schedules' || tab === 'account';
 
   /* G-09 搜索命中跳转：按类型落到对应页面/区块 */
   const goSearchItem = (item: SearchItem) => {
@@ -131,6 +132,7 @@ function Shell() {
         <nav>
           {navBtn('office', '办公室')}
           {navBtn('skills', '技能')}
+          {navBtn('schedules', '定时任务')}
           {navBtn('assets', '资产库')}
           {navBtn('kb', '知识库')}
           {navBtn('cost', '成本中心')}
@@ -203,6 +205,11 @@ function Shell() {
             {tab === 'skills' && (
               <section>
                 <Skills />
+              </section>
+            )}
+            {tab === 'schedules' && (
+              <section>
+                <Schedules />
               </section>
             )}
             {tab === 'assets' && (
@@ -285,6 +292,7 @@ function Shell() {
             }
             items={[
               { label: '通知中心', onSelect: () => setNotifOpen(true) },
+              { label: '定时任务', onSelect: () => setTab('schedules') },
               { label: '资产库', onSelect: () => setTab('assets') },
               { label: '知识库', onSelect: () => setTab('kb') },
               { label: '成本中心', onSelect: () => setTab('cost') },

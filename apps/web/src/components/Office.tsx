@@ -51,7 +51,7 @@ function MemberEditor({ memberId, onClose }: { memberId: string; onClose: () => 
 }
 
 export default function Office() {
-  const { S } = useApp();
+  const { S, setTab } = useApp();
   const [editingId, setEditingId] = useState<string | null>(null);
   if (!S) return null;
   // v1.1.0 移动端任务状态摘要：计数直接由 S.tasks 按状态过滤（状态值见 shared 状态机），无现成聚合字段
@@ -84,6 +84,14 @@ export default function Office() {
         </button>
       </div>
       {editingId && <MemberEditor memberId={editingId} onClose={() => setEditingId(null)} />}
+      </div>
+      {/* G-10 办公室入口：跳定时任务页（画布外的普通区块，不碰 PixelOffice） */}
+      <div className="card">
+        <h2>⏰ 定时任务 <span className="tag">每天/每周到点自动发单，和手动发单走同一条路径</span></h2>
+        <p className="hint">把重复的活设成计划，到点自动进任务墙（平台运行期间生效）。</p>
+        <div style={{ marginTop: 8 }}>
+          <Button size="small" onClick={() => setTab('schedules')}>去定时任务页</Button>
+        </div>
       </div>
       <CapabilitiesShelf />
     </>
