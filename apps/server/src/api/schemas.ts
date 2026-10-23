@@ -367,3 +367,20 @@ export const notifyConfigSchema = z.object({
   emailEnabled: z.boolean().default(false),
   email: z.string().default(''),
 });
+
+/* ---------- G-05 反馈 / G-08 成本设置（v1.2.0） ---------- */
+
+export const feedbackCreateSchema = z.object({
+  category: z.enum(['bug', 'suggestion', 'question', 'other']).default('other'),
+  content: z.string().trim().min(1, '反馈内容必填').max(2000, '反馈内容最长 2000 字'),
+  contact: z.string().trim().max(200).optional(),
+});
+
+export const feedbackHandleSchema = z.object({
+  adminNote: z.string().trim().max(1000).optional(),
+});
+
+/** 低余额阈值设置：以元提交（null = 清除显式设置，回落默认口径：最近一笔采购额/体验发放额的 20%） */
+export const costSettingsSchema = z.object({
+  lowBalanceThresholdYuan: z.number().min(0).nullable(),
+});

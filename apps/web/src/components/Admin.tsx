@@ -3,7 +3,7 @@ import { useApp } from '../context';
 import { requestRaw } from '../api';
 import { yuan } from '../utils';
 import { Badge, Button, Dialog, Field, Input, Select, Spinner, useConfirm } from './ui';
-import type { AdminUser, AdminWorkspace, IndustryPack, SkillListItem, TrialApi } from '../types';
+import type { AdminUser, AdminWorkspace, FeedbackItem, IndustryPack, SkillListItem, TrialApi } from '../types';
 
 const PROVIDERS = ['deepseek', 'openai', 'anthropic', 'custom'];
 
@@ -216,6 +216,9 @@ export default function Admin() {
       {/* ---------- skill 上架审核（M7） ---------- */}
       <SkillReviewCard />
 
+      {/* ---------- 用户反馈（G-05） ---------- */}
+      <FeedbackCard />
+
       {/* ---------- 行业包（只读） ---------- */}
       <div className="card">
         <h2>行业包 <span className="tag">只读列表；包的编辑走服务端种子/接口，本台不做编辑</span></h2>
@@ -246,6 +249,102 @@ export default function Admin() {
       )}
       {confirmNode}
     </>
+  );
+}
+
+/* ---------------- 用户反馈（G-05）：只落库 + 置已处理，不做工单流转 ---------------- */
+
+const FEEDBACK_CATEGORY_LABEL: Record<string, string> = {
+  bug: '问题',
+  suggestion: '建议',
+  question: '疑问',
+  other: '其他',
+};
+
+function FeedbackCard() {
+  const { post, toast } = useApp();
+  const [items, setItems] = useState<FeedbackItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [notes, setNotes] = useState<Record<number, string>>({});
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const qs = statusFilter ? `?status=${statusFilter}` : '';
+      const j = await requestRaw('GET', `/api/admin/feedback${qs}`);
+      setItems((j.feedback as FeedbackItem[]) ?? []);
+      setTotal(Number(j.total ?? 0));
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoaded(true);
+    }
+  }, [statusFilter, toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handle(f: FeedbackItem) {
+    try {
+      await post(`/api/admin/feedback/${f.id}/handle`, { adminNote: notes[f.id] ?? '' });
+      toast('已置为已处理');
+      load();
+    } catch {
+      /* post 已 toast */
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>用户反馈 <span className="tag">用户在帮助页/顶栏提交的反馈（共 {total} 条）；处理后置已处理并留备注</span></h2>
+      <div style={{ marginBottom: 8 }}>
+        <Select
+          value={statusFilter}
+          onValueChange={setStatusFilter}
+          emptyLabel="全部状态"
+          options={[
+            { value: 'open', label: '待处理' },
+            { value: 'handled', label: '已处理' },
+          ]}
+        />{' '}
+        <Button size="small" variant="gray" onClick={load}>刷新</Button>
+      </div>
+      {loaded && items.length === 0 && <p className="hint">暂无符合条件的反馈。</p>}
+      {items.map((f) => (
+        <div className="task" key={f.id}>
+          <span className="tt">#{f.id}</span>
+          <Badge>{FEEDBACK_CATEGORY_LABEL[f.category] ?? f.category}</Badge>
+          <Badge variant={f.status === 'handled' ? 'done' : 'adj'}>
+            {f.status === 'handled' ? '已处理' : '待处理'}
+          </Badge>
+          <div className="meta">
+            {fmtTime(f.createdAt)} · 用户 {f.userId}
+            {f.contact ? ` · 联系方式：${f.contact}` : ''}
+            {f.handledAt ? ` · 处理于 ${fmtTime(f.handledAt)}` : ''}
+          </div>
+          <div style={{ fontSize: 13.5, lineHeight: 1.7, overflowWrap: 'anywhere' }}>{f.content}</div>
+          {f.adminNote ? <div className="hint">处理备注：{f.adminNote}</div> : null}
+          {f.status === 'open' && (
+            <div className="row" style={{ alignItems: 'flex-end', marginTop: 6 }}>
+              <div>
+                <Input
+                  value={notes[f.id] ?? ''}
+                  onChange={(e) => setNotes((m) => ({ ...m, [f.id]: e.target.value }))}
+                  placeholder="处理备注（可选）"
+                />
+              </div>
+              <div style={{ flex: '0 0 110px' }}>
+                <Button size="small" variant="green" onClick={() => handle(f)}>
+                  置已处理
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 

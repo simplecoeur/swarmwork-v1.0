@@ -12,7 +12,9 @@ import Settings from './components/Settings';
 import Admin from './components/Admin';
 import Skills from './components/Skills';
 import Assets from './components/Assets';
-import NotificationBell from './components/NotificationBell';
+import HelpCenter from './components/HelpCenter';
+import FeedbackDialog from './components/FeedbackDialog';
+import NotificationBell, { NotificationCenterDialog } from './components/NotificationBell';
 import NewWorkspaceModal from './components/NewWorkspace';
 import { AuthGate, ChangePasswordGate } from './components/AuthGate';
 import { Button, Card, DropdownMenu, Select, Spinner } from './components/ui';
@@ -24,6 +26,9 @@ function Shell() {
     authStatus, user, workspaces, currentWorkspace, switchWorkspace, logout, toast,
   } = useApp();
   const [showNewWs, setShowNewWs] = useState(false);
+  // G-05 全站反馈弹窗 / G-03 移动端通知中心（全屏）
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   // v1.1.0 移动端底部栏高亮：office tab 内含办公室/发单/任务墙三段，用它区分当前落点
   const [mNav, setMNav] = useState<'office' | 'publish' | 'tasks'>('office');
 
@@ -73,7 +78,7 @@ function Shell() {
     scrollToAnchor(anchor);
   };
   const moreActive =
-    tab === 'assets' || tab === 'kb' || tab === 'cost' || tab === 'settings' || tab === 'admin';
+    tab === 'assets' || tab === 'kb' || tab === 'cost' || tab === 'settings' || tab === 'admin' || tab === 'help';
 
   async function onSwitch(id: string) {
     if (!id || id === currentWorkspace?.id) return;
@@ -111,6 +116,7 @@ function Shell() {
           {navBtn('kb', '知识库')}
           {navBtn('cost', '成本中心')}
           {navBtn('settings', '设置后台')}
+          {navBtn('help', '帮助')}
           {user?.isPlatformAdmin && navBtn('admin', '管理台')}
         </nav>
         <NotificationBell />
@@ -124,6 +130,8 @@ function Shell() {
             }
             items={[
               { label: '＋ 开新公司', onSelect: () => setShowNewWs(true) },
+              { label: '❓ 帮助中心', onSelect: () => setTab('help') },
+              { label: '✉️ 意见反馈', onSelect: () => setFeedbackOpen(true) },
               { label: '退出登录', onSelect: () => void logout() },
             ]}
           />
@@ -131,6 +139,8 @@ function Shell() {
       </header>
 
       {showNewWs && <NewWorkspaceModal onClose={() => setShowNewWs(false)} />}
+      {feedbackOpen && <FeedbackDialog onClose={() => setFeedbackOpen(false)} />}
+      <NotificationCenterDialog open={notifOpen} onClose={() => setNotifOpen(false)} />
 
       {!currentWorkspace ? (
         <main>
@@ -201,6 +211,11 @@ function Shell() {
                 <Admin />
               </section>
             )}
+            {tab === 'help' && (
+              <section>
+                <HelpCenter />
+              </section>
+            )}
           </main>
         </>
       )}
@@ -245,12 +260,15 @@ function Shell() {
               </Button>
             }
             items={[
+              { label: '通知中心', onSelect: () => setNotifOpen(true) },
               { label: '资产库', onSelect: () => setTab('assets') },
               { label: '知识库', onSelect: () => setTab('kb') },
               { label: '成本中心', onSelect: () => setTab('cost') },
               { label: '成果库', onSelect: () => goMoreSection('results-anchor') },
               { label: '项目', onSelect: () => goMoreSection('projects-anchor') },
               { label: '设置后台', onSelect: () => setTab('settings') },
+              { label: '帮助中心', onSelect: () => setTab('help') },
+              { label: '意见反馈', onSelect: () => setFeedbackOpen(true) },
               ...(user?.isPlatformAdmin
                 ? [{ label: '管理台', onSelect: () => setTab('admin') }]
                 : []),
