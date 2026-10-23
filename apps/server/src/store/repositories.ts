@@ -290,6 +290,32 @@ export interface StyleTemplateRow {
   updated_at: string;
 }
 
+/* ----- v1.3.0 G 晨报/签到（迁移 017） ----- */
+export interface CheckinRow {
+  id: string;
+  user_id: string;
+  workspace_id: string;
+  date: string;
+  created_at: string;
+}
+export interface BriefingRow {
+  id: string;
+  workspace_id: string;
+  date: string;
+  content_md: string;
+  created_at: string;
+}
+
+/* ----- v1.3.0 C2 问卷存档（迁移 018） ----- */
+export interface QuestionnaireRow {
+  id: string;
+  user_id: string;
+  workspace_id: string;
+  answers: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface DeliveryLinkRow {
   id: string;
   token_hash: string;
@@ -1354,6 +1380,71 @@ export class Repos {
   }
   deleteStyleTemplate(id: string): void {
     this.db.prepare('DELETE FROM style_templates WHERE id = ?').run(id);
+  }
+  /** 管理台审核区：待审（visibility='pending_review'）的用户风格模板，提交时间正序 */
+  listPendingStyleTemplates(): StyleTemplateRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM style_templates WHERE visibility = 'pending_review' ORDER BY created_at, id",
+      )
+      .all() as unknown as StyleTemplateRow[];
+  }
+
+  /* ----- v1.3.0 G 签到 / 晨报（迁移 017） ----- */
+  /** 插入签到；唯一约束冲突（同日已签）返回 false（幂等口径由调用方决定） */
+  insertCheckin(row: CheckinRow): boolean {
+    const r = this.db
+      .prepare(
+        'INSERT OR IGNORE INTO checkins (id, user_id, workspace_id, date, created_at) VALUES (?,?,?,?,?)',
+      )
+      .run(row.id, row.user_id, row.workspace_id, row.date, row.created_at);
+    return Number(r.changes) > 0;
+  }
+  getCheckin(userId: string, workspaceId: string, date: string): CheckinRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM checkins WHERE user_id = ? AND workspace_id = ? AND date = ?')
+      .get(userId, workspaceId, date) as unknown as CheckinRow | undefined;
+  }
+  /** 某用户在某空间的全部签到日期（YYYY-MM-DD，倒序） */
+  listCheckinDates(userId: string, workspaceId: string): string[] {
+    return (
+      this.db
+        .prepare('SELECT date FROM checkins WHERE user_id = ? AND workspace_id = ? ORDER BY date DESC')
+        .all(userId, workspaceId) as unknown as Array<{ date: string }>
+    ).map((r) => r.date);
+  }
+  insertBriefing(row: BriefingRow): void {
+    this.db
+      .prepare(
+        'INSERT OR IGNORE INTO briefings (id, workspace_id, date, content_md, created_at) VALUES (?,?,?,?,?)',
+      )
+      .run(row.id, row.workspace_id, row.date, row.content_md, row.created_at);
+  }
+  getBriefing(workspaceId: string, date: string): BriefingRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM briefings WHERE workspace_id = ? AND date = ?')
+      .get(workspaceId, date) as unknown as BriefingRow | undefined;
+  }
+  listBriefings(workspaceId: string, limit = 7): BriefingRow[] {
+    return this.db
+      .prepare('SELECT * FROM briefings WHERE workspace_id = ? ORDER BY date DESC LIMIT ?')
+      .all(workspaceId, limit) as unknown as BriefingRow[];
+  }
+
+  /* ----- v1.3.0 C2 问卷存档（迁移 018） ----- */
+  upsertQuestionnaire(row: QuestionnaireRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO questionnaire_responses (id, user_id, workspace_id, answers, created_at, updated_at)
+         VALUES (?,?,?,?,?,?)
+         ON CONFLICT(workspace_id) DO UPDATE SET user_id=excluded.user_id, answers=excluded.answers, updated_at=excluded.updated_at`,
+      )
+      .run(row.id, row.user_id, row.workspace_id, row.answers, row.created_at, row.updated_at);
+  }
+  getQuestionnaire(workspaceId: string): QuestionnaireRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM questionnaire_responses WHERE workspace_id = ?')
+      .get(workspaceId) as unknown as QuestionnaireRow | undefined;
   }
   bumpStyleTemplateApplyCount(id: string): void {
     this.db.prepare('UPDATE style_templates SET apply_count = apply_count + 1 WHERE id = ?').run(id);

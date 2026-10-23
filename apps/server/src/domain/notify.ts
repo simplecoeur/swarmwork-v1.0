@@ -24,7 +24,9 @@ export type NotificationType =
   | 'impersonation'
   | 'transfer'
   | 'skill_featured'
-  | 'skill_unfeatured';
+  | 'skill_unfeatured'
+  | 'checkin_reminder'
+  | 'daily_briefing';
 
 export const NOTIFICATION_TYPES: NotificationType[] = [
   'adjudication',
@@ -38,6 +40,8 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
   'transfer',
   'skill_featured',
   'skill_unfeatured',
+  'checkin_reminder',
+  'daily_briefing',
 ];
 
 export interface NotifyPrefs {
@@ -95,6 +99,30 @@ export function notifyOwner(
     read_at: null,
     created_at: nowIso(),
   });
+}
+
+/**
+ * 邮件旁路（v1.3.0 G 晨报预留，与 G-01 共用同一接入点，不另写第二套发信）：
+ * notifyConfig 的真实形状 = settings(key='notifyConfig', workspace 维度) 的 {emailEnabled?: boolean, email?: string}，
+ * 且 notify.ts 内的 mailChannel 为硬编码常量 'reserved-not-implemented'（无 SMTP 主机/发件配置字段）。
+ * 因此本版恒跳过：只有 mailChannel 不再是该保留值时才走后续发信实现（G-01 落地后在此补齐）。
+ */
+export function maybeMailDaily(
+  repos: Repos,
+  workspaceId: string,
+  _subject: string,
+  _body: string,
+): void {
+  const cfg = repos.getSetting<{ emailEnabled?: boolean; email?: string }>(
+    'notifyConfig',
+    { emailEnabled: false, email: '' },
+    workspaceId,
+  );
+  const mailChannel: string = 'reserved-not-implemented';
+  if (mailChannel === 'reserved-not-implemented' || !cfg.emailEnabled || !cfg.email) {
+    return; // G-01 未落地：邮件通道未启用，晨报只落站内通知
+  }
+  // 接回点（G-01）：在此按 notifyConfig 的 SMTP 配置发送 _subject/_body，不另建发信通道。
 }
 
 /**

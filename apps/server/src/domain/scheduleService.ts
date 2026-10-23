@@ -101,6 +101,34 @@ function zonedTimeToUtc(
   return new Date(guess);
 }
 
+/* ----- 空间时区口径（G-10 同源：settings.timezone，缺省 Asia/Shanghai；v1.3.0 G 晨报/签到共用） ----- */
+
+/** 空间时区：与定时计划建改的缺省口径完全一致（空间设置 timezone，未设时 Asia/Shanghai） */
+export function workspaceTimezone(repos: Repos, workspaceId: string): string {
+  return repos.getSetting<string>('timezone', 'Asia/Shanghai', workspaceId);
+}
+
+/** 某 UTC 时刻在 timeZone 下的本地日期（YYYY-MM-DD） */
+export function zonedDateStr(date: Date, timeZone: string): string {
+  const p = zonedParts(date, timeZone);
+  const mm = String(p.month).padStart(2, '0');
+  const dd = String(p.day).padStart(2, '0');
+  return `${p.year}-${mm}-${dd}`;
+}
+
+/** 某 UTC 时刻在 timeZone 下的本地时刻（HH:MM，24 小时制） */
+export function zonedTimeStr(date: Date, timeZone: string): string {
+  const p = zonedParts(date, timeZone);
+  return `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
+}
+
+/** 本地日期（YYYY-MM-DD）在 timeZone 下当日 00:00 对应的 UTC 时刻 */
+export function zonedDayStartUtc(dateStr: string, timeZone: string): Date {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!m) throw new DomainError(ErrorCode.VALIDATION, `日期「${dateStr}」不合法（须 YYYY-MM-DD）`);
+  return zonedTimeToUtc(Number(m[1]), Number(m[2]), Number(m[3]), 0, 0, timeZone);
+}
+
 function parseTimeLocal(timeLocal: string): { hour: number; minute: number } {
   const m = /^(\d{2}):(\d{2})$/.exec(timeLocal || '');
   if (!m) throw new DomainError(ErrorCode.VALIDATION, `时间「${timeLocal}」不合法（须 HH:MM）`);
