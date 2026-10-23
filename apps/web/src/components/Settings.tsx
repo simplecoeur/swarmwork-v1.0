@@ -8,13 +8,14 @@ import {
   fetchVisitLinks,
   fetchWebhookDeliveries,
   fetchWebhooks,
+  lookupUserByEmail,
   putPreference,
   requestRaw,
 } from '../api';
 import RegistryCard from './RegistryCard';
 import FeedbackDialog from './FeedbackDialog';
 import { NOTIFICATION_TYPE_LABELS, NOTIFICATION_TYPE_ORDER } from './NotificationBell';
-import { Badge, Button, Checkbox, Dialog, Input, Select, Spinner, Switch, Textarea, useConfirm } from './ui';
+import { Badge, Button, Checkbox, Dialog, Field, Input, Select, Spinner, Switch, Textarea, useConfirm } from './ui';
 import type {
   ApiItem,
   ApiToken,
@@ -516,6 +517,8 @@ export default function Settings() {
       <VisitLinksCard />
 
       <NotifyPrefsCard />
+
+      <WorkspaceTransferCard />
 
       <div className="card">
         <h2>运行参数</h2>
@@ -1063,17 +1066,17 @@ function NotifyPrefsCard() {
   );
 }
 
-/* ---------------- 渠道绑定（M7：MJ 直推） ---------------- */
+/* ---------------- 渠道绑定（M7：MJ 直推 + G-17：通用 Webhook） ---------------- */
 function ChannelCard() {
   const { toast } = useApp();
-  const [channel, setChannel] = useState<ChannelInfo | null>(null);
+  const [channels, setChannels] = useState<ChannelInfo[]>([]);
   const [pushes, setPushes] = useState<ChannelPush[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const [chs, ps] = await Promise.all([fetchChannels(), fetchChannelPushes()]);
-      setChannel(chs.find((c) => c.type === 'mj') ?? chs[0] ?? null);
+      setChannels(chs);
       setPushes(ps);
     } catch {
       /* 拉取失败保持旧状态 */
@@ -1099,21 +1102,31 @@ function ChannelCard() {
     load();
   }
 
+  const mjChannel = channels.find((c) => c.type === 'mj') ?? null;
+  const webhookChannel = channels.find((c) => c.type === 'generic_webhook') ?? null;
+
   return (
     <div className="card">
-      <h2>渠道绑定（MJ 直推） <span className="tag">绑定后成果库可一键把成果直推到 MJ 平台；令牌加密保存、页面不回显</span></h2>
+      <h2>渠道绑定 <span className="tag">绑定后成果库可一键推送成果：MJ 直推 / 通用 Webhook；令牌与密钥加密保存、页面不回显</span></h2>
       {!loaded && <p><Spinner label="加载中…" /></p>}
-      {loaded && channel && (
-        <ChannelBindForm key={`${channel.baseUrl}|${channel.account}|${channel.bound}`} channel={channel} onSaved={load} />
+      {loaded && mjChannel && (
+        <ChannelBindForm key={`mj|${mjChannel.baseUrl}|${mjChannel.account}|${mjChannel.bound}`} channel={mjChannel} onSaved={load} />
       )}
-      {loaded && !channel && <p className="hint">暂无可用渠道。</p>}
+      {loaded && webhookChannel && (
+        <WebhookBindForm
+          key={`gw|${webhookChannel.url ?? ''}|${webhookChannel.bound}`}
+          channel={webhookChannel}
+          onSaved={load}
+        />
+      )}
+      {loaded && !mjChannel && !webhookChannel && <p className="hint">暂无可用渠道。</p>}
 
       <label style={{ marginTop: 14 }}>推送记录</label>
-      {pushes.length === 0 && <p className="hint">暂无推送记录。在成果库对已完成成果点「推送 MJ」后会出现在这里。</p>}
+      {pushes.length === 0 && <p className="hint">暂无推送记录。在成果库对已完成成果点「推送 MJ」/「推送 Webhook」后会出现在这里。</p>}
       {pushes.map((p) => (
         <div className="task" key={p.id}>
-          <span className="tt">{p.channelType.toUpperCase()} 推送</span>
-          <Badge variant={p.status === 'ok' || p.status === 'success' ? 'done' : p.status === 'failed' ? 'rej' : 'adj'}>
+          <span className="tt">{p.channelType === 'generic_webhook' ? '通用 Webhook' : p.channelType.toUpperCase()} 推送</span>
+          <Badge variant={p.status === 'ok' || p.status === 'success' || p.status === 'accepted' ? 'done' : p.status === 'failed' ? 'rej' : 'adj'}>
             {p.status}
           </Badge>
           <div className="meta">
@@ -1123,7 +1136,11 @@ function ChannelCard() {
             {p.message ? <><br />{p.message}</> : null}
           </div>
           <div style={{ marginTop: 6 }}>
-            <Button size="small" variant="gray" onClick={() => refreshPush(p)}>回查指标</Button>
+            {p.channelType === 'generic_webhook' ? (
+              <span className="hint">该渠道不支持数据回流</span>
+            ) : (
+              <Button size="small" variant="gray" onClick={() => refreshPush(p)}>回查指标</Button>
+            )}
           </div>
         </div>
       ))}
@@ -1197,6 +1214,214 @@ function ChannelBindForm({
         <Button size="small" variant="blue" onClick={bind}>保存绑定</Button>
       </div>
       {bindMsg && <p className="hint" style={{ marginTop: 6, fontWeight: 700 }}>{bindMsg}</p>}
+    </div>
+  );
+}
+
+/* ---------------- 通用 Webhook 绑定（G-17） ----------------
+ * 保存即向 URL 发 bind.ping 探活（HMAC 签名）：通则已绑定，失败原因如实回显。
+ * 该渠道为单向推送，不支持数据回流（页面明示）。 */
+function WebhookBindForm({
+  channel,
+  onSaved,
+}: {
+  channel: ChannelInfo;
+  onSaved: () => Promise<void>;
+}) {
+  const { post, toast } = useApp();
+  const [url, setUrl] = useState(channel.url ?? '');
+  const [secret, setSecret] = useState('');
+  const [bindMsg, setBindMsg] = useState('');
+  const [binding, setBinding] = useState(false);
+
+  async function bind() {
+    if (!url.trim()) return toast('先填 Webhook URL');
+    if (!channel.hasSecret && !secret) return toast('先填签名密钥（secret）');
+    setBinding(true);
+    let res: Record<string, unknown>;
+    try {
+      res = await post('/api/channels/bind', {
+        channelType: 'generic_webhook',
+        url: url.trim(),
+        secret: secret || undefined,
+        events: ['delivered'],
+      });
+    } catch {
+      setBinding(false);
+      return;
+    }
+    setBinding(false);
+    const bind = res.bind as { bound?: boolean; message?: string } | undefined;
+    setBindMsg(bind?.message ?? '');
+    setSecret('');
+    toast(
+      bind?.bound
+        ? `通用 Webhook 已绑定${bind.message ? ` · ${bind.message}` : ''}`
+        : `绑定未完成：${bind?.message ?? '请检查 URL 与密钥'}`,
+    );
+    await onSaved();
+  }
+
+  return (
+    <div className="apicard">
+      <div style={{ fontWeight: 900, marginBottom: 4 }}>
+        {channel.name}（generic_webhook）· 当前状态：
+        {channel.bound ? (
+          <span style={{ color: 'var(--teal)' }}>已绑定</span>
+        ) : (
+          <span className="warn">未绑定</span>
+        )}
+      </div>
+      <label>接收端 URL（仅 https；内网/云元数据地址会被 SSRF 守卫拒绝）</label>
+      <Input
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        placeholder="如：https://example.com/hooks/swarm"
+      />
+      <label>签名密钥 secret（密码框；留空 = 不修改已保存的密钥；请求以 x-swarm-signature 头 HMAC-SHA256 签名）</label>
+      <Input
+        type="password"
+        value={secret}
+        onChange={(e) => setSecret(e.target.value)}
+        placeholder={channel.hasSecret ? `已保存：${channel.secretMasked ?? '••••'}，留空不改` : '尚未填写密钥'}
+      />
+      <p className="hint" style={{ marginTop: 6 }}>
+        订阅事件：delivered（任务/项目交付时推送标题、成果全文、交付页链接与用量摘要）。该渠道不支持数据回流。
+      </p>
+      <div style={{ marginTop: 8 }}>
+        <Button size="small" variant="blue" onClick={bind} disabled={binding}>
+          {binding ? '探活中…' : '保存并测试绑定'}
+        </Button>
+      </div>
+      {bindMsg && <p className="hint" style={{ marginTop: 6, fontWeight: 700 }}>{bindMsg}</p>}
+    </div>
+  );
+}
+
+/* ---------------- 空间所有权转让（G-15 页面；接口批次二已落地） ----------------
+ * 选目标：按邮箱精确查（GET /api/users/lookup 只读补口）；执行：验密 Dialog →
+ * POST /api/workspaces/:id/transfer（校验链全在接口侧，本页不预判资格）。
+ * 成功后刷新会话空间列表（me 重拉）：转让方将不再是该空间成员。 */
+function WorkspaceTransferCard() {
+  const { post, toast, currentWorkspace, user, refreshAuth, refresh } = useApp();
+  const [email, setEmail] = useState('');
+  const [found, setFound] = useState<{ id: string; email: string; displayName: string; status: string } | null>(null);
+  const [lookupMsg, setLookupMsg] = useState('');
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const isOwner = !!currentWorkspace && currentWorkspace.ownerUserId === user?.id;
+
+  async function lookup() {
+    const em = email.trim();
+    if (!em) return toast('先填对方邮箱');
+    setFound(null);
+    setLookupMsg('');
+    try {
+      const u = await lookupUserByEmail(em);
+      setFound(u);
+      if (u.id === user?.id) setLookupMsg('这是你自己的邮箱，转让目标不能是本人（接口会拒绝）。');
+      else if (u.status !== 'active') setLookupMsg(`对方账号状态为「${u.status}」，转让会被接口拒绝（目标须为 active）。`);
+    } catch (e) {
+      setLookupMsg(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function doTransfer() {
+    if (!currentWorkspace || !found) return;
+    if (!password) return toast('请输入你的登录密码确认');
+    setBusy(true);
+    try {
+      await post(`/api/workspaces/${currentWorkspace.id}/transfer`, {
+        targetUserId: found.id,
+        password,
+      });
+    } catch {
+      setBusy(false);
+      return; /* post 已 toast 后端原文（如密码不正确） */
+    }
+    setBusy(false);
+    setDialogOpen(false);
+    setPassword('');
+    setFound(null);
+    setEmail('');
+    toast(`已把空间「${currentWorkspace.name}」转让给 ${found.email}`);
+    await refreshAuth();
+    await refresh();
+  }
+
+  return (
+    <div className="card">
+      <h2>转让所有权 <span className="tag">把当前空间整体转给另一位已注册用户；操作不可撤销</span></h2>
+      {!currentWorkspace && <p className="hint">当前没有空间。</p>}
+      {currentWorkspace && !isOwner && (
+        <p className="hint">只有空间所有者可以转让所有权（当前空间所有者不是你）。</p>
+      )}
+      {currentWorkspace && isOwner && (
+        <>
+          <p className="hint">
+            转让后：对方成为空间所有者，你将不再是该空间成员并立即失去访问；
+            空间内的 API、余额、任务、定时计划与 Webhook 归空间所有、不随人走；
+            你以该空间名义签发的开放 API Token 将失效。双方都会收到站内通知，操作记入审计台账。
+          </p>
+          <div className="row" style={{ alignItems: 'flex-end', marginTop: 8 }}>
+            <div>
+              <label>对方邮箱（精确查询）</label>
+              <Input
+                value={email}
+                onChange={(e) => { setEmail(e.target.value); setFound(null); setLookupMsg(''); }}
+                placeholder="如：partner@example.com"
+              />
+            </div>
+            <div style={{ flex: '0 0 110px' }}>
+              <Button variant="gray" onClick={lookup}>查用户</Button>
+            </div>
+          </div>
+          {lookupMsg && <p className="hint" style={{ marginTop: 6, fontWeight: 700 }}>{lookupMsg}</p>}
+          {found && (
+            <div style={{ marginTop: 8 }}>
+              <p>
+                转让给：<b>{found.displayName}</b>（{found.email}）
+                {found.status !== 'active' && <span className="warn"> · 状态 {found.status}</span>}
+              </p>
+              <div style={{ marginTop: 8 }}>
+                <Button
+                  variant="blue"
+                  disabled={found.id === user?.id}
+                  onClick={() => { setPassword(''); setDialogOpen(true); }}
+                >
+                  转让所有权…
+                </Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {dialogOpen && found && currentWorkspace && (
+        <Dialog open onClose={() => setDialogOpen(false)} title="确认转让所有权">
+          <p className="hint">
+            你正在把空间「<b>{currentWorkspace.name}</b>」的所有权转让给 <b>{found.displayName}（{found.email}）</b>。
+            转让立即生效且不可撤销：你将退出该空间、不再能访问其数据；对方成为所有者。
+            请输入你的登录密码确认这是你本人操作。
+          </p>
+          <Field label="登录密码">
+            <Input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="输入当前账号的登录密码"
+              autoFocus
+            />
+          </Field>
+          <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Button variant="blue" onClick={doTransfer} disabled={busy}>
+              {busy ? '转让中…' : '确认转让'}
+            </Button>
+            <Button variant="gray" onClick={() => setDialogOpen(false)}>取消</Button>
+          </div>
+        </Dialog>
+      )}
     </div>
   );
 }

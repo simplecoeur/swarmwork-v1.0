@@ -718,6 +718,21 @@ export function registerV120Routes(
     return { ok: true, delivery: done ? deliveryDto(done) : undefined };
   });
 
+  /* G-15 页面最小只读补口（批次三）：按邮箱精确查用户，供转让页选目标。
+   * 仅登录可达、仅精确匹配、只回 id/邮箱/显示名/状态；查不到 404。转让校验链不变，
+   * 最终合法性仍由 POST /api/workspaces/:id/transfer 全链校验（本口不做任何资格判断）。 */
+  app.get('/api/users/lookup', async (req: FastifyRequest) => {
+    auth(req);
+    const email = String((req.query as { email?: string })?.email ?? '').trim();
+    if (!email) fail(ErrorCode.VALIDATION, '需要提供 email 查询参数');
+    const u = repos.getUserByEmail(email);
+    if (!u) fail(ErrorCode.NOT_FOUND, '该邮箱未注册', 404);
+    return {
+      ok: true,
+      user: { id: u!.id, email: u!.email, displayName: u!.display_name, status: u!.status },
+    };
+  });
+
   /* ================= G-15 空间所有权转让（批次二接口先行，页面留批次三） =================
    * POST /api/workspaces/:id/transfer { targetUserId, password }：所有者本人 + 验密。
    * 校验链：操作者是该空间 owner（非成员 404 不泄漏存在性、成员非 owner 403）→ 验密 →
