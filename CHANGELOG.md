@@ -2,6 +2,41 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)，格式参考 Keep a Changelog。
 
+## [1.2.0] - 2026-10-23
+
+对标补齐版（对标 Coze/Manus/Marvis 缺口分析 G-02…G-17 共 16 条；施工图 `~/workspace/agent-swarm/v120-施工设计-2026-10-23.md`，设计补记见技术设计文档 §19）。三批次交付：门槛批（G-02/03站内/04/05/06/08）→ 批次二（G-07/09/10/11/15 接口）→ P2 批（G-12/13/14/15 页面/16/17）。新迁移 008–014；测试 62 → 126 项全过、零回退。
+
+### Added
+
+- **G-02 新手引导闭环**：注册首跑自动定位首空间；办公室 Onboarding 三步卡（发第一单→看成果→扩建团队，状态源自真实行为、完成即隐藏）；空状态三件套（EmptyState variant=guide/illustrated + Stepper）替换六处主要空态；state 增 capabilities 段供能力货架（AI 智能升级）识别新老用户。skill 货架、一键带参数跳转本版已有，未重复造轮子。
+- **G-03 通知中心（站内）**：通知类型扩至 9 类（新增 task_done/task_failed/schedule_result/impersonation），notifyPrefs 真开关（按空间+类型，关则不落行），NotificationCenterView（筛选/全标已读/空态/跳转）；通知分发结构预留 channel 维度——**邮件触达暂缓**（见 Notes）。
+- **G-04 任务过程时间线**：迁移 008 task_steps；引擎关键点埋点（拆解/注入/执行/审查/重试/阻塞/恢复/裁决），执行步成本与账本同事务同源同口径；TaskTimeline 过程视图（进行中实时刷新、注入名单可点、折叠聚合；任务墙卡面默认摘要行收起）。既有 task_events 与账本零改动。
+- **G-05 用量预估与预警**：costService 同口径预估退级链（同 skill 近 5 单→同类型→空间均值→无样本）+ 单发/批量发单预估展示与「按预估校验余额」；低于阈值时升级报价卡；余额下穿阈值（默认 5 元）自动站内通知 + 顶部横幅（上穿自动消失、重复下穿不再发）。
+- **G-06 文件导入**：知识库/资产库两段式导入（preview 解析差异预览→confirm 提交；txt/md/docx/csv；上限 5MB/500 条/200 sections 以 shared 常量为唯一口径）；逐条可摘、可改归属与类型；批量沉淀（成果库多选→飞轮沉淀 KB/skill）。新依赖 @fastify/multipart + mammoth。
+- **G-07 开放 API 与 Webhook**：迁移 010 api_tokens（仅存 SHA-256 + prefix 显示，Token 鉴权含 membership 校验）/webhooks（secret 加密存储）/webhook_deliveries；Token 管理面（建/列表/吊销）+ 令牌自助（发单/查任务/能力清单）；事件 delivered/blocked 两类、HMAC-SHA256 签名（`x-swarm-signature`）、失败自动重试 1m/5m/15m、SSRF 共用守卫校验出站 URL。
+- **G-08 帮助与反馈**：/help 页（入门指引/计费说明/常见问题，前端内容源 Markdown、无悬空路由）；迁移 009 feedback（类型/内容/联系方式）+ 提反馈入口（顶栏「更多」→ Dialog）+ 管理台反馈处理（处理/关闭）。
+- **G-09 全局搜索**：GET /api/search（任务/成果/资产/skill/KB/项目六类并行，LIKE 已转义防通配注入，摘要不出正文）；顶栏搜索入口 + `/` 快捷键 + SearchOverlay（键盘全程可用、上下选、回车直达）。
+- **G-10 定时任务**：迁移 011 schedules；scheduleService 以 Intl 按空间时区计算 next_run_at（daily/weekly/interval_hours，带 jitter 防整点扎堆）；每 30s 按手动发单同一路径（含余额校验、source='schedule'）创建；无可用 API/余额不足记失败并通知；设置页定时任务卡（新建/启停/删/上次结果）。
+- **G-11 账号设置与安全**：迁移 012（users.avatar_file/deletion_at）；ProfileCard（头像上传校验类型/≤2MB、显示名、邮箱只读、改密入口）；会话管理（当前+其他会话列表、定向吊销/一键全吊）；账号注销 7 天冷静期（仅所有者且名下无空间，PendingDeletionPage 期内可撤销，到期自动匿名化、空间与账本保留）。**邮箱验证小块暂缓**（见 Notes）。
+- **G-12 内容渲染统一**：MarkdownView 全站唯一渲染源收编（补齐全语法集、锚点锚定与性能守卫、字符照旧转义、无 innerHTML）；服务端同口径解析（domain/markdown.ts + 共享规范用例双端断言）；成果可下载 .md；任务分享卡 SVG（品牌红模板、标题/状态/耗时/成本，可嵌入公开交付页）。
+- **G-13 参观链接**：迁移 013 delivery_links.kind（delivery/visit）；visit/revoke 与交付链接同构（独立生成/撤销/过期/口令）；参观页服务端渲染、字段白名单（公司名/团队/成员状态/已交付成果标题与时间/空间简介）——**绝不含**余额、成本、API 配置、未交付成果、内部备注；访问落既有链接访问日志（以 scope='workspace' 表达空间级目标）。
+- **G-14 管理员代入查看**：迁移 014 sessions.impersonation；POST /api/admin/impersonate/:workspaceId 与 /stop；全局只读守卫单点（代入态写操作一律 403 IMPERSONATION_READ_ONLY，GET/通知已读/退出白名单）；起止双审计 + 所有者即时通知；管理台「代入查看」钮 + 顶栏红色横幅（含退出钮）。
+- **G-15 空间所有权转让**：POST /api/workspaces/:id/transfer（接口批次二先行：全校验链——仅所有者/目标存在且非停用/非本人/目标非空间成员/当前密码复核，membership 增删与 owner_user_id 双写同事务，原所有者 Token 随 membership 失效自动失权，双侧审计+通知）；设置页转让卡（邮箱精确查、目标确认、验密 Dialog、成功后 me 刷新）+ 只读补口 GET /api/users/lookup。
+- **G-16 数据导出**：POST /api/workspaces/:id/export（仅所有者）一次性 zip（manifest/README/账本 CSV/任务与成果/知识库/资产/skill/审计，文件名与结构固定）；**API 密钥零明文**（仅掩码与指纹）；>50MB 回 VALIDATION 不产半成品；审计 export_workspace。新依赖 jszip。
+- **G-17 通用 Webhook 渠道**：ChannelAdapter 注册表新增 generic_webhook（与 MJ 并列）：绑定探活 bind.ping、成果推送 delivered（标题/成果全文/交付页链接/用量摘要）、fetchMetrics 明示不支持；签名与 SSRF 守卫与 G-07 共用同一函数，未另写。渠道即插件足点，新增渠道=新适配器+登记一行。
+
+### Changed
+
+- 灌水防线沿用：Token 鉴权与开放面发单沿用既有守卫/限流口径，未新增第二套。
+- 任务墙卡面默认收起过程摘要一行（信息密度口径不变，展开看完整时间线）。
+
+### Notes（暂缓项，如实标注）
+
+- **G-01（邮件通道/邮箱验证/密码自助找回）整条暂缓**：待用户提供 SMTP 发信邮箱与授权码后补；本版只保留既有配置位（settings.notifyConfig，mailChannel='reserved-not-implemented'）与接回结构，未写任何发信实现。
+- **G-03 的邮件触达部分暂缓**：同上；通知分发结构已预留 channel 维度，SMTP 到位后邮件渠道并入分发即可。
+- **G-11 的邮箱验证小块暂缓**：同上；账号其余部分（头像/会话/注销）已全量交付。
+- MJ 直推生产联调不在本版范围（MJ 适配器在 stub 契约下全绿）。
+
 ## [1.1.0] - 2026-10-23
 
 前端体验版：自有组件层（Radix 无头原语 + 既有视觉 token）全站换装 + 移动端（≤768px）适配。桌面布局与视觉基线不变，后端逻辑零改动（唯一例外：只读交付页的服务端模板内 CSS，见 Changed）。
