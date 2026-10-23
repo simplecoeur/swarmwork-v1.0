@@ -2,6 +2,32 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)，格式参考 Keep a Changelog。
 
+## [1.1.0] - 2026-10-23
+
+前端体验版：自有组件层（Radix 无头原语 + 既有视觉 token）全站换装 + 移动端（≤768px）适配。桌面布局与视觉基线不变，后端逻辑零改动（唯一例外：只读交付页的服务端模板内 CSS，见 Changed）。
+
+### Added
+
+- 组件层（apps/web/src/components/ui/，业务统一从 barrel 导入）：以 Radix UI 无头原语打底行为——@radix-ui/react-select 2.4.1、react-dialog 1.3.1、react-dropdown-menu 2.2.1、react-switch 1.4.1、react-tabs 1.2.1、react-tooltip 1.4.1、react-checkbox 1.4.1、react-radio-group 1.5.1、react-popover 1.3.1（选型理由：只借焦点管理/键盘导航/弹层定位/Esc 等行为、零自带样式，皮肤 100% 用既有 token，不带进第二套视觉）。组件清单：Button、Input、Textarea、Select、Dialog（+ useConfirm 钩子）、DropdownMenu、Popover、Switch、Tabs、Tooltip、Checkbox、RadioGroup、Badge、Card、EmptyState、Spinner、Field；样式只引用既有设计 token（纸面底/墨边/硬阴影/品牌红/方角），全部交互组件有 :focus-visible 可见焦点。
+- 移动端底部固定导航：办公室 / 发单 / 任务墙 / 技能 / 更多。实际 TabKey 只有 7 个，发单（PublishForm)、任务墙、项目、成果库是办公室页内区块——底部栏对应项以「切到办公室 tab + 锚点滚动」实现（publish/taskwall/projects/results 四锚点）；「更多」（Radix DropdownMenu）收纳资产库、知识库、成本中心、成果库、项目、设置后台、管理台（仅平台管理员，与桌面一致）。
+- 办公室移动专属任务状态摘要条（画布下方，桌面隐藏）：进行中（状态「执行中」）/ 待审核 / 待裁决三项计数（S.tasks 按状态过滤），点击滚到本页任务墙区块。
+
+### Changed
+
+- 全站表单与高频交互换装（登录/注册/改密、顶栏空间切换与账号菜单、通知铃铛、发布任务三模式、任务墙与项目操作、技能建参/试运行/安装/上架审核、资产库与引用选择、知识库、成本中心、成果库/交付、管理台、设置后台全部卡片）：**原生 `<select>` 全站清零**；弹窗统一 Radix Dialog（焦点陷阱、Esc/点遮罩关闭）；全部 window.confirm/prompt（11 处）改为自有确认弹窗/输入弹窗（Admin 驳回原因改为弹窗内输入）；顶栏用户信息改 DropdownMenu；NotificationBell 改 Popover；KnowledgeBase 启用/停用改 Switch；AuthGate 登录/注册切换改 Tabs；状态 chip 统一 Badge。
+- 移动端布局（全部隔离在 `@media (max-width: 768px)`，桌面规则零改动）：输入类控件字号 ≥16px（防 iOS 聚焦缩放）、min-height 44px；按钮/菜单项/Select 项/Tabs 触发器触控高度 ≥44px；body `overflow-x: clip` 整页禁横滚；main 内边距收窄且底部让位 92px 防底部栏遮挡；.card 单列、内边距与阴影收窄（风格不变）；.row 子项全宽堆叠；顶栏双行（第一行品牌/铃铛/账号，第二行空间切换 Select 撑满 + 开新公司）；桌面 nav 隐藏。宽表格统一「容器内横向滚动」（.table-wrap，表格 min-width 560px，整页不横滚）：Admin 用户管理表、空间总览表，CostCenter 按 API 拆账表、小组排行表、任务账本表，共 5 张。
+- 只读交付页移动优化（apps/server/src/domain/deliveryService.ts 两个渲染模板的 `<style>` 纯 CSS 改动，无逻辑/结构变化；该页为服务端渲染，此为本版唯一触及 server 的文件）：正文页新增 `@media (max-width:600px)` 收窄 body/.wrap 内边距与标题字号；口令页输入框 font-size 16px 且 min-height 44px、按钮 min-height 44px，并新增同断点内边距收窄。
+
+### Fixed
+
+- 移动端发单区双列挤压：PublishForm/Standards 卡片的内联 flex 配比（1.2/1，桌面用）压过移动媒体查询的堆叠规则——媒体查询内 `.row > *` 以 `!important` 强制全宽堆叠（仅 ≤768px 生效，桌面配比不变）。双视口验收实测发现并修复。
+
+### Notes（保留的原生控件及理由）
+
+- CostCenter 台账导出 `<input type="month">`：Radix 无月份选择原语，保留原生以不丢浏览器月份选择器。
+- Skills 工种输入的 `<datalist>` 内 `<option>`：HTML 规范里 datalist 只能用原生 option（挂在已组件化 Input 的 list 属性上做联想）。
+- 展示型例外（非表单控件）：Settings/CostCenter/Results 的下载直链 `<a class="btn">`（备份/导出）是链接不是按钮控件；各页 `<label>` 保留作字段标题；PixelOffice 的 canvas 与小地图按基线纪律未动（其缩放按钮已换组件版 Button + Tooltip，仅 DOM 层）。
+
 ## [1.0.1] - 2026-10-23
 
 ### Fixed
