@@ -1,5 +1,5 @@
 {
-  "description": "干活蜂群 · 本地版（monorepo：apps/web + apps/server + packages/shared）",
+  "description": "干活蜂群（monorepo：apps/web + apps/server + packages/shared）",
   "devDependencies": {
     "@eslint/js": "^9.17.0",
     "eslint": "^9.17.0",
@@ -22,7 +22,7 @@
     "test": "npm run build -w @swarm/shared && npm run test -w @swarm/server",
     "typecheck": "npm run build -w @swarm/shared && npm run typecheck -w @swarm/server && npm run typecheck -w @swarm/web"
   },
-  "version": "0.3.0",
+  "version": "0.4.0",
   "workspaces": [
     "apps/*",
     "packages/*"

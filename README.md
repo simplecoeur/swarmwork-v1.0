@@ -1,6 +1,6 @@
-# 干活蜂群 · 本地版
+# 干活蜂群
 
-一个在你自己电脑上运行的「AI 公司」：组建小组、配多个大模型 API、发任务，系统按工种调度模型干活、按你的标准审核交付，并对每一次调用精确记账。数据全部存本机，不经过任何云端。
+一个部署在服务器上运行的「AI 公司」：组建小组、配多个大模型 API、发任务，系统按工种调度模型干活、按你的标准审核交付，并对每一次调用精确记账。数据存储在服务器，浏览器打开即用。
 
 技术设计见 [docs/技术设计文档.md](docs/技术设计文档.md)，决策记录见 [docs/adr/](docs/adr/)。
 
@@ -11,7 +11,7 @@ apps/web/         React + TypeScript + Vite 前端（构建产物由 server 静�
 apps/server/      Fastify + TypeScript 后端（api/domain/engine/llm/store 分层，SQLite 存储）
 packages/shared/  前后端共享契约：类型、任务状态机、错误码、金额换算、常量
 tools/            mock-llm（假模型服务）、旧数据迁移工具、集成测试辅助
-data/             本地运行数据（SQLite 文件与日志，不进 git）
+data/             运行数据（SQLite 文件与日志，不进 git；部署在服务器 data/ 目录）
 ```
 
 ## 环境要求
@@ -66,5 +66,5 @@ node tools/migrate-from-json.js [旧data目录] [目标DATA_DIR]
 ## 口径说明
 
 - **余额是推导值**：余额 = 采购充值合计 − 账本消耗合计（按 API），账本只追加不修改；金额内部以「厘」整数运算，界面显示为元。
-- **Key 只存本机**：存于 SQLite 并加密落盘；接口与日志中只出现掩码。数据目录请勿外传。
+- **Key 加密保存**：存于服务器 SQLite 并加密落盘；接口与日志中只出现掩码。数据目录请勿外传。
 - **估算 token**：厂商未返回 usage 时按文字粗估（中文约 1 字≈1 token、英文约 4 字符≈1 token），账本标记 estimated，总经理汇报单列估算占比。

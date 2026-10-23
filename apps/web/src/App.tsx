@@ -20,10 +20,10 @@ function Shell() {
   return (
     <>
       <header>
-        <span className="logo">MJ 蜂群</span>
+        <span className="logo">🐝 MJ 蜂群</span>
         <div>
-          <h1>干活蜂群 · 本地版</h1>
-          <div className="sub">真干活的 AI 办公室 · 数据全部存在本机 data/ 目录 · Key 只存本地</div>
+          <h1>干活蜂群</h1>
+          <div className="sub">真干活的 AI 办公室 · 数据存储在服务器 · Key 加密保存</div>
         </div>
         <nav>
           {navBtn('office', '办公室')}
