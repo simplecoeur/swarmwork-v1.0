@@ -298,7 +298,15 @@ function drawDoor(ctx: CanvasRenderingContext2D) {
 function drawAgent(ctx: CanvasRenderingContext2D, a: AgentView, now: number) {
   const cx = (a.x + 0.5) * CELL;
   const topY = a.y * CELL + 6;
-  const bob = Math.sin(now / 600 + a.x * 1.7 + a.y) * 0.6;
+  /* v1.3.0 轻动画（量只源自真实 statusOf）：执行中 ±1.5px 正弦 bob（相位按成员 id 错开）；
+     待命 ~4 秒一轮的呼吸位移（≤1px）；审核中保持原小幅浮动 */
+  const phase = (hashStr(a.member.id) % 628) / 100;
+  const bob =
+    a.status === '执行中'
+      ? Math.sin(now / 450 + phase) * 1.5
+      : a.status === '待命'
+        ? Math.sin(now / 640 + phase) * 0.8
+        : Math.sin(now / 600 + a.x * 1.7 + a.y) * 0.6;
   const y0 = topY - bob;
   ctx.fillStyle = 'rgba(60,40,10,.22)';
   ctx.beginPath();
@@ -332,12 +340,16 @@ function drawAgent(ctx: CanvasRenderingContext2D, a: AgentView, now: number) {
   }
 }
 
-function drawBubble(ctx: CanvasRenderingContext2D, a: AgentView, camX: number, viewWpx: number) {
+function drawBubble(ctx: CanvasRenderingContext2D, a: AgentView, camX: number, viewWpx: number, now: number) {
   const cx = (a.x + 0.5) * CELL;
   ctx.font = '800 10px sans-serif, "Noto Color Emoji"';
   const label = a.member.name + '·' + a.member.role;
   const nw = ctx.measureText(label).width + 10;
-  const ny = a.y * CELL - 16;
+  /* v1.3.0：气泡框 ±1px 浮动（幅度/节奏随真实状态：执行中 ±1px、其余更轻） */
+  const phase = (hashStr(a.member.id) % 628) / 100;
+  const floatY =
+    a.status === '执行中' ? Math.sin(now / 500 + phase) * 1 : Math.sin(now / 640 + phase) * 0.6;
+  const ny = a.y * CELL - 16 + floatY;
   px(ctx, cx - nw / 2, ny, nw, 14, 'rgba(44,37,25,.88)');
   ctx.fillStyle = '#fff7e0';
   ctx.textAlign = 'center';
@@ -513,7 +525,7 @@ export default function PixelOffice({ onEdit }: { onEdit: (memberId: string) => 
         drawDoor(ctx);
         const sorted = list.slice().sort((a, b) => a.y - b.y);
         for (const a of sorted) drawAgent(ctx, a, now);
-        for (const a of sorted) drawBubble(ctx, a, cam.x, VIEW_W / cam.zoom);
+        for (const a of sorted) drawBubble(ctx, a, cam.x, VIEW_W / cam.zoom, now);
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         drawMinimap();
       }

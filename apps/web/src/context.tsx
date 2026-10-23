@@ -15,6 +15,20 @@ import { fetchMe, fetchPresets, fetchState, requestRaw } from './api';
 
 export type AuthStatus = 'loading' | 'anon' | 'authed';
 
+/* ----- v1.3.0 E 外壳：功能弹窗契约（办公室为唯一主场景，其余功能以弹窗打开） ----- */
+export interface ActiveDialog {
+  name: 'publish' | 'tasks' | 'skills' | 'assets' | 'kb' | 'cost' | 'schedules' | 'settings' | 'member';
+  memberId?: string;
+  section?: 'projects' | 'taskwall' | 'results';
+}
+
+/** 快速发单条 / 模板等外部入口 → 发单弹窗的预填（PublishForm 打开时消费一次并清空） */
+export interface PublishPrefill {
+  title?: string;
+  typeId?: string;
+  brief?: string;
+}
+
 interface AppContextValue {
   S: AppState | null;
   presets: Presets;
@@ -45,9 +59,15 @@ interface AppContextValue {
   switchWorkspace: (workspaceId: string) => Promise<void>;
   /* ----- G-10 定时任务预填 ----- */
   schedulePrefill: SchedulePrefill | null;
-  /** 跳到定时任务页并预填新建表单（消费后由页面 clearSchedulePrefill） */
+  /** 打开定时任务弹窗并预填新建表单（消费后由页面 clearSchedulePrefill） */
   openSchedules: (prefill: SchedulePrefill) => void;
   clearSchedulePrefill: () => void;
+  /* ----- v1.3.0 E 外壳弹窗 ----- */
+  dialog: ActiveDialog | null;
+  openDialog: (name: ActiveDialog['name'], opts?: { memberId?: string; section?: ActiveDialog['section'] }) => void;
+  closeDialog: () => void;
+  publishPrefill: PublishPrefill | null;
+  setPublishPrefill: (p: PublishPrefill | null) => void;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -149,6 +169,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCurrentWorkspace(null);
     setImpersonation(null);
     setTab('office');
+    setDialog(null);
+    setPublishPrefill(null);
     setAuthStatus('anon');
   }, []);
 
@@ -163,10 +185,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const [schedulePrefill, setSchedulePrefill] = useState<SchedulePrefill | null>(null);
-  const openSchedules = useCallback((prefill: SchedulePrefill) => {
-    setSchedulePrefill(prefill);
-    setTab('schedules');
-  }, []);
+  /* ----- v1.3.0 E 外壳弹窗状态 ----- */
+  const [dialog, setDialog] = useState<ActiveDialog | null>(null);
+  const [publishPrefill, setPublishPrefill] = useState<PublishPrefill | null>(null);
+  const dialogRef = useRef<ActiveDialog | null>(null);
+  dialogRef.current = dialog;
+  const openDialog = useCallback(
+    (name: ActiveDialog['name'], opts?: { memberId?: string; section?: ActiveDialog['section'] }) => {
+      setDialog({ name, memberId: opts?.memberId, section: opts?.section });
+    },
+    [],
+  );
+  const closeDialog = useCallback(() => setDialog(null), []);
+  const openSchedules = useCallback(
+    (prefill: SchedulePrefill) => {
+      setSchedulePrefill(prefill);
+      setDialog({ name: 'schedules' });
+    },
+    [],
+  );
   const clearSchedulePrefill = useCallback(() => setSchedulePrefill(null), []);
 
   // 启动先探登录态；未登录不拉 /api/state、不启动轮询
@@ -178,9 +215,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (authStatus !== 'authed') return;
     fetchPresets().then(setPresets).catch(() => {});
     refresh();
-    // 每 2 秒轮询；在设置后台时不刷新，避免冲掉正在编辑的表单（与原生版一致）
+    // 每 2 秒轮询；在设置后台（v1.3.0 起为设置弹窗）时不刷新，避免冲掉正在编辑的表单（与原生版一致）
     const iv = window.setInterval(() => {
-      if (tabRef.current !== 'settings') refresh();
+      if (tabRef.current !== 'settings' && dialogRef.current?.name !== 'settings') refresh();
     }, 2000);
     return () => window.clearInterval(iv);
   }, [authStatus, refresh]);
@@ -204,6 +241,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         S, presets, tab, setTab, toast, refresh, post, send, apiName, teamName, memberName,
         authStatus, user, workspaces, currentWorkspace, impersonation, refreshAuth, login, logout, switchWorkspace,
         schedulePrefill, openSchedules, clearSchedulePrefill,
+        dialog, openDialog, closeDialog, publishPrefill, setPublishPrefill,
       }}
     >
       {children}

@@ -38,11 +38,13 @@ import type {
   ReviewStandardsDto,
   SearchResponseDto,
   SearchResultItemDto,
+  SkillActivityItemDto,
   SkillDto,
   SkillInputFieldDto,
   SkillKbBindingDto,
   StateDto,
   TaskDto,
+  TaskTemplateDto,
   TaskStepDto,
   TaskTimelineDto,
   TeamDto,
@@ -147,8 +149,40 @@ export type CostSummary = CostSummaryDto;
 export type Skill = SkillDto;
 export type SkillInputField = SkillInputFieldDto;
 export type SkillKbBinding = SkillKbBindingDto;
-/** GET /api/skills 的行：shared DTO + 服务端拼的已安装副本 id */
-export type SkillListItem = SkillDto & { installedCopyId: string | null };
+/** GET /api/skills 的行：shared DTO + 服务端拼的已安装副本 id。
+ *  v1.3.0 生态字段（featured/featuredAt/contributorName/listedAt 等）已在 SkillDto 内，此处显式再声明以固定前端契约 */
+export type SkillListItem = SkillDto & {
+  installedCopyId: string | null;
+  featured: boolean;
+  featuredAt: string | null;
+  contributorName: string | null;
+  contributorWorkspaceName: string | null;
+  listedAt: string | null;
+};
+
+/* ---------- v1.3.0 A3 任务模板 / B3 生态公示 / F 办公室风格 ---------- */
+export type TaskTemplate = TaskTemplateDto;
+export type SkillActivityItem = SkillActivityItemDto;
+
+/** F 公司风格定制：办公室风格配置（服务端 office-style 接口的线缆形） */
+export interface OfficeStyleConfig {
+  palette: { wall: string; floor: string; accent: string };
+  floorPattern: string;
+  furniture: Record<string, string | null>;
+  poster: { imageFileId: string | null };
+  sign: { mode: 'text' | 'image'; text: string; imageFileId: string | null };
+}
+
+/** F 风格模板（官方/平台库/我的三级分享的线缆形） */
+export interface OfficeStyleTemplate {
+  id: string;
+  name: string;
+  scope: 'official' | 'industry' | 'workspace' | 'platform';
+  contributorName?: string | null;
+  contributorWorkspaceName?: string | null;
+  style: OfficeStyleConfig;
+  createdAt?: string;
+}
 export type Delivery = DeliveryLinkDto;
 export type ChannelPush = ChannelPushDto;
 export type Asset = AssetDto;

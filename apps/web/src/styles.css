@@ -630,3 +630,66 @@ header{ flex-wrap:wrap; }
   .gs-overlay-bar .ui-input{ flex:1; }
   .gs-panel--overlay{ position:static; box-shadow:none; border:none; max-height:none; padding:0; }
 }
+
+/* ============ v1.3.0 E/A2/A3 外壳（只新增 shell-*/sheet-*/tpl-*/brief-input，不改既有类语义） ============ */
+/* A2 发单大输入 */
+.brief-input{ min-height:160px; resize:vertical; }
+/* E 实况状态栏 */
+.shell-livebar{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+.shell-live-item{
+  flex:1 1 120px; min-height:56px; display:flex; align-items:center; justify-content:space-between; gap:8px;
+  font:inherit; cursor:pointer; text-align:left;
+  background:var(--panel); color:var(--ink); border:3px solid var(--line); box-shadow:var(--shadow-sm);
+  padding:8px 12px; border-radius:0;
+}
+.shell-live-item:active{ transform:translate(2px,2px); box-shadow:none; }
+.shell-live-item span{ font-size:12.5px; font-weight:800; color:var(--ink-soft); }
+.shell-live-item b{ font-size:20px; font-weight:900; font-variant-numeric:tabular-nums; }
+/* E 功能坞 */
+.shell-dock{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+.shell-dock-btn{
+  flex:1 1 104px; min-height:48px; display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  font:inherit; font-size:13.5px; font-weight:900; cursor:pointer;
+  background:var(--panel); color:var(--ink); border:2px solid var(--line); box-shadow:2px 2px 0 rgba(44,37,25,.9);
+  padding:8px 6px; border-radius:0; white-space:nowrap;
+}
+.shell-dock-btn:active{ transform:translate(2px,2px); box-shadow:none; }
+/* E 快速发单条 */
+.shell-quick{ display:flex; gap:10px; align-items:stretch; margin-bottom:16px; }
+.shell-quick-input{ flex:1; min-height:48px; font-size:15px; padding:10px 12px; }
+.shell-quick .ui-btn{ min-height:48px; white-space:nowrap; }
+/* E 办公室画布主体化（叠加类，不改 .office-card 既有语义） */
+.office-hero .canvas-box{ margin-top:6px; padding:6px; }
+/* E sheet 大弹窗：Dialog 内容含 .sheet-content 时扩为大窗（桌面） */
+.ui-dialog-content:has(> .sheet-content){
+  width:min(1180px,95vw); max-width:min(1180px,95vw);
+  height:min(92vh,100%); max-height:92vh;
+  display:flex; flex-direction:column;
+}
+.sheet-content{ flex:1; min-height:0; display:flex; flex-direction:column; }
+.sheet-body{ flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; }
+.sheet-body #projects-anchor, .sheet-body #taskwall-anchor, .sheet-body #results-anchor{ scroll-margin-top:8px; }
+/* A3 模板行：组内横向滚动，页面不横滚 */
+.tpl-group-title{ font-size:12.5px; font-weight:900; color:var(--ink-soft); margin:8px 0 4px; }
+.tpl-strip{ display:flex; gap:8px; overflow-x:auto; padding-bottom:6px; max-width:100%; }
+.tpl-card{
+  flex:0 0 210px; max-width:210px; border:2px solid var(--line); background:var(--panel2);
+  padding:8px 10px; box-shadow:var(--shadow-sm);
+}
+.tpl-card-name{ font-weight:900; font-size:13.5px; overflow-wrap:anywhere; }
+.tpl-card-meta{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-top:5px; font-size:12px; color:var(--ink-soft); }
+.tpl-card-meta .ui-badge{ margin-left:0; }
+.tpl-card-actions{ display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+
+@media (max-width:768px){
+  /* E sheet 弹窗全屏（inset 0、无圆角），内部纵向滚动，页面 0 横滚 */
+  .ui-dialog-content:has(> .sheet-content){
+    inset:0; left:0; top:0; transform:none; animation:none;
+    width:100%; max-width:100%; height:100dvh; max-height:100dvh;
+    border-left:none; border-right:none; padding:12px 10px calc(12px + env(safe-area-inset-bottom));
+  }
+  .shell-dock-btn{ flex:1 1 30%; min-height:48px; }
+  .shell-live-item{ flex:1 1 42%; min-height:52px; }
+  .shell-quick{ gap:8px; }
+  .tpl-card{ flex-basis:180px; max-width:180px; }
+}

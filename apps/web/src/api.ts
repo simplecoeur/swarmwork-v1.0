@@ -366,3 +366,62 @@ export async function fetchTaskTimeline(taskId: string): Promise<TaskTimelineDat
     events: (j.events as TaskTimelineData['events']) ?? [],
   };
 }
+
+/* ---------- v1.3.0 A3 任务模板 / B3 生态公示 / F 办公室风格 ---------- */
+
+export async function fetchTemplates(): Promise<import('./types').TaskTemplate[]> {
+  const j = await requestRaw('GET', '/api/task-templates');
+  return (j.templates as import('./types').TaskTemplate[]) ?? [];
+}
+
+export async function createTemplate(body: {
+  name: string;
+  typeId: string;
+  briefTemplate: string;
+  suggestedRole?: string;
+}): Promise<import('./types').TaskTemplate> {
+  const j = await requestRaw('POST', '/api/task-templates', body);
+  return j.template as import('./types').TaskTemplate;
+}
+
+/** 任务墙「存为模板」：以既有任务为蓝本生成本空间模板 */
+export async function createTemplateFromTask(
+  taskId: string,
+): Promise<import('./types').TaskTemplate> {
+  const j = await requestRaw('POST', '/api/task-templates/from-task', { taskId });
+  return j.template as import('./types').TaskTemplate;
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  await requestRaw('DELETE', `/api/task-templates/${id}`);
+}
+
+/** B3 平台库最新动态（上架/精选公示） */
+export async function fetchSkillActivity(): Promise<import('./types').SkillActivityItem[]> {
+  const j = await requestRaw('GET', '/api/skills/activity');
+  return (j.activity as import('./types').SkillActivityItem[]) ?? [];
+}
+
+/** 管理员官方精选晋升/取消（平台管理员专用） */
+export async function adminFeatureSkill(id: string, featured: boolean): Promise<void> {
+  await requestRaw('POST', `/api/admin/skills/${id}/feature`, { featured });
+}
+
+/** F 当前空间办公室风格 */
+export async function fetchOfficeStyle(): Promise<import('./types').OfficeStyleConfig> {
+  const j = await requestRaw('GET', '/api/office-style');
+  return j.style as import('./types').OfficeStyleConfig;
+}
+
+export async function putOfficeStyle(
+  style: import('./types').OfficeStyleConfig,
+): Promise<import('./types').OfficeStyleConfig> {
+  const j = await requestRaw('PUT', '/api/office-style', style);
+  return (j.style as import('./types').OfficeStyleConfig) ?? style;
+}
+
+/** F 风格模板库（官方 + 平台库 + 本空间） */
+export async function fetchStyleTemplates(): Promise<import('./types').OfficeStyleTemplate[]> {
+  const j = await requestRaw('GET', '/api/office-style/templates');
+  return (j.templates as import('./types').OfficeStyleTemplate[]) ?? [];
+}
