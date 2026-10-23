@@ -207,3 +207,181 @@ header{ flex-wrap:wrap; }
   font-size:11.5px; background:var(--panel); padding:1px 7px;
   border:2px solid var(--line); color:var(--ink-soft); font-weight:700;
 }
+
+/* ============ v1.1.0 自有组件层（ui-*）：Radix 无头原语 + 既有 token 皮肤 ============
+   只新增本区段，不改上方任何既有规则；颜色/边框/阴影全部引用 :root 既有变量，不引入第二套变量。 */
+/* Button（对应原 button.btn / .mini-btn 语言） */
+.ui-btn{
+  font:inherit; background:var(--accent); color:var(--accent-ink); border:3px solid var(--line);
+  padding:8px 16px; border-radius:0; cursor:pointer; font-size:13.5px; font-weight:900;
+  box-shadow:var(--shadow-sm); letter-spacing:.03em;
+}
+.ui-btn:active{ transform:translate(3px,3px); box-shadow:none; }
+.ui-btn--gray{ background:var(--panel); color:var(--ink); }
+.ui-btn--blue{ background:var(--blue); color:#fff; }
+.ui-btn--green{ background:var(--teal); color:#fff; }
+.ui-btn--sm{ padding:4px 10px; font-size:12px; border-width:2px; }
+.ui-btn:disabled{ opacity:.5; cursor:not-allowed; }
+.ui-btn--mini{
+  font:inherit; font-size:12px; font-weight:800; cursor:pointer;
+  background:var(--panel); color:var(--ink); border:2px solid var(--line);
+  padding:3px 9px; box-shadow:2px 2px 0 rgba(44,37,25,.9); border-radius:0;
+}
+.ui-btn--mini:active{ transform:translate(2px,2px); box-shadow:none; }
+.ui-btn--mini:disabled{ opacity:.5; cursor:not-allowed; }
+.ui-btn--nav{ font:inherit; }
+/* Input / Textarea（对应原 input/textarea 全局语言） */
+.ui-input, .ui-textarea{
+  width:100%; background:var(--panel); border:2px solid var(--line); color:var(--ink);
+  border-radius:0; padding:7px 9px; font-size:13.5px; font-family:inherit;
+}
+.ui-textarea{ resize:vertical; }
+/* 可见焦点：全部交互组件 :focus-visible 统一琥珀描边 */
+.ui-btn:focus-visible, .ui-btn--mini:focus-visible, .ui-btn--nav:focus-visible,
+.ui-input:focus-visible, .ui-textarea:focus-visible, .ui-select-trigger:focus-visible,
+.ui-checkbox:focus-visible, .ui-switch:focus-visible, .ui-radio-item:focus-visible,
+.ui-tabs-trigger:focus-visible, .ui-menu-item:focus-visible, .ui-dialog-close:focus-visible{
+  outline:3px solid var(--amber); outline-offset:1px;
+}
+.ui-input:focus, .ui-textarea:focus{ outline:3px solid var(--amber); outline-offset:0; }
+/* Select（Radix） */
+.ui-select-trigger{
+  width:100%; display:inline-flex; align-items:center; justify-content:space-between; gap:8px;
+  background:var(--panel); border:2px solid var(--line); color:var(--ink);
+  border-radius:0; padding:7px 9px; font-size:13.5px; font-family:inherit; cursor:pointer;
+  text-align:left; font-weight:600;
+}
+.ui-select-trigger[data-disabled]{ opacity:.5; cursor:not-allowed; }
+.ui-select-trigger > span:first-child{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ui-select-icon{ flex:0 0 auto; font-size:11px; color:var(--ink-soft); }
+.ui-select-content{
+  z-index:70; background:var(--panel); border:3px solid var(--line); box-shadow:var(--shadow);
+  border-radius:0; min-width:var(--radix-select-trigger-width); max-width:88vw;
+  max-height:min(320px, var(--radix-select-content-available-height)); overflow:hidden;
+}
+.ui-select-viewport{ padding:4px; max-height:inherit; overflow:auto; }
+.ui-select-item{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  font-size:13.5px; font-weight:600; color:var(--ink); padding:6px 8px; cursor:pointer;
+  user-select:none; outline:none;
+}
+.ui-select-item[data-highlighted]{ background:var(--panel2); outline:2px solid var(--line); outline-offset:-2px; }
+.ui-select-item[data-state="checked"]{ font-weight:900; }
+.ui-select-item[data-disabled]{ opacity:.5; pointer-events:none; }
+.ui-select-item-ind{ font-size:11px; color:var(--accent); font-weight:900; }
+/* 顶栏空间切换：沿用原 .wsbar select 的宽度口径 */
+.wsbar .ui-select-trigger{ width:auto; min-width:150px; max-width:240px; }
+/* Dialog（Radix）：对应原 .modal/.box */
+.ui-dialog-overlay{
+  position:fixed; inset:0; background:rgba(20,15,5,.55); z-index:80;
+  animation:ui-fade .15s ease;
+}
+.ui-dialog-content{
+  position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:81;
+  background:var(--panel); border:3px solid var(--line); box-shadow:8px 8px 0 rgba(0,0,0,.5);
+  border-radius:0; max-width:640px; width:92%; max-height:84vh; overflow:auto; padding:18px 20px;
+  animation:ui-pop .15s ease;
+}
+.ui-dialog-title{ font-size:15px; margin:0 26px 10px 0; font-weight:900; letter-spacing:.03em; }
+.ui-dialog-close{
+  position:absolute; top:10px; right:10px; font:inherit; font-size:13px; font-weight:900;
+  background:var(--panel); color:var(--ink); border:2px solid var(--line); cursor:pointer;
+  width:26px; height:26px; line-height:1; padding:0; box-shadow:2px 2px 0 rgba(44,37,25,.9);
+}
+.ui-dialog-close:active{ transform:translate(2px,2px); box-shadow:none; }
+@keyframes ui-fade{ from{ opacity:0; } }
+@keyframes ui-pop{ from{ opacity:0; transform:translate(-50%,-48%) scale(.98); } }
+/* DropdownMenu（Radix） */
+.ui-menu-content{
+  z-index:70; background:var(--panel); border:3px solid var(--line); box-shadow:var(--shadow);
+  border-radius:0; padding:4px; min-width:180px; animation:ui-fade .12s ease;
+}
+.ui-menu-item{
+  font-size:13.5px; font-weight:700; color:var(--ink); padding:7px 10px; cursor:pointer;
+  user-select:none; outline:none; display:flex; align-items:center; gap:8px;
+}
+.ui-menu-item[data-highlighted]{ background:var(--panel2); outline:2px solid var(--line); outline-offset:-2px; }
+.ui-menu-item[data-disabled]{ opacity:.5; pointer-events:none; }
+/* Popover（Radix）：铃铛面板等富内容弹层，定位由 Radix 接管，不再用 .bell-panel 的绝对定位 */
+.ui-popover{ z-index:70; animation:ui-fade .12s ease; }
+.ui-popover-panel{
+  width:350px; max-width:88vw; background:var(--panel); border:3px solid var(--line);
+  box-shadow:var(--shadow); padding:12px 14px; max-height:60vh; overflow:auto; text-align:left;
+}
+/* Tooltip（Radix） */
+.ui-tooltip{
+  z-index:90; background:var(--ink); color:var(--bg); border:2px solid var(--line);
+  padding:4px 9px; font-size:12px; font-weight:700; border-radius:0; animation:ui-fade .12s ease;
+}
+/* Switch（Radix） */
+.ui-switch{
+  width:40px; height:22px; flex:0 0 auto; background:var(--panel); border:2px solid var(--line);
+  border-radius:0; padding:0; cursor:pointer; position:relative; vertical-align:middle;
+}
+.ui-switch[data-state="checked"]{ background:var(--teal); }
+.ui-switch[data-disabled]{ opacity:.5; cursor:not-allowed; }
+.ui-switch-thumb{
+  display:block; width:14px; height:14px; background:var(--ink);
+  transform:translateX(2px); transition:transform .12s ease;
+}
+.ui-switch[data-state="checked"] .ui-switch-thumb{ transform:translateX(20px); background:#fff; }
+/* Checkbox（Radix） */
+.ui-check-row{ display:inline-flex; align-items:center; gap:6px; }
+.ui-checkbox{
+  width:18px; height:18px; flex:0 0 auto; background:var(--panel); border:2px solid var(--line);
+  border-radius:0; padding:0; cursor:pointer; display:inline-flex; align-items:center; justify-content:center;
+  vertical-align:middle;
+}
+.ui-checkbox[data-state="checked"]{ background:var(--accent); }
+.ui-checkbox[data-disabled]{ opacity:.5; cursor:not-allowed; }
+.ui-checkbox-ind{ color:#fff; font-size:12px; font-weight:900; line-height:1; display:flex; }
+.ui-check-label{ font-size:12.5px; color:var(--ink-soft); font-weight:700; margin:0; display:inline; cursor:pointer; }
+/* RadioGroup（Radix）：单选项行沿用 .packopt 版式，圆点走 .ui-radio-dot */
+.ui-radio-group{ display:block; }
+.ui-radio-item{ width:100%; text-align:left; font:inherit; background:var(--panel2); }
+.ui-radio-item[data-state="checked"]{ outline:3px solid var(--amber); outline-offset:-3px; }
+.ui-radio-dot{
+  width:16px; height:16px; flex:0 0 auto; margin-top:2px; background:var(--panel);
+  border:2px solid var(--line); border-radius:50%; display:inline-flex; align-items:center; justify-content:center;
+}
+.ui-radio-ind{ width:8px; height:8px; border-radius:50%; background:var(--accent); display:block; }
+.ui-radio-body{ flex:1; }
+/* Tabs（Radix）：触发器对应原 .btn small 模式按钮语言 */
+.ui-tabs-list{ display:flex; gap:8px; margin-bottom:6px; flex-wrap:wrap; }
+.ui-tabs-trigger{
+  font:inherit; background:var(--panel); color:var(--ink); border:2px solid var(--line);
+  padding:4px 10px; border-radius:0; cursor:pointer; font-size:12px; font-weight:900;
+  box-shadow:var(--shadow-sm); letter-spacing:.03em;
+}
+.ui-tabs-trigger:active{ transform:translate(3px,3px); box-shadow:none; }
+.ui-tabs-trigger[data-state="active"]{ background:var(--accent); color:var(--accent-ink); border-width:3px; }
+.ui-tabs-content{ outline:none; }
+/* Badge（对应原 .chip） */
+.ui-badge{
+  font-size:11px; font-weight:900; padding:1px 7px; border-radius:0;
+  border:2px solid var(--line); background:var(--panel2); color:var(--ink); margin-left:6px; white-space:nowrap;
+}
+.ui-badge--done{ background:var(--teal); color:#fff; }
+.ui-badge--run{ background:var(--blue); color:#fff; }
+.ui-badge--rev{ background:var(--purple); color:#fff; }
+.ui-badge--rej{ background:var(--accent); color:#fff; }
+.ui-badge--adj{ background:var(--amber); color:#241a05; }
+.ui-badge--can{ background:var(--gray); color:#fff; }
+/* Card / EmptyState / Spinner / Field */
+.ui-card{
+  background:var(--panel); border:3px solid var(--line); box-shadow:var(--shadow);
+  border-radius:0; padding:14px 16px; margin-bottom:16px;
+}
+.ui-empty{
+  border:2px dashed var(--line); background:var(--panel2); padding:12px 14px;
+  font-size:12.5px; color:var(--ink-soft); line-height:1.6;
+}
+.ui-spinner-wrap{ display:inline-flex; align-items:center; gap:8px; font-size:12.5px; font-weight:700; color:var(--ink-soft); }
+.ui-spinner{
+  width:16px; height:16px; flex:0 0 auto; border:3px solid var(--panel2);
+  border-top-color:var(--accent); border-radius:50%; animation:ui-spin .8s linear infinite;
+}
+@keyframes ui-spin{ to{ transform:rotate(360deg); } }
+.ui-field{ display:block; }
+.ui-field-label{ font-size:12.5px; color:var(--ink-soft); font-weight:700; display:block; margin:8px 0 4px; }
+.ui-field-error{ color:var(--accent); font-size:12.5px; font-weight:800; margin-top:4px; line-height:1.6; }
