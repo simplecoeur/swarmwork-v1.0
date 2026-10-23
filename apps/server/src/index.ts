@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   seedIfEmpty(repos);
   const gateway = new LlmGateway(repos, logger);
   const engine = new Engine(repos, gateway, logger);
-  const app = await buildApp({ repos, gateway, logger }, config.staticDir, logger);
+  const app = await buildApp({ repos, gateway, logger, dbPath: config.dbPath }, config.staticDir, logger);
 
   // 只监听本机回环（设计 §11）
   await app.listen({ port: config.port, host: '127.0.0.1' });

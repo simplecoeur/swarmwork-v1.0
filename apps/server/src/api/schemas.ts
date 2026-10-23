@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { KB_SCOPES, PROVIDERS, TASK_TYPES } from '@swarm/shared';
+import { KB_SCOPES, PROVIDERS, ROLES, TASK_TYPES } from '@swarm/shared';
 
 /** 入参 zod 校验（设计 §7：校验失败不进 domain） */
 export const apiSaveSchema = z.object({
@@ -44,6 +44,32 @@ export const memberPromptSchema = z.object({
   memberId: z.string().min(1),
   name: z.string().trim().min(1).optional(),
   prompt: z.string().default(''),
+});
+
+/** 成员新建/编辑（M5）：与 apis/teams 的 save 风格一致，外层包 member 对象 */
+export const memberSaveSchema = z.object({
+  member: z.object({
+    id: z.string().optional(),
+    name: z.string().trim().min(1, '名字必填'),
+    role: z.enum(ROLES),
+    teamId: z.string().min(1, '必须指定所属小组'),
+    prompt: z.string().default(''),
+  }),
+});
+
+export const memberDeleteSchema = z.object({ id: z.string().min(1) });
+
+/** API 测试连接（M5）：给已存 id（用库里配置与 Key）或一条完整配置（表单未保存值，apiKey 留空且有 id 时回退已存 Key） */
+export const apiTestSchema = z.object({
+  id: z.string().min(1).optional(),
+  api: z
+    .object({
+      provider: z.enum(PROVIDERS).default('custom'),
+      baseUrl: z.string().default(''),
+      model: z.string().default(''),
+      apiKey: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const taskCreateSchema = z.object({

@@ -80,14 +80,19 @@ export function transitionTask(
   return updated;
 }
 
-/** 项目状态聚合（§15.2）：任一子任务待裁决 → 待裁决；全部 done → 已交付 */
+/**
+ * 项目状态聚合（§15.2 + M5 扩展）：任一子任务待裁决 → 待裁决；
+ * 全部未取消子任务 done（且至少一个 done）→ 已交付。已取消子任务是终态、不阻塞交付判定；
+ * 全部子任务都被取消时视为没有可交付内容，保持「进行中」由老板处理。
+ */
 export function refreshProjectStatus(repos: Repos, projectId: string | null): void {
   if (!projectId) return;
   const project = repos.getProject(projectId);
   if (!project) return;
   const children = repos.listTasks().filter((t) => t.project_id === projectId);
+  const live = children.filter((t) => t.status !== TaskStatus.CANCELLED);
   let status = project.status;
-  if (children.length > 0 && children.every((t) => t.status === TaskStatus.DONE)) {
+  if (children.length > 0 && live.length > 0 && live.every((t) => t.status === TaskStatus.DONE)) {
     status = '已交付' as typeof status;
   } else if (children.some((t) => t.status === TaskStatus.ADJUDICATION)) {
     status = '待裁决' as typeof status;
@@ -95,4 +100,70 @@ export function refreshProjectStatus(repos: Repos, projectId: string | null): vo
     status = '进行中' as typeof status;
   }
   if (status !== project.status) repos.updateProjectStatus(projectId, status);
+}
+
+/* ---------- M5 后悔药：取消 / 重试 / 删除（均经状态机校验，不直接改 status） ---------- */
+
+/**
+ * 取消任务（终态 已取消）：仅「待领取 / 被打回」与带 blocked 覆盖层的停工任务可取消；
+ * 执行中（正在调用模型）、待裁决、已完成、已取消均拒绝。
+ */
+export function cancelTask(repos: Repos, task: TaskRow): TaskRow {
+  const blocked = task.blocked_code !== null;
+  const cancellable =
+    task.status === TaskStatus.PENDING ||
+    task.status === TaskStatus.REJECTED ||
+    (task.status === TaskStatus.REVIEWING && blocked);
+  if (!cancellable) {
+    throw new DomainError(
+      ErrorCode.INVALID_TRANSITION,
+      task.status === TaskStatus.RUNNING
+        ? '任务执行中（正在调用模型），不能取消'
+        : `当前状态「${task.status}」不能取消（只有待领取/被打回/停工中的任务可取消）`,
+    );
+  }
+  const next = transitionTask(repos, task, TaskStatus.CANCELLED, {
+    finished_at: new Date().toISOString(),
+    blocked_code: null,
+    blocked_reason: '',
+    heartbeat_at: null,
+  });
+  refreshProjectStatus(repos, task.project_id);
+  return next;
+}
+
+/**
+ * 手动重试停工任务：清 blocked 覆盖层，任务回到队列由引擎按其状态继续领取
+ * （待领取→重新执行、被打回→重做、待审核→续跑审核）。仅对停工任务有效；
+ * 已取消为终态不可重试；未停工的任务（含执行中/审核中/已完成）拒绝。
+ */
+export function retryTask(repos: Repos, task: TaskRow): TaskRow {
+  if (task.status === TaskStatus.CANCELLED) {
+    throw new DomainError(ErrorCode.INVALID_TRANSITION, '已取消的任务不可重试');
+  }
+  if (!task.blocked_code) {
+    throw new DomainError(
+      ErrorCode.VALIDATION,
+      `任务未处于停工状态（当前「${task.status}」），无需也不可手动重试`,
+    );
+  }
+  repos.setBlocked(task.id, null, '');
+  const fresh = repos.getTask(task.id);
+  if (!fresh) throw new DomainError(ErrorCode.NOT_FOUND, '任务不存在');
+  return fresh;
+}
+
+/**
+ * 删除任务记录：仅已完成/已取消可删。账本行保留不删（删任务不删账，
+ * 余额推导与总经理汇报的按 API/小组聚合不受影响）。
+ */
+export function deleteTask(repos: Repos, task: TaskRow): void {
+  if (task.status !== TaskStatus.DONE && task.status !== TaskStatus.CANCELLED) {
+    throw new DomainError(
+      ErrorCode.VALIDATION,
+      `只有已完成/已取消的任务可删除（当前「${task.status}」）`,
+    );
+  }
+  repos.deleteTask(task.id);
+  refreshProjectStatus(repos, task.project_id);
 }

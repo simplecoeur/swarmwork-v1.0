@@ -15,23 +15,27 @@ import {
   type StateDto,
   type TaskDto,
 } from '@swarm/shared';
+import * as fs from 'fs';
 import { balanceMilli, buildReport } from '../domain/costService';
 import { createProject } from '../domain/projectService';
-import { refreshProjectStatus, transitionTask } from '../domain/taskService';
-import type { LlmGateway } from '../llm/gateway';
+import { cancelTask, deleteTask, refreshProjectStatus, retryTask, transitionTask } from '../domain/taskService';
+import { createProvider, LlmGateway } from '../llm/gateway';
 import type { Logger } from '../logger';
 import { decryptKey, encryptKey, maskKey } from '../store/crypto';
-import { makeMemberRows } from '../store/seed';
-import type { ApiRow, KbRow, Repos, TaskRow } from '../store/repositories';
+import { makeMemberRows, ROLE_PERSONAS } from '../store/seed';
+import type { ApiRow, KbRow, MemberRow, Repos, TaskRow } from '../store/repositories';
 import { nowIso, uid } from '../util';
 import {
   adjudicateSchema,
   apiDeleteSchema,
   apiSaveSchema,
+  apiTestSchema,
   defaultApiSchema,
   kbCreateSchema,
   kbUpdateSchema,
+  memberDeleteSchema,
   memberPromptSchema,
+  memberSaveSchema,
   paramsSchema,
   projectCreateSchema,
   purchaseSchema,
@@ -41,10 +45,15 @@ import {
   teamSaveSchema,
 } from './schemas';
 
+/** API 测试连接的探活超时（M5）：比正式调用的 120s 短，快速回失败原因 */
+const API_TEST_TIMEOUT_MS = 15_000;
+
 export interface ApiDeps {
   repos: Repos;
   gateway: LlmGateway;
   logger: Logger;
+  /** SQLite 数据库文件路径（GET /api/backup 打包下载用） */
+  dbPath: string;
 }
 
 function fail(code: string, message: string, status = 400): never {
@@ -301,6 +310,59 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     }
     return { ok: true };
   });
+
+  /**
+   * 测试连接（M5）：直连 Provider 发一次最小 chat（max_tokens=1、15s 超时），
+   * 不走网关——不记账、不扣余额、不触发熔断；成败都以 test 结果体返回（失败含厂商原文摘要）。
+   */
+  app.post('/api/apis/test', async (req) => {
+    const body = apiTestSchema.parse(req.body ?? {});
+    const stored = body.id ? repos.getApi(body.id) : undefined;
+    if (body.id && !stored) fail(ErrorCode.NOT_FOUND, 'API 不存在', 404);
+    if (!body.api && !stored) fail(ErrorCode.VALIDATION, '需要提供已存 API 的 id 或一条完整配置');
+    const storedKey = stored ? decryptKey(stored.api_key_enc) : '';
+    let apiKey = storedKey;
+    if (body.api?.apiKey && body.api.apiKey !== maskKey(storedKey)) apiKey = body.api.apiKey;
+    const provider = body.api?.provider ?? stored!.provider;
+    const baseUrl = body.api?.baseUrl ?? stored!.base_url;
+    const model = body.api?.model ?? stored!.model;
+    const done = (ok: boolean, latencyMs: number, message: string) => ({
+      ok: true,
+      test: { ok, latencyMs, message },
+    });
+    if (!apiKey) return done(false, 0, '未填写 API Key（先填 Key 再测连接）');
+    if (!baseUrl) return done(false, 0, '未填写 Base URL');
+    if (!model) return done(false, 0, '未填写模型名');
+    const probeRow: ApiRow = {
+      id: stored?.id ?? 'api_test_probe',
+      name: stored?.name ?? 'test',
+      provider,
+      base_url: baseUrl,
+      api_key_enc: encryptKey(apiKey),
+      model,
+      price_per_m_milli: 0,
+      created_at: stored?.created_at ?? nowIso(),
+    };
+    const t0 = Date.now();
+    try {
+      await createProvider(probeRow).chat({
+        model,
+        system: '',
+        messages: [{ role: 'user', content: 'ping' }],
+        temperature: 0,
+        maxTokens: 1,
+        timeoutMs: API_TEST_TIMEOUT_MS,
+      });
+      const latencyMs = Date.now() - t0;
+      logger.info('api', `API 测试连接成功 ${provider}/${model} ${latencyMs}ms`, { apiId: probeRow.id });
+      return done(true, latencyMs, `连接成功，模型「${model}」已响应`);
+    } catch (e) {
+      const latencyMs = Date.now() - t0;
+      const message = e instanceof Error ? e.message : String(e);
+      logger.warn('api', `API 测试连接失败：${message}`, { apiId: probeRow.id });
+      return done(false, latencyMs, message);
+    }
+  });
   app.post('/api/settings/default-api', async (req) => {
     const { apiId } = defaultApiSchema.parse(req.body ?? {});
     repos.setSetting('defaultApiId', apiId);
@@ -346,6 +408,57 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const member = repos.getMember(body.memberId);
     if (!member) fail(ErrorCode.NOT_FOUND, '成员不存在', 404);
     repos.updateMemberPrompt(body.memberId, body.name ?? member!.name, body.prompt);
+    return { ok: true };
+  });
+
+  /* ----- 成员管理（M5）：新建/编辑/换组 + 删除守卫 ----- */
+  app.post('/api/members/save', async (req) => {
+    const { member: b } = memberSaveSchema.parse(req.body ?? {});
+    const team = repos.getTeam(b.teamId);
+    if (!team) fail(ErrorCode.VALIDATION, '所属小组不存在');
+    const rolePersona = ROLE_PERSONAS.find((r) => r.role === b.role)?.persona ?? '';
+    const cur = b.id ? repos.getMember(b.id) : undefined;
+    if (b.id && !cur) fail(ErrorCode.NOT_FOUND, '成员不存在', 404);
+    if (!cur) {
+      const row: MemberRow = {
+        id: uid('member'),
+        team_id: b.teamId,
+        name: b.name,
+        role: b.role,
+        persona: rolePersona,
+        prompt: b.prompt,
+        skill_tags: '[]',
+        color: '',
+      };
+      repos.insertMember(row);
+      logger.info('api', '新建成员', { memberId: row.id });
+      return { ok: true, id: row.id };
+    }
+    const next: MemberRow = {
+      ...cur!,
+      team_id: b.teamId,
+      name: b.name,
+      role: b.role,
+      // 工种变更时人设跟随新工种默认（人设无独立编辑入口，始终与工种口径一致）
+      persona: b.role !== cur!.role ? rolePersona : cur!.persona,
+      prompt: b.prompt,
+    };
+    repos.updateMember(next);
+    return { ok: true, id: next.id };
+  });
+  app.post('/api/members/delete', async (req) => {
+    const { id } = memberDeleteSchema.parse(req.body ?? {});
+    const member = repos.getMember(id);
+    if (!member) fail(ErrorCode.NOT_FOUND, '成员不存在', 404);
+    const active = repos.countActiveTasksByMember(id);
+    if (active > 0) {
+      fail(
+        ErrorCode.MEMBER_HAS_ACTIVE_TASKS,
+        `成员「${member!.name}」名下还有 ${active} 个未完成任务，先取消或等它们完成再删除`,
+      );
+    }
+    repos.deleteMember(id);
+    logger.info('api', '删除成员', { memberId: id });
     return { ok: true };
   });
 
@@ -421,6 +534,42 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.post('/api/tasks/:id/adjudicate', async (req) => {
     const { id } = req.params as { id: string };
     return adjudicate(id);
+  });
+
+  /* ----- 任务后悔药（M5）：取消 / 重试 / 删除，合法性在 domain 层校验 ----- */
+  const getTaskOr404 = (id: string): TaskRow => {
+    const task = repos.getTask(id);
+    if (!task) fail(ErrorCode.NOT_FOUND, '任务不存在', 404);
+    return task!;
+  };
+  app.post('/api/tasks/:id/cancel', async (req) => {
+    const { id } = req.params as { id: string };
+    const next = cancelTask(repos, getTaskOr404(id));
+    logger.info('api', '取消任务', { taskId: id });
+    return { ok: true, task: taskDto(next) };
+  });
+  app.post('/api/tasks/:id/retry', async (req) => {
+    const { id } = req.params as { id: string };
+    const next = retryTask(repos, getTaskOr404(id));
+    logger.info('api', '手动重试停工任务（已清停工原因）', { taskId: id });
+    return { ok: true, task: taskDto(next) };
+  });
+  app.post('/api/tasks/:id/delete', async (req) => {
+    const { id } = req.params as { id: string };
+    deleteTask(repos, getTaskOr404(id));
+    logger.info('api', '删除任务记录（账本保留）', { taskId: id });
+    return { ok: true };
+  });
+
+  /* ----- 数据备份（M5）：WAL checkpoint 后打包当前 SQLite 单文件下载 ----- */
+  app.get('/api/backup', async (_req, reply) => {
+    // 先把 WAL 合并回主文件并截断，保证下载到的单文件自洽一致
+    repos.db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    const buf = fs.readFileSync(deps.dbPath);
+    const stamp = nowIso().slice(0, 10);
+    reply.header('content-type', 'application/octet-stream');
+    reply.header('content-disposition', `attachment; filename="swarm-backup-${stamp}.db"`);
+    return reply.send(buf);
   });
 
   /* ----- 项目（方案下发） ----- */

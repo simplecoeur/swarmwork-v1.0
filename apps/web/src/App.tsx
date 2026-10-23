@@ -1,6 +1,7 @@
 import { AppProvider, useApp } from './context';
 import Office from './components/Office';
 import PublishForm from './components/PublishForm';
+import Projects from './components/Projects';
 import Standards from './components/Standards';
 import TaskWall from './components/TaskWall';
 import Results from './components/Results';
@@ -47,6 +48,7 @@ function Shell() {
               <PublishForm />
               <Standards />
             </div>
+            <Projects />
             <TaskWall />
             <Results />
           </section>

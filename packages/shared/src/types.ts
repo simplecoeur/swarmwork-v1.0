@@ -39,6 +39,22 @@ export interface ReviewStandardsDto {
   clientNeeds: string;
 }
 
+/** 成员新建/编辑入参（M5，POST /api/members/save）：id 缺省 = 新建 */
+export interface MemberSaveDto {
+  id?: string;
+  name: string;
+  role: Role;
+  teamId: string;
+  prompt: string;
+}
+
+/** API 测试连接结果（M5，POST /api/apis/test）：不记账、不扣余额，仅连通性探活 */
+export interface ApiTestResultDto {
+  ok: boolean;
+  latencyMs: number;
+  message: string;
+}
+
 export interface ParamsDto {
   concurrency: number;
   taskBudgetTokens: number;

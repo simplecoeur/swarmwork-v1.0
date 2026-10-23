@@ -2,6 +2,27 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)，格式参考 Keep a Changelog。
 
+## [0.5.0] - 2026-10-23
+
+M5 业务流程补全一期（P0 五项）：项目制前端补齐、成员管理补全、API 测试连接、任务后悔药、数据备份下载。设计文档 §6/§7/§15.2 已同步补记 M5 扩展。
+
+### Added
+
+- 项目制前端：发布区新增模式切换「单任务 | 方案下发（项目）」，方案模式填标题/说明/目标小组/甲方后走 POST /api/projects；新增「项目」视图（子任务进度 x/y、进度条、项目总账=子任务账本+拆单那笔、状态聚合按 §15.2 展示），项目卡可展开子任务列表并点击定位到任务墙卡片（滚动+闪烁）。
+- 成员管理补全：后端 POST /api/members/save（新建/编辑/换组，工种变更时人设跟随工种默认）与 POST /api/members/delete（删除守卫：名下有未完成任务时回 MEMBER_HAS_ACTIVE_TASKS）；设置页「小组管理」内按组列出成员，可新建（选工种）、编辑（名字/工种/提示词）、换组、删除；办公室像素小人随 /api/state 自动反映。
+- API 测试连接：后端 POST /api/apis/test（已存 id 或表单配置二选一，Key 留空回退已存），直连 Provider 发一次最小 chat（max_tokens=1、超时 15s），返回 { ok, latencyMs, message }，失败回厂商原文摘要（401/超时/地区不可用等）；不走网关、不记账、不扣余额、不触发熔断。llm 层 ChatRequest 新增可选 maxTokens/timeoutMs 并在 OpenAI 兼容/Anthropic 两实现透传。设置页每条 API 加「测试连接」按钮与结果提示。
+- 任务后悔药：状态机新增终态「已取消」（shared 枚举 + 迁移表）；POST /api/tasks/:id/cancel（仅待领取/被打回/停工中的待审核可取消，执行中拒绝）、POST /api/tasks/:id/retry（仅停工任务，清 blocked 原因回队列；已取消不可重试）、POST /api/tasks/:id/delete（仅已完成/已取消，只删任务行、账本保留不删）。任务墙卡片按状态显示裁决/重试/取消/删除按钮，操作前均 confirm 二次确认。
+- 数据备份：GET /api/backup 先 WAL checkpoint(TRUNCATE) 再以附件返回当前 SQLite 单文件；设置页「数据管理」加「下载备份」按钮。
+
+### Changed
+
+- 项目聚合口径扩展（§15.2）：已取消子任务为终态、不阻塞「已交付」判定（全部未取消子任务完成且至少一个完成 → 已交付；全部子任务被取消时保持进行中）；refreshProjectStatus 与取消/删除动作联动刷新。
+- 设置页文案修正：「数据管理」段落改为如实口径（数据存储在服务器应用数据目录的 SQLite 单文件 swarm.db + WAL/日志文件，备份=下载快照或整目录拷贝，恢复=放回数据目录改名 swarm.db）；API 配置卡片头去掉过时的「Key 只保存在本机 data/settings.json」说法，改为「Key 加密保存在服务器数据库中，页面只显示掩码」。
+
+### Tests
+
+- 新增单元 15 项（已取消迁移合法性、cancelTask/retryTask/deleteTask 口径、项目聚合已取消扩展）与集成 2 项（成员 CRUD+删除守卫+停工重试/取消/删除+备份文件可被 sqlite 打开；apis/test 成功/404/不可达/无 Key 四路且不记账、已完成任务取消被拒与删除保留账本）。全量 53 项全过（原 36 项零回退）。
+
 ## [0.4.0] - 2026-10-23
 
 UI 恢复：把用户认可的原型（模拟测试版 space）像素办公室与视觉语言搬回工程版，并修正部署形态文案。后端与 API 零改动。

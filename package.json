@@ -22,7 +22,7 @@
     "test": "npm run build -w @swarm/shared && npm run test -w @swarm/server",
     "typecheck": "npm run build -w @swarm/shared && npm run typecheck -w @swarm/server && npm run typecheck -w @swarm/web"
   },
-  "version": "0.4.0",
+  "version": "0.5.0",
   "workspaces": [
     "apps/*",
     "packages/*"

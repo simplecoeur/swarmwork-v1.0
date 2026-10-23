@@ -14,6 +14,8 @@ export const TaskStatus = {
   REJECTED: '被打回',
   ADJUDICATION: '待裁决',
   DONE: '已完成',
+  /** 已取消（M5 扩展）：老板手动取消的终态，不再被引擎领取 */
+  CANCELLED: '已取消',
 } as const;
 
 export type TaskStatus = (typeof TaskStatus)[keyof typeof TaskStatus];
@@ -26,25 +28,30 @@ export const ProjectStatus = {
 
 export type ProjectStatus = (typeof ProjectStatus)[keyof typeof ProjectStatus];
 
-/** 合法迁移表（§6）：from → to[]。守卫条件在 domain 层 transitionTask 中校验。 */
+/** 合法迁移表（§6 + M5 扩展）：from → to[]。守卫条件在 domain 层 transitionTask 中校验。 */
 export const TASK_TRANSITIONS: Readonly<Record<TaskStatus, readonly TaskStatus[]>> = {
-  [TaskStatus.PENDING]: [TaskStatus.RUNNING],
+  // PENDING → CANCELLED：老板手动取消（M5）
+  [TaskStatus.PENDING]: [TaskStatus.RUNNING, TaskStatus.CANCELLED],
   // RUNNING → PENDING/REJECTED 为基础设施失败时的系统回滚（回滚到的阶段可续跑，不重复已回账阶段）
+  // RUNNING 不可手动取消（正在调用模型，取消会造成账实不符，M5 口径）
   [TaskStatus.RUNNING]: [
     TaskStatus.REVIEWING,
     TaskStatus.ADJUDICATION,
     TaskStatus.PENDING,
     TaskStatus.REJECTED,
   ],
+  // REVIEWING → CANCELLED 仅限带 blocked 覆盖层时（审核调用失败停工），细守卫在 domain cancelTask
   [TaskStatus.REVIEWING]: [
     TaskStatus.DONE,
     TaskStatus.REJECTED,
     TaskStatus.ADJUDICATION,
     TaskStatus.PENDING,
+    TaskStatus.CANCELLED,
   ],
-  [TaskStatus.REJECTED]: [TaskStatus.RUNNING, TaskStatus.ADJUDICATION],
+  [TaskStatus.REJECTED]: [TaskStatus.RUNNING, TaskStatus.ADJUDICATION, TaskStatus.CANCELLED],
   [TaskStatus.ADJUDICATION]: [TaskStatus.DONE],
   [TaskStatus.DONE]: [],
+  [TaskStatus.CANCELLED]: [],
 };
 
 export function canTransition(from: TaskStatus, to: TaskStatus): boolean {

@@ -17,6 +17,10 @@ export interface ChatRequest {
   system: string;
   messages: Msg[];
   temperature: number;
+  /** 输出 token 上限（缺省：OpenAI 兼容侧不下发、Anthropic 侧用 4096）；测试连接用 1 做最小探活（M5） */
+  maxTokens?: number;
+  /** 本次调用超时覆盖（缺省 LLM_GUARD.TIMEOUT_MS）；测试连接用短超时快速失败（M5） */
+  timeoutMs?: number;
 }
 
 export interface ReviewRequest {

@@ -208,6 +208,24 @@ export class Repos {
   updateMemberPrompt(id: string, name: string, prompt: string): void {
     this.db.prepare('UPDATE members SET name=?, prompt=? WHERE id=?').run(name, prompt, id);
   }
+  /** 成员全量更新（M5 成员管理：名字/工种/所属组/人设/提示词） */
+  updateMember(row: MemberRow): void {
+    this.db
+      .prepare('UPDATE members SET team_id=?, name=?, role=?, persona=?, prompt=? WHERE id=?')
+      .run(row.team_id, row.name, row.role, row.persona, row.prompt, row.id);
+  }
+  deleteMember(id: string): void {
+    this.db.prepare('DELETE FROM members WHERE id = ?').run(id);
+  }
+  /** 成员名下未完成任务数（M5 删除守卫：已完成/已取消不计） */
+  countActiveTasksByMember(memberId: string): number {
+    const r = this.db
+      .prepare(
+        "SELECT COUNT(*) AS c FROM tasks WHERE assignee_id=? AND status NOT IN ('已完成','已取消')",
+      )
+      .get(memberId) as { c: number };
+    return r.c;
+  }
 
   /* ----- projects ----- */
   listProjects(): ProjectRow[] {
@@ -282,6 +300,13 @@ export class Repos {
   countByStatus(status: TaskStatus): number {
     const r = this.db.prepare('SELECT COUNT(*) AS c FROM tasks WHERE status=?').get(status) as { c: number };
     return r.c;
+  }
+  /**
+   * 删除任务记录（M5 后悔药）：仅 domain 层校验为已完成/已取消后调用。
+   * 注意：只删 tasks 行，ledger_entries 不删（删任务不删账，ADR-004 对账不受影响）。
+   */
+  deleteTask(id: string): void {
+    this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
   }
 
   /* ----- ledger（append-only） ----- */

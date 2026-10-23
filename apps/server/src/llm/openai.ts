@@ -15,18 +15,23 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
   async chat(req: ChatRequest): Promise<{ text: string; usage: ReviewResult['usage'] }> {
     const base = this.baseUrl.replace(/\/+$/, '');
-    const j = (await fetchJson(base + '/chat/completions', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + this.apiKey },
-      body: JSON.stringify({
-        model: req.model,
-        temperature: req.temperature,
-        messages: [
-          { role: 'system', content: req.system },
-          ...req.messages.map((m) => ({ role: m.role, content: m.content })),
-        ],
-      }),
-    })) as OpenAiChatResponse;
+    const j = (await fetchJson(
+      base + '/chat/completions',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + this.apiKey },
+        body: JSON.stringify({
+          model: req.model,
+          temperature: req.temperature,
+          ...(req.maxTokens ? { max_tokens: req.maxTokens } : {}),
+          messages: [
+            { role: 'system', content: req.system },
+            ...req.messages.map((m) => ({ role: m.role, content: m.content })),
+          ],
+        }),
+      },
+      req.timeoutMs,
+    )) as OpenAiChatResponse;
     const text = j.choices?.[0]?.message?.content ?? '';
     const promptText = req.system + req.messages.map((m) => m.content).join('');
     return {

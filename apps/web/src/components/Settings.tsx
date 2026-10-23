@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useApp } from '../context';
-import type { ApiItem, Team } from '../types';
+import type { ApiItem, Member, Team } from '../types';
 
 const PROVIDERS = ['deepseek', 'openai', 'anthropic', 'custom'];
+const ROLES = ['组长', '研究员', '文案', '程序员', '审核'];
 
 /* ---------------- API 表单 ---------------- */
 function ApiForm({
@@ -19,6 +20,8 @@ function ApiForm({
   const [model, setModel] = useState(api ? api.model : '');
   const [apiKey, setApiKey] = useState('');
   const [pricePerM, setPricePerM] = useState<string>(String(api ? api.pricePerM : 2));
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; latencyMs: number; message: string } | null>(null);
 
   function onProviderChange(p: string) {
     setProvider(p as ApiItem['provider']);
@@ -61,6 +64,22 @@ function ApiForm({
       await post('/api/apis/delete', { id: api.id });
     } catch { return; }
     await onDone();
+  }
+  /** 测试连接（M5）：测当前表单值（Key 留空且已保存过则用库里 Key），探活不记账不扣费 */
+  async function testApi() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await post('/api/apis/test', {
+        id: api ? api.id : undefined,
+        api: { provider, baseUrl: baseUrl.trim(), model: model.trim(), apiKey },
+      });
+      setTestResult(res.test as { ok: boolean; latencyMs: number; message: string });
+    } catch {
+      /* post 已 toast 出错信息 */
+    } finally {
+      setTesting(false);
+    }
   }
 
   return (
@@ -110,6 +129,9 @@ function ApiForm({
       </div>
       <div style={{ marginTop: 8 }}>
         <button className="btn small blue" onClick={saveApi}>保存</button>{' '}
+        <button className="btn small gray" onClick={testApi} disabled={testing}>
+          {testing ? '测试中…' : '测试连接'}
+        </button>{' '}
         {api && (
           <>
             <button className="btn small gray" onClick={clearApiKey}>清除 Key</button>{' '}
@@ -117,6 +139,16 @@ function ApiForm({
           </>
         )}
       </div>
+      {testResult && (
+        <p
+          className="hint"
+          style={{ marginTop: 6, fontWeight: 800, color: testResult.ok ? 'var(--teal)' : 'var(--accent)' }}
+        >
+          {testResult.ok
+            ? `✓ ${testResult.message}（延迟 ${testResult.latencyMs} ms，探活不记账）`
+            : `✗ 连接失败：${testResult.message}`}
+        </p>
+      )}
     </div>
   );
 }
@@ -189,6 +221,90 @@ function TeamForm({
   );
 }
 
+/* ---------------- 成员表单（M5） ---------------- */
+function MemberForm({
+  member,
+  initialTeamId,
+  onDone,
+}: {
+  member: Member | null; // null = 新增草稿（归属 initialTeamId 组，可再改）
+  initialTeamId: string;
+  onDone: () => Promise<void>;
+}) {
+  const { S, post, toast } = useApp();
+  const [name, setName] = useState(member ? member.name : '');
+  const [role, setRole] = useState(member ? member.role : '文案');
+  const [teamId, setTeamId] = useState(member ? member.teamId : initialTeamId);
+  const [prompt, setPrompt] = useState(member ? member.prompt || '' : '');
+  if (!S) return null;
+
+  async function saveMember() {
+    if (!name.trim()) return toast('先填成员名字');
+    try {
+      await post('/api/members/save', {
+        member: {
+          id: member ? member.id : undefined,
+          name: name.trim(),
+          role,
+          teamId,
+          prompt,
+        },
+      });
+    } catch { return; }
+    toast('成员已保存');
+    await onDone();
+  }
+  async function deleteMember() {
+    if (!member) return;
+    if (!window.confirm(`删除成员「${member.name}」？名下有未完成任务时后端会拒绝。`)) return;
+    try {
+      await post('/api/members/delete', { id: member.id });
+    } catch { return; }
+    toast('成员已删除');
+    await onDone();
+  }
+
+  return (
+    <div className="memberform">
+      <div className="row">
+        <div>
+          <label>名字</label>
+          <input value={name} placeholder="如：妙笔" onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div>
+          <label>工种</label>
+          <select value={role} onChange={(e) => setRole(e.target.value as Member['role'])}>
+            {ROLES.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label>所属小组（可换组）</label>
+          <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
+            {S.teams.map((t) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <label>专属提示词（只对这个成员生效，会拼进他的干活指令）</label>
+      <textarea
+        rows={2}
+        placeholder="如：文风幽默搞笑，标题爱用反问句……"
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+      />
+      <div style={{ marginTop: 8 }}>
+        <button className="btn small blue" onClick={saveMember}>{member ? '保存' : '创建成员'}</button>{' '}
+        {member && (
+          <button className="btn small gray" onClick={deleteMember}>删除成员</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ---------------- 设置后台整页 ---------------- */
 export default function Settings() {
   const { S, post, refresh, toast } = useApp();
@@ -196,6 +312,7 @@ export default function Settings() {
   const [epoch, setEpoch] = useState(0);
   const [apiDrafts, setApiDrafts] = useState<number[]>([]);
   const [teamDrafts, setTeamDrafts] = useState<number[]>([]);
+  const [memberDrafts, setMemberDrafts] = useState<Array<{ key: number; teamId: string }>>([]);
   const [draftSeq, setDraftSeq] = useState(1);
   const [defaultApi, setDefaultApi] = useState<string | null>(null);
   const [concurrency, setConcurrency] = useState<string | null>(null);
@@ -232,7 +349,7 @@ export default function Settings() {
   return (
     <>
       <div className="card">
-        <h2>API 配置 <span className="tag">至少填一个 API 的 Key 才能开工 · Key 只保存在本机 data/settings.json，请勿外传该文件夹</span></h2>
+        <h2>API 配置 <span className="tag">至少填一个 API 的 Key 才能开工 · Key 加密保存在服务器数据库中，页面只显示掩码</span></h2>
         <div>
           {S.apis.map((a) => (
             <ApiForm key={`api-${a.id}-${epoch}`} api={a} onDone={rerender} />
@@ -297,6 +414,49 @@ export default function Settings() {
           </select>
           <button className="btn blue" style={{ flex: '0 0 120px' }} onClick={saveDefaultApi}>保存默认</button>
         </div>
+
+        <label style={{ marginTop: 16, fontSize: 13, color: 'var(--ink)' }}>成员管理（按小组；工种决定派单与审核分工，换组即时生效）</label>
+        <div>
+          {S.teams.map((t) => {
+            const ms = S.members.filter((m) => m.teamId === t.id);
+            return (
+              <div className="apicard" key={`members-${t.id}-${epoch}`}>
+                <div style={{ fontWeight: 900, marginBottom: 4 }}>
+                  <span style={{ color: t.color }}>■</span> {t.name} · 成员（{ms.length}）
+                </div>
+                {ms.map((m) => (
+                  <MemberForm key={`member-${m.id}-${epoch}`} member={m} initialTeamId={t.id} onDone={rerender} />
+                ))}
+                {memberDrafts
+                  .filter((d) => d.teamId === t.id)
+                  .map((d) => (
+                    <MemberForm
+                      key={`memberdraft-${d.key}`}
+                      member={null}
+                      initialTeamId={t.id}
+                      onDone={async () => {
+                        setMemberDrafts((ds) => ds.filter((x) => x.key !== d.key));
+                        await rerender();
+                      }}
+                    />
+                  ))}
+                {ms.length === 0 && memberDrafts.every((d) => d.teamId !== t.id) && (
+                  <p className="hint">这个组还没有成员，任务会因缺工种停工，先补齐成员。</p>
+                )}
+                <button
+                  className="btn small gray"
+                  style={{ marginTop: 8 }}
+                  onClick={() => {
+                    setMemberDrafts((ds) => [...ds, { key: draftSeq, teamId: t.id }]);
+                    setDraftSeq((n) => n + 1);
+                  }}
+                >
+                  ＋ 新增成员
+                </button>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <div className="card">
@@ -328,7 +488,17 @@ export default function Settings() {
 
       <div className="card">
         <h2>数据管理</h2>
-        <p className="hint">全部数据都在本机 data/ 目录的 JSON 文件里（settings.json / tasks.json / ledger.json / purchases.json）。备份 = 复制整个 data 文件夹；迁移 = 把文件夹拷到新电脑同一位置。没有云端副本，删了就没了。</p>
+        <p className="hint">
+          全部业务数据都存储在服务器的应用数据目录（DATA_DIR，默认部署目录下的 data/）里的一个 SQLite 单文件
+          swarm.db（运行期另有同名 -wal / -shm 日志文件），运行日志在同目录的 logs/ 下。
+          备份：点下方按钮下载一份一致性快照（服务端会先把 WAL 合并回主文件再打包），或停服务后把整个 data 目录拷走；
+          恢复/迁移：把备份文件放回数据目录并命名为 swarm.db，再启动服务即可。没有云端副本，删了就没了，请定期备份。
+        </p>
+        <div style={{ marginTop: 8 }}>
+          <a className="btn small blue" href="/api/backup" download>
+            下载备份（swarm.db）
+          </a>
+        </div>
       </div>
     </>
   );

@@ -15,21 +15,25 @@ export class AnthropicProvider implements LlmProvider {
 
   async chat(req: ChatRequest): Promise<{ text: string; usage: Usage }> {
     const base = this.baseUrl.replace(/\/+$/, '');
-    const j = (await fetchJson(base + '/v1/messages', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': this.apiKey,
-        'anthropic-version': '2023-06-01',
+    const j = (await fetchJson(
+      base + '/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: req.model,
+          max_tokens: req.maxTokens ?? 4096,
+          temperature: req.temperature,
+          system: req.system,
+          messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
+        }),
       },
-      body: JSON.stringify({
-        model: req.model,
-        max_tokens: 4096,
-        temperature: req.temperature,
-        system: req.system,
-        messages: req.messages.map((m) => ({ role: m.role, content: m.content })),
-      }),
-    })) as AnthropicResponse;
+      req.timeoutMs,
+    )) as AnthropicResponse;
     const text = (j.content ?? [])
       .filter((c) => c.type === 'text')
       .map((c) => c.text ?? '')
