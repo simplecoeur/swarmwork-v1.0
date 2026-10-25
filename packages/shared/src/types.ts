@@ -812,7 +812,7 @@ export interface OpenTaskResultDto extends OpenTaskDto {
 /* ---------- G-09 全局搜索（v1.2.0） ---------- */
 
 export interface SearchResultItemDto {
-  type: 'task' | 'result' | 'kb' | 'asset' | 'skill' | 'project';
+  type: 'task' | 'result' | 'kb' | 'asset' | 'skill' | 'talent' | 'project';
   id: string;
   title: string;
   /** 摘要片段；资产类恒不含正文（只出名称与 section 标题，见 searchService 可见性口径） */

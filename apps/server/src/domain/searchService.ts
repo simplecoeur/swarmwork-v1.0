@@ -149,6 +149,23 @@ export function searchWorkspace(
         snippet: snippetOf(row.description),
         updatedAt: row.updated_at,
       }));
+    } else if (type === 'talent') {
+      // v1.5.0 B：人才库已上架模板（pub 快照）按名/专长匹配
+      const rows = repos
+        .listPublicAgentTemplates()
+        .filter(
+          (t) =>
+            (t.pub_name ?? '').toLowerCase().includes(needle) ||
+            (t.pub_specialty ?? '').toLowerCase().includes(needle),
+        )
+        .map((t) => ({ title: t.pub_name ?? '', ts: t.updated_at, row: t }));
+      items = rankAndSlice(rows, needle, ({ row }) => ({
+        type,
+        id: row.id,
+        title: row.pub_name ?? '',
+        snippet: snippetOf(row.pub_specialty ?? ''),
+        updatedAt: row.updated_at,
+      }));
     } else if (type === 'project') {
       const rows = repos.searchProjects(workspaceId, pattern, CANDIDATES).map((p) => ({
         title: p.name,

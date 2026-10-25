@@ -24,6 +24,7 @@ import NewWorkspaceModal from './components/NewWorkspace';
 import StylePanel from './components/StylePanel';
 import TalentLibrary from './components/TalentLibrary';
 import MessagesPanel from './components/Messages';
+import ResourceCenter from './components/ResourceCenter';
 import { AuthGate, ChangePasswordGate } from './components/AuthGate';
 import { Button, Card, Dialog, DropdownMenu, Select, Spinner } from './components/ui';
 import type { TabKey } from './types';
@@ -219,6 +220,7 @@ function Shell() {
     else if (item.type === 'kb') openDialog('kb');
     else if (item.type === 'asset') openDialog('assets');
     else if (item.type === 'skill') openDialog('skills');
+    else if (item.type === 'talent') openDialog('talents');
   };
   const showSearchResults = (q: string) => {
     setSearchQuery(q);
@@ -430,6 +432,11 @@ function Shell() {
           {dialog?.name === 'messages' && (
             <Sheet title={sheetTitle.messages} onClose={closeDialog}>
               <MessagesPanel />
+            </Sheet>
+          )}
+          {dialog?.name === 'resources' && (
+            <Sheet title={sheetTitle.resources} onClose={closeDialog}>
+              <ResourceCenter />
             </Sheet>
           )}
           {dialog?.name === 'member' && dialog.memberId && (

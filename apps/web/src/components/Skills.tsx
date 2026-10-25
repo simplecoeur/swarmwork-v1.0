@@ -375,7 +375,7 @@ export default function Skills() {
     const installed = !!s.installedCopyId;
     const source = s.sourceSkillId ? skills.find((x) => x.id === s.sourceSkillId) : undefined;
     return (
-      <div className="task" key={s.id}>
+      <div className="task res-card" key={s.id}>
         <span className="tt">{s.name}</span>
         <Badge>{s.role}</Badge>
         <Badge>v{s.version}</Badge>

@@ -752,3 +752,20 @@ header{ flex-wrap:wrap; }
   .style-fab{ bottom:76px; right:12px; }
   .style-tpl-card{ flex-basis:100%; max-width:100%; }
 }
+
+/* ---------- v1.5.0 B 资源中心统一壳 ---------- */
+/* 三库条目统一卡片规范（标题/用途/来源/状态同一视觉语言，挂 .res-card） */
+.res-card{ border-left:4px solid var(--line); }
+.resource-grid{ display:flex; gap:10px; flex-wrap:wrap; }
+.resource-grid > .res-card{ flex:1 1 220px; }
+.talent-list{ display:flex; flex-direction:column; gap:0; }
+.dock-badge{
+  display:inline-block; min-width:18px; padding:0 4px; margin-left:4px;
+  background:#c0392b; color:#fff; border-radius:9px; font-size:11px; line-height:18px; text-align:center;
+}
+@media (max-width:768px){
+  /* 人才库/资源中心移动端单列，全站 0 横滚基线 */
+  .resource-grid{ flex-direction:column; }
+  .resource-grid > .res-card{ flex:1 1 auto; width:100%; }
+  .talent-list > .res-card{ width:100%; }
+}

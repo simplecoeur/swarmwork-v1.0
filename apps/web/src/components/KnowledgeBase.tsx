@@ -331,7 +331,7 @@ export default function KnowledgeBase() {
           <div key={scope}>
             <div className="hint" style={{ margin: '10px 0 6px', fontWeight: 600 }}>{SCOPE_LABEL[scope]}级</div>
             {group.map((e) => (
-              <div className={`task${e.enabled ? '' : ' kb-off'}`} key={e.id}>
+              <div className={`task res-card${e.enabled ? '' : ' kb-off'}`} key={e.id}>
                 <span className="tt">{e.title}</span>
                 <Badge>{scopeName(e)}</Badge>
                 {isPlatform && <Badge variant="adj">平台公共 · 只读</Badge>}

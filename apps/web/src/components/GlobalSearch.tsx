@@ -9,6 +9,7 @@ export const SEARCH_TYPE_LABELS: Record<SearchItem['type'], string> = {
   kb: '知识',
   asset: '资产',
   skill: '技能',
+  talent: '人才',
   project: '项目',
 };
 

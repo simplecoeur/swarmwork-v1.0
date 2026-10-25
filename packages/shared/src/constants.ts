@@ -111,7 +111,7 @@ export const SCHEDULE_SCAN_MS = 30_000;
 export const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'] as const;
 
 /** 全局搜索实体类型（G-09）：result = done 且 result 非空的 tasks 子集 */
-export const SEARCH_TYPES = ['task', 'result', 'kb', 'asset', 'skill', 'project'] as const;
+export const SEARCH_TYPES = ['task', 'result', 'kb', 'asset', 'skill', 'talent', 'project'] as const;
 export type SearchEntityType = (typeof SEARCH_TYPES)[number];
 
 /** 搜索长文本匹配口径（G-09）：brief 前段与 result 仅匹配前 500 字，防长文本全表扫描失控 */
