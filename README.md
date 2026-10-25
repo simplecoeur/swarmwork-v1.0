@@ -74,3 +74,7 @@ node tools/migrate-from-json.js [旧data目录] [目标DATA_DIR]
 - **余额是推导值**：余额 = 采购充值合计 − 账本消耗合计（按 API），账本只追加不修改；金额内部以「厘」整数运算，界面显示为元。
 - **Key 加密保存**：存于服务器 SQLite 并加密落盘；接口与日志中只出现掩码。数据目录请勿外传。
 - **估算 token**：厂商未返回 usage 时按文字粗估（中文约 1 字≈1 token、英文约 4 字符≈1 token），账本标记 estimated，总经理汇报单列估算占比。
+
+## 开源与致谢
+
+本项目基于开源项目 AI Town（MIT License）的代码改造而来，在此向原作者致谢。本项目自身代码以 MIT License 开源，见 [LICENSE](LICENSE)。
