@@ -651,6 +651,31 @@ export async function searchKbTest(
   };
 }
 
+/* ---------- v1.5.0 D：统一审核中心 ---------- */
+export interface ReviewCenterItem {
+  type: 'skill' | 'style' | 'agent';
+  id: string;
+  title: string;
+  subtitle: string;
+  changeSummary: string;
+  workspaceId: string | null;
+  createdAt: string;
+  riskFlags: string[];
+  styleDetail?: {
+    wall: string;
+    floor: string;
+    accent: string;
+    floorPattern: string;
+    furnitureCount: number;
+    signText: string;
+    images: Array<{ label: string; id: string }>;
+  } | null;
+}
+export async function fetchReviewCenter(): Promise<ReviewCenterItem[]> {
+  const j = await requestRaw('GET', '/api/admin/review-center');
+  return (j.items as ReviewCenterItem[]) ?? [];
+}
+
 /* ---------- v1.5.0 M：AI 平台运营官 ---------- */
 export interface AiOpsStepItem {
   op: string;

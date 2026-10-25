@@ -31,6 +31,7 @@ import {
   kbSearchTestSchema,
   messageSendSchema,
   platformSkillUpdateSchema,
+  reviewBatchSchema,
   skillImportSchema,
   skillPushSchema,
 } from './schemas';
@@ -380,6 +381,192 @@ export function registerV150Routes(
       `${skill!.name} v${skill!.version} → 目标 ${targets.length} 空间：新装 ${out.installed}、升级 ${out.upgraded}、跳过 ${out.skipped}`,
     );
     return { ok: true, installed: out.installed, upgraded: out.upgraded, skipped: out.skipped, targets: targets.length };
+  });
+
+  /* ================= D 统一审核中心：三队列聚合 + 批量过/驳（语义与各自单项端点一致） ================= */
+  const agentDiffSummary = (t: ReturnType<Repos['listAgentTemplates']>[number]): string => {
+    if (t.status !== 'public' && !t.pub_name) return '首次上架（无已发布版本）';
+    const changed: string[] = [];
+    if (t.draft_name !== t.pub_name) changed.push('名称');
+    if (t.draft_specialty !== t.pub_specialty) changed.push('专长');
+    if (t.draft_role !== t.pub_role) changed.push('工种');
+    if (t.draft_persona !== t.pub_persona) changed.push('人设');
+    return changed.length ? `变更：${changed.join('、')}` : '无内容变更';
+  };
+  app.get('/api/admin/review-center', async (req) => {
+    requireAdmin(req);
+    const items: Array<Record<string, unknown>> = [];
+    for (const s of repos.listPendingReviewSkills()) {
+      items.push({
+        type: 'skill',
+        id: s.id,
+        title: s.name,
+        subtitle: `v${s.version} · ${s.role}`,
+        changeSummary: s.changelog ? `变更说明：${s.changelog}` : `v${s.version} 上架申请`,
+        workspaceId: s.workspace_id,
+        createdAt: s.updated_at,
+        riskFlags: [],
+      });
+    }
+    for (const t of repos.listPendingStyleTemplates()) {
+      // 风格审核含图片内容审核：把色板/家具数/招牌/待审图 id 一并带出，前端渲染缩略图供肉眼过审
+      let styleDetail: Record<string, unknown> | null = null;
+      try {
+        const cfg = JSON.parse(t.config || '{}') as {
+          palette?: { wall?: string; floor?: string; accent?: string };
+          floorPattern?: string;
+          furniture?: Record<string, unknown>;
+          sign?: { mode?: string; text?: string; imageFileId?: string };
+          poster?: { imageFileId?: string };
+        };
+        const images: Array<{ label: string; id: string }> = [];
+        if (cfg.poster?.imageFileId) images.push({ label: '海报', id: cfg.poster.imageFileId });
+        if (cfg.sign?.mode === 'image' && cfg.sign.imageFileId) images.push({ label: '招牌图', id: cfg.sign.imageFileId });
+        styleDetail = {
+          wall: cfg.palette?.wall ?? '',
+          floor: cfg.palette?.floor ?? '',
+          accent: cfg.palette?.accent ?? '',
+          floorPattern: cfg.floorPattern ?? '',
+          furnitureCount: Object.values(cfg.furniture ?? {}).filter(Boolean).length,
+          signText: cfg.sign?.mode === 'text' ? (cfg.sign.text ?? '') : '',
+          images,
+        };
+      } catch {
+        styleDetail = null;
+      }
+      items.push({
+        type: 'style',
+        id: t.id,
+        title: t.name,
+        subtitle: '风格模板',
+        changeSummary: styleDetail
+          ? `配色 ${styleDetail.wall}/${styleDetail.floor}/${styleDetail.accent} · 家具 ${styleDetail.furnitureCount} 件`
+          : '配置解析失败',
+        workspaceId: t.workspace_id,
+        createdAt: t.updated_at,
+        riskFlags: [],
+        styleDetail,
+      });
+    }
+    for (const t of repos.listAgentTemplates()) {
+      if (t.status !== 'pending_review' && t.has_pending_update !== 1) continue;
+      let riskFlags: string[] = [];
+      try {
+        const v = JSON.parse(t.risk_flags || '[]') as unknown;
+        riskFlags = Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+      } catch {
+        riskFlags = [];
+      }
+      items.push({
+        type: 'agent',
+        id: t.id,
+        title: t.draft_name,
+        subtitle: `${t.source_repo}/${t.source_path}`,
+        changeSummary: agentDiffSummary(t),
+        workspaceId: null,
+        createdAt: t.updated_at,
+        riskFlags,
+      });
+    }
+    items.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+    return { ok: true, items };
+  });
+  app.post('/api/admin/review-center/batch', async (req) => {
+    const ctx = requireAdmin(req);
+    const body = reviewBatchSchema.parse(req.body ?? {});
+    if (body.action === 'reject' && !body.reason?.trim()) {
+      fail(ErrorCode.VALIDATION, '驳回原因必填');
+    }
+    const results: Array<{ type: string; id: string; ok: boolean; error?: string }> = [];
+    const noteTargets = new Map<string, string>(); // workspaceId -> 标题（驳回附言落线程）
+    for (const item of body.items) {
+      try {
+        if (item.type === 'skill') {
+          const cur = repos.getSkill(item.id);
+          if (!cur) throw new Error('skill 不存在');
+          if (cur.visibility !== 'pending_review') throw new Error('不在待审核状态');
+          if (body.action === 'approve') {
+            const contributor = cur.created_by ? repos.getUser(cur.created_by) : undefined;
+            const ws = cur.workspace_id ? repos.getWorkspace(cur.workspace_id) : undefined;
+            repos.updateSkill({
+              ...cur,
+              visibility: 'public',
+              status: 'published',
+              listed_at: nowIso(),
+              contributor_name: contributor?.display_name ?? '',
+              contributor_workspace_name: ws?.name ?? '',
+              updated_at: nowIso(),
+            });
+          } else {
+            repos.updateSkill({ ...cur, visibility: 'workspace', updated_at: nowIso() });
+            if (body.note?.trim() && cur.workspace_id) noteTargets.set(cur.workspace_id, cur.name);
+          }
+        } else if (item.type === 'style') {
+          const row = repos.getStyleTemplate(item.id);
+          if (!row) throw new Error('风格模板不存在');
+          if (row.visibility !== 'pending_review') throw new Error('不在待审核状态');
+          repos.updateStyleTemplate({
+            ...row,
+            visibility: body.action === 'approve' ? 'public' : 'workspace',
+            updated_at: nowIso(),
+          });
+          if (body.action === 'reject' && body.note?.trim() && row.workspace_id) {
+            noteTargets.set(row.workspace_id, row.name);
+          }
+        } else {
+          const t = repos.getAgentTemplate(item.id);
+          if (!t) throw new Error('智能体模板不存在');
+          if (t.status !== 'pending_review' && t.has_pending_update !== 1) throw new Error('不在待审状态');
+          if (body.action === 'approve') {
+            repos.updateAgentTemplate({
+              ...t,
+              pub_name: t.draft_name,
+              pub_specialty: t.draft_specialty,
+              pub_persona: t.draft_persona,
+              pub_role: t.draft_role,
+              status: 'public',
+              has_pending_update: 0,
+              reject_reason: '',
+              updated_at: nowIso(),
+              pub_at: nowIso(),
+            });
+          } else if (t.status === 'public') {
+            repos.updateAgentTemplate({
+              ...t,
+              draft_name: t.pub_name ?? t.draft_name,
+              draft_specialty: t.pub_specialty ?? t.draft_specialty,
+              draft_persona: t.pub_persona ?? t.draft_persona,
+              draft_role: t.pub_role ?? t.draft_role,
+              has_pending_update: 0,
+              reject_reason: body.reason!.trim(),
+              updated_at: nowIso(),
+            });
+          } else {
+            repos.updateAgentTemplate({ ...t, status: 'rejected', reject_reason: body.reason!.trim(), updated_at: nowIso() });
+          }
+        }
+        audit(
+          req, ctx, `review_center_${body.action}`, item.type, item.id,
+          body.action === 'reject' ? `原因：${body.reason}` : '批量审核通过',
+        );
+        results.push({ type: item.type, id: item.id, ok: true });
+      } catch (e) {
+        results.push({ type: item.type, id: item.id, ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    // L 衔接：驳回附言按空间合并成一条线程消息
+    if (body.action === 'reject' && body.note?.trim()) {
+      for (const [wsId, title] of noteTargets) {
+        appendThreadMessage(repos, wsId, {
+          senderType: 'admin',
+          senderUserId: ctx.user.id,
+          body: `审核驳回说明（${title}）：原因「${body.reason}」。补充说明：${body.note.trim()}`,
+          kind: 'review_note',
+          notify: true,
+        });
+      }
+    }
+    return { ok: true, results };
   });
 
   /* ================= M AI 平台运营官（一期）：计划 → 预览/确认破坏性步骤 → 执行 → 报告/回滚 ================= */

@@ -1,25 +1,21 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
 import {
-  adminApproveStyleTemplate,
   adminFeatureSkill,
-  adminRejectStyleTemplate,
-  fetchAdminAgentTemplates,
   fetchAdminAnnouncements,
   fetchAdminPlatformKb,
-  fetchAdminStyleTemplatesPending,
   fetchAdminThreadMessages,
   fetchAdminThreads,
   fetchAgentSyncRuns,
   fetchAgentSyncSources,
   fetchAiOpsRuns,
   fetchPlatformSkillsAdmin,
+  fetchReviewCenter,
   fetchSkillImports,
   fetchSkills,
   requestRaw,
   runAgentSync,
   saveAgentSyncSources,
-  type AdminAgentTemplateItem,
   type AdminPlatformKbItem,
   type AdminThreadItem,
   type AgentSyncBoardItem,
@@ -27,8 +23,8 @@ import {
   type AgentSyncSourceItem,
   type AiOpsRunItem,
   type AnnouncementItem,
+  type ReviewCenterItem,
   type SkillImportItem,
-  type StyleTemplateItem,
   type ThreadMessageItem,
 } from '../api';
 import { yuan } from '../utils';
@@ -272,14 +268,11 @@ export default function Admin() {
       {/* ---------- AI 平台运营官（v1.5.0 M） ---------- */}
       <AiOpsCard />
 
-      {/* ---------- skill 上架审核（M7） ---------- */}
-      <SkillReviewCard />
+      {/* ---------- 统一审核中心（v1.5.0 D，合并原 skill/风格/智能体三条待审队列） ---------- */}
+      <ReviewCenterCard />
 
       {/* ---------- skill 精选管理（v1.3.0 生态） ---------- */}
       <SkillFeaturedCard />
-
-      {/* ---------- 风格模板审核（v1.3.0 F） ---------- */}
-      <StyleTemplateReviewCard />
 
       {/* ---------- 智能体人才库（v1.4.0 J） ---------- */}
       <AgentTalentCard />
@@ -322,27 +315,16 @@ export default function Admin() {
 
 /* ---------------- 用户反馈（G-05）：只落库 + 置已处理，不做工单流转 ---------------- */
 
-/* ---------------- 智能体人才库（v1.4.0 J） ----------------
- * 白名单源（settings 平台伪空间）+ 立即同步（结果计数原文回显）+ 模板审核：
- * 通过 = pub 快照取 draft（可改工种）；驳回原因必填——首次审置 rejected，
- * 已上架模板的更新被驳则 draft 回滚为 pub、保留上架。基础工种与服务端注册表一致。 */
-const AGENT_BASE_ROLES = ['组长', '研究员', '文案', '程序员', '审核'];
-const AGENT_STATUS_BADGE: Record<AdminAgentTemplateItem['status'], { label: string; variant: 'adj' | 'done' | 'rej' }> = {
-  pending_review: { label: '待审核', variant: 'adj' },
-  public: { label: '已上架', variant: 'done' },
-  rejected: { label: '已驳回', variant: 'rej' },
-};
+/* ---------------- 智能体人才库（v1.4.0 J + v1.5.0 C） ----------------
+ * 本卡只管同步源与流水线（白名单源 + 立即同步 + 月度自动同步看板）；
+ * 模板审核自 v1.5.0 D 起统一走「审核中心」（含变更摘要与风险标记）。 */
 
 function AgentTalentCard() {
-  const { post, toast } = useApp();
+  const { toast } = useApp();
   const [sources, setSources] = useState<AgentSyncSourceItem[]>([]);
-  const [templates, setTemplates] = useState<AdminAgentTemplateItem[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const [, setLoaded] = useState(false);
   const [syncingId, setSyncingId] = useState('');
   const [syncResult, setSyncResult] = useState('');
-  const [roleByTpl, setRoleByTpl] = useState<Record<string, string>>({});
-  const [rejecting, setRejecting] = useState<AdminAgentTemplateItem | null>(null);
-  const [reason, setReason] = useState('');
   const [newSource, setNewSource] = useState<AgentSyncSourceItem>({ id: '', repo: '', branch: 'main', license: '', author: '' });
   /* v1.5.0 C 流水线看板 */
   const [board, setBoard] = useState<AgentSyncBoardItem[]>([]);
@@ -350,13 +332,11 @@ function AgentTalentCard() {
 
   const load = useCallback(async () => {
     try {
-      const [src, tpl, pipe] = await Promise.all([
+      const [src, pipe] = await Promise.all([
         fetchAgentSyncSources(),
-        fetchAdminAgentTemplates(),
         fetchAgentSyncRuns().catch(() => ({ board: [], runs: [] })),
       ]);
       setSources(src);
-      setTemplates(tpl);
       setBoard(pipe.board);
       setRuns(pipe.runs);
     } catch (e) {
@@ -432,42 +412,13 @@ function AgentTalentCard() {
     }
   }
 
-  async function approve(t: AdminAgentTemplateItem) {
-    const role = roleByTpl[t.id] || t.draftRole;
-    try {
-      await post(`/api/admin/agent-templates/${t.id}/approve`, role !== t.draftRole ? { suggestedRole: role } : {});
-    } catch { return; }
-    toast(`已通过「${t.draftName}」，已上架人才库`);
-    load();
-  }
-
-  async function reject() {
-    if (!rejecting) return;
-    if (!reason.trim()) {
-      toast('驳回原因必填');
-      return;
-    }
-    const t = rejecting;
-    try {
-      await post(`/api/admin/agent-templates/${t.id}/reject`, { reason: reason.trim() });
-    } catch { return; }
-    toast(
-      t.status === 'public'
-        ? `已驳回「${t.draftName}」的更新，草稿已回滚为上架版`
-        : `已驳回「${t.draftName}」`,
-    );
-    setRejecting(null);
-    setReason('');
-    load();
-  }
-
-  const pendingCount = templates.filter((t) => t.status === 'pending_review' || t.hasPendingUpdate).length;
+  const pendingCount = board.reduce((s, b) => s + b.pendingCount, 0);
 
   return (
     <div className="card">
       <h2>
         智能体人才库{' '}
-        <span className="tag">GitHub 白名单源同步 → 本台审核上架 → 用户在人才库招募；待处理 {pendingCount} 条</span>
+        <span className="tag">GitHub 白名单源同步 → 审核中心过审上架 → 用户在人才库招募；待审 {pendingCount} 条（去审核中心处理）</span>
       </h2>
 
       <h3>同步源（白名单）</h3>
@@ -533,72 +484,9 @@ function AgentTalentCard() {
         <Button size="small" onClick={addSource}>添加源</Button>
       </div>
 
-      <h3 style={{ marginTop: 16 }}>模板审核（全部 {templates.length} 条）</h3>
-      {!loaded && <p><Spinner label="加载中…" /></p>}
-      {loaded && templates.length === 0 && <p className="hint">暂无模板，先对同步源点「立即同步」。</p>}
-      {templates.map((t) => {
-        const st = AGENT_STATUS_BADGE[t.status];
-        const actionable = t.status === 'pending_review' || t.hasPendingUpdate;
-        return (
-          <div className="task" key={t.id}>
-            <span className="tt">{t.draftName}</span>{' '}
-            <Badge variant={st.variant}>{st.label}</Badge>{' '}
-            {t.hasPendingUpdate && <Badge variant="rev">有更新待复审</Badge>}{' '}
-            <Badge>{t.draftRole}</Badge> <Badge>{t.language === 'zh' ? '中文' : '英文'}</Badge>{' '}
-            <Badge>已招募 {t.recruitCount} 次</Badge>
-            {(t.riskFlags ?? []).map((f) => (
-              <Badge key={f} variant="rej">风险：{f}</Badge>
-            ))}
-            <div className="meta">
-              来源：{t.sourceRepo}/{t.sourcePath} · 署名 {t.sourceAuthor} · {t.license}
-              <br />
-              {t.diffSummary}
-              <br />
-              草稿专长：{t.draftSpecialty || '（无）'}
-              {t.status === 'public' && (
-                <>
-                  <br />
-                  已上架：{t.pubName}（{t.pubRole}）{t.hasPendingUpdate ? '——上方为待复审的新草稿，线上仍是此版' : ''}
-                </>
-              )}
-              {t.rejectReason && (
-                <>
-                  <br />
-                  驳回原因：{t.rejectReason}
-                </>
-              )}
-            </div>
-            {actionable && (
-              <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <Select
-                  value={roleByTpl[t.id] || t.draftRole}
-                  onValueChange={(v) => setRoleByTpl((m) => ({ ...m, [t.id]: v }))}
-                  options={AGENT_BASE_ROLES.map((r) => ({ value: r, label: r }))}
-                  ariaLabel="上架工种"
-                />
-                <Button size="small" variant="green" onClick={() => approve(t)}>
-                  {t.hasPendingUpdate ? '通过更新' : '通过上架'}
-                </Button>
-                <Button size="small" variant="gray" onClick={() => { setRejecting(t); setReason(''); }}>驳回</Button>
-              </div>
-            )}
-          </div>
-        );
-      })}
-      <div style={{ marginTop: 8 }}>
-        <Button size="small" variant="gray" onClick={load}>刷新</Button>
-      </div>
-      {rejecting && (
-        <Dialog open onClose={() => setRejecting(null)} title={`驳回「${rejecting.draftName}」`}>
-          <Field label="驳回原因（必填，会记入审计）">
-            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="如：人设含违规内容 / 质量不达标" autoFocus />
-          </Field>
-          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-            <Button onClick={reject}>确认驳回</Button>
-            <Button variant="gray" onClick={() => setRejecting(null)}>取消</Button>
-          </div>
-        </Dialog>
-      )}
+      <p className="hint" style={{ marginTop: 14 }}>
+        模板审核已统一到上方「审核中心」（含变更摘要与风险标记、支持批量处理）。
+      </p>
     </div>
   );
 }
@@ -1423,82 +1311,171 @@ function FeedbackCard() {
   );
 }
 
-/* ---------------- skill 上架审核（M7） ---------------- */
-function SkillReviewCard() {
+/* ---------------- 统一审核中心（v1.5.0 D） ----------------
+ * skill 上架 / 风格模板 / 智能体模板三条待审队列合一：类型筛选、逐项变更摘要（含风险标记）、
+ * 勾选批量通过/驳回（驳回原因必填，可附一条说明消息进对应空间线程——智能体模板无所属空间不落线程）。 */
+const REVIEW_TYPE_LABEL: Record<string, string> = { skill: '技能', style: '风格模板', agent: '智能体' };
+function ReviewCenterCard() {
   const { post, toast } = useApp();
-  const [pending, setPending] = useState<SkillListItem[]>([]);
+  const [items, setItems] = useState<ReviewCenterItem[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [rejecting, setRejecting] = useState<SkillListItem | null>(null);
+  const [typeFilter, setTypeFilter] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [rejectOpen, setRejectOpen] = useState(false);
   const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const j = await requestRaw('GET', '/api/admin/skills/pending');
-      setPending((j.skills as SkillListItem[]) ?? []);
+      setItems(await fetchReviewCenter());
+      setSelected(new Set());
     } catch (e) {
       toast('出错：' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setLoaded(true);
     }
   }, [toast]);
-
   useEffect(() => {
     load();
   }, [load]);
 
-  async function approve(s: SkillListItem) {
+  const visible = items.filter((i) => !typeFilter || i.type === typeFilter);
+  const key = (i: ReviewCenterItem) => `${i.type}:${i.id}`;
+  const selItems = items.filter((i) => selected.has(key(i)));
+
+  async function batch(action: 'approve' | 'reject') {
+    if (selItems.length === 0) return toast('先勾选要处理的条目');
+    if (action === 'reject' && !reason.trim()) return toast('驳回原因必填');
+    setBusy(true);
     try {
-      await post(`/api/admin/skills/${s.id}/approve`);
-    } catch { return; }
-    toast(`已通过「${s.name}」，已上架平台库`);
-    load();
+      const j = await post('/api/admin/review-center/batch', {
+        action,
+        reason: action === 'reject' ? reason.trim() : undefined,
+        note: action === 'reject' && note.trim() ? note.trim() : undefined,
+        items: selItems.map((i) => ({ type: i.type, id: i.id })),
+      });
+      const results = (j.results as Array<{ ok: boolean }>) ?? [];
+      const okCount = results.filter((r) => r.ok).length;
+      toast(`已处理 ${okCount}/${results.length} 条${action === 'approve' ? '（通过）' : '（驳回）'}`);
+      setRejectOpen(false);
+      setReason('');
+      setNote('');
+      load();
+    } catch {
+      /* post 已 toast */
+    } finally {
+      setBusy(false);
+    }
   }
 
-  async function reject() {
-    if (!rejecting) return;
-    const s = rejecting;
+  async function single(item: ReviewCenterItem, action: 'approve' | 'reject') {
+    if (action === 'reject') {
+      setSelected(new Set([key(item)]));
+      setRejectOpen(true);
+      return;
+    }
+    setBusy(true);
     try {
-      await post(`/api/admin/skills/${s.id}/reject`, { reason });
-    } catch { return; }
-    toast(`已驳回「${s.name}」，退回提交方空间可见状态`);
-    setRejecting(null);
-    setReason('');
-    load();
+      await post('/api/admin/review-center/batch', { action, items: [{ type: item.type, id: item.id }] });
+      toast(`已通过「${item.title}」`);
+      load();
+    } catch {
+      /* post 已 toast */
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <div className="card">
-      <h2>Skill 上架审核 <span className="tag">用户提交上架的技能在此过审：通过 → 进平台库公开；驳回 → 退回本空间可见</span></h2>
+      <h2>审核中心 <span className="tag">skill 上架 / 风格模板 / 智能体模板三条待审队列合一；待处理 {items.length} 条</span></h2>
+      <div className="row" style={{ alignItems: 'flex-end', marginBottom: 8 }}>
+        <div style={{ flex: '0 0 170px' }}>
+          <label>类型筛选</label>
+          <Select
+            value={typeFilter}
+            onValueChange={setTypeFilter}
+            emptyLabel="全部类型"
+            options={[
+              { value: 'skill', label: '技能' },
+              { value: 'style', label: '风格模板' },
+              { value: 'agent', label: '智能体' },
+            ]}
+          />
+        </div>
+        <div>
+          <Button size="small" variant="green" disabled={busy || selItems.length === 0} onClick={() => batch('approve')}>
+            批量通过（{selItems.length}）
+          </Button>{' '}
+          <Button size="small" variant="gray" disabled={busy || selItems.length === 0} onClick={() => setRejectOpen(true)}>
+            批量驳回
+          </Button>{' '}
+          <Button size="small" variant="gray" onClick={load}>刷新</Button>
+        </div>
+      </div>
       {!loaded && <p><Spinner label="加载中…" /></p>}
-      {loaded && pending.length === 0 && <p className="hint">暂无待审核的 skill。</p>}
-      {pending.map((s) => (
-        <div className="task" key={s.id}>
-          <span className="tt">{s.name}</span>
-          <Badge>{s.role}</Badge>
-          <Badge>v{s.version}</Badge>
-          <Badge variant="adj">待审核</Badge>
-          <div className="meta">
-            {s.description || '（无说明）'}
-            <br />
-            slug：{s.slug} · 参数 {(s.inputSchema ?? []).length} 个 · 提交于 {s.updatedAt.slice(0, 16).replace('T', ' ')}
-            {s.changelog ? <><br />变更说明：{s.changelog}</> : null}
-          </div>
-          <pre className="result" style={{ maxHeight: 160 }}>{s.promptTemplate}</pre>
-          <Button size="small" variant="green" onClick={() => approve(s)}>通过上架</Button>{' '}
-          <Button size="small" variant="gray" onClick={() => { setRejecting(s); setReason(''); }}>驳回</Button>
+      {loaded && visible.length === 0 && <p className="hint">暂无待审条目。</p>}
+      {visible.map((i) => (
+        <div className="task" key={key(i)}>
+          <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={selected.has(key(i))}
+              onChange={(e) => {
+                setSelected((prev) => {
+                  const next = new Set(prev);
+                  if (e.target.checked) next.add(key(i));
+                  else next.delete(key(i));
+                  return next;
+                });
+              }}
+            />
+            <span className="tt">{i.title}</span>
+          </label>{' '}
+          <Badge variant="adj">{REVIEW_TYPE_LABEL[i.type]}</Badge>{' '}
+          <Badge>{i.subtitle}</Badge>
+          {i.riskFlags.map((f) => (
+            <Badge key={f} variant="rej">风险：{f}</Badge>
+          ))}
+          <div className="meta">{i.changeSummary}</div>
+          {i.styleDetail && (
+            <div className="meta">
+              配色{' '}
+              <span className="style-admin-swatches">
+                <span style={{ background: i.styleDetail.wall }} title={`墙面 ${i.styleDetail.wall}`} />
+                <span style={{ background: i.styleDetail.floor }} title={`地板 ${i.styleDetail.floor}`} />
+                <span style={{ background: i.styleDetail.accent }} title={`点缀 ${i.styleDetail.accent}`} />
+              </span>{' '}
+              · 地板纹样 {i.styleDetail.floorPattern}
+              {i.styleDetail.signText ? <> · 招牌文字：{i.styleDetail.signText}</> : null}
+            </div>
+          )}
+          {i.styleDetail && i.styleDetail.images.length > 0 && (
+            <div className="style-admin-thumbs">
+              {i.styleDetail.images.map((im) => (
+                <span key={im.id}>
+                  <img src={`/api/style-images/${im.id}`} alt={`${im.label}（待审图）`} />
+                  <div className="hint">{im.label}</div>
+                </span>
+              ))}
+            </div>
+          )}
+          <Button size="small" variant="green" disabled={busy} onClick={() => single(i, 'approve')}>通过</Button>{' '}
+          <Button size="small" variant="gray" disabled={busy} onClick={() => single(i, 'reject')}>驳回</Button>
         </div>
       ))}
-      <div style={{ marginTop: 8 }}>
-        <Button size="small" variant="gray" onClick={load}>刷新</Button>
-      </div>
-      {rejecting && (
-        <Dialog open onClose={() => setRejecting(null)} title={`驳回「${rejecting.name}」`}>
-          <Field label="驳回原因（会记入审计）">
-            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="如：提示词模板涉及违规内容" autoFocus />
+      {rejectOpen && (
+        <Dialog open onClose={() => setRejectOpen(false)} title={`驳回 ${selItems.length} 条`}>
+          <Field label="驳回原因（必填，记入审计；智能体模板会回显给平台记录）">
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="如：内容质量不达标 / 含违规表述" autoFocus />
+          </Field>
+          <Field label="附一条说明消息（可选，进对应空间的消息线程；智能体模板无所属空间不发送）">
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="如：改完第 2 段再提交即可" />
           </Field>
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-            <Button onClick={reject}>确认驳回</Button>
-            <Button variant="gray" onClick={() => setRejecting(null)}>取消</Button>
+            <Button disabled={busy} onClick={() => batch('reject')}>确认驳回</Button>
+            <Button variant="gray" onClick={() => setRejectOpen(false)}>取消</Button>
           </div>
         </Dialog>
       )}
@@ -1581,125 +1558,6 @@ function SkillFeaturedCard() {
       <div style={{ marginTop: 8 }}>
         <Button size="small" variant="gray" onClick={load}>刷新</Button>
       </div>
-    </div>
-  );
-}
-
-/* ---------------- 风格模板审核（v1.3.0 F） ----------------
- * 审核即含图片内容审核：模板 config 带海报/招牌图时展示缩略图供管理员肉眼过审。
- * 待审列表端点为服务端第二阶段补口（GET /api/admin/style-templates/pending），先行对接。 */
-function StyleTemplateReviewCard() {
-  const { toast } = useApp();
-  const [pending, setPending] = useState<StyleTemplateItem[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [rejecting, setRejecting] = useState<StyleTemplateItem | null>(null);
-  const [reason, setReason] = useState('');
-  const [busyId, setBusyId] = useState('');
-
-  const load = useCallback(async () => {
-    try {
-      setPending(await fetchAdminStyleTemplatesPending());
-    } catch (e) {
-      toast('出错：' + (e instanceof Error ? e.message : String(e)));
-    } finally {
-      setLoaded(true);
-    }
-  }, [toast]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  async function approve(t: StyleTemplateItem) {
-    setBusyId(t.id);
-    try {
-      await adminApproveStyleTemplate(t.id);
-    } catch (e) {
-      setBusyId('');
-      toast('出错：' + (e instanceof Error ? e.message : String(e)));
-      return;
-    }
-    setBusyId('');
-    toast(`已通过「${t.name}」，已上架平台风格库`);
-    load();
-  }
-
-  async function reject() {
-    if (!rejecting) return;
-    const t = rejecting;
-    setBusyId(t.id);
-    try {
-      await adminRejectStyleTemplate(t.id, reason);
-    } catch (e) {
-      setBusyId('');
-      toast('出错：' + (e instanceof Error ? e.message : String(e)));
-      return;
-    }
-    setBusyId('');
-    toast(`已驳回「${t.name}」，退回提交方空间可见状态`);
-    setRejecting(null);
-    setReason('');
-    load();
-  }
-
-  return (
-    <div className="card">
-      <h2>风格模板审核 <span className="tag">用户提交上架的办公室风格在此过审（含海报/招牌图片内容审核）：通过 → 进平台库公开；驳回 → 退回本空间可见</span></h2>
-      {!loaded && <p><Spinner label="加载中…" /></p>}
-      {loaded && pending.length === 0 && <p className="hint">暂无待审核的风格模板。</p>}
-      {pending.map((t) => {
-        const cfg = t.config;
-        const furnCount = Object.values(cfg.furniture ?? {}).filter((v) => v).length;
-        const imgs: Array<{ label: string; id: string }> = [];
-        if (cfg.poster?.imageFileId) imgs.push({ label: '海报', id: cfg.poster.imageFileId });
-        if (cfg.sign?.mode === 'image' && cfg.sign.imageFileId) imgs.push({ label: '招牌图', id: cfg.sign.imageFileId });
-        return (
-          <div className="task" key={t.id}>
-            <span className="tt">{t.name}</span>
-            <Badge variant="adj">待审核</Badge>
-            <div className="meta">
-              由 {t.contributorWorkspaceName ?? ''} · {t.contributorName ?? ''} 贡献 · 提交于 {t.createdAt.slice(0, 16).replace('T', ' ')}
-              <br />
-              配色{' '}
-              <span className="style-admin-swatches">
-                <span style={{ background: cfg.palette.wall }} title={`墙面 ${cfg.palette.wall}`} />
-                <span style={{ background: cfg.palette.floor }} title={`地板 ${cfg.palette.floor}`} />
-                <span style={{ background: cfg.palette.accent }} title={`点缀 ${cfg.palette.accent}`} />
-              </span>{' '}
-              {cfg.palette.wall} / {cfg.palette.floor} / {cfg.palette.accent} · 地板纹样 {cfg.floorPattern} · 家具 {furnCount} 件
-              {cfg.sign?.mode === 'text' && cfg.sign.text ? <><br />招牌文字：{cfg.sign.text}</> : null}
-            </div>
-            {imgs.length > 0 && (
-              <div className="style-admin-thumbs">
-                {imgs.map((im) => (
-                  <span key={im.id}>
-                    <img src={`/api/style-images/${im.id}`} alt={`${im.label}（待审图）`} />
-                    <div className="hint">{im.label}</div>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div style={{ marginTop: 6 }}>
-              <Button size="small" variant="green" disabled={busyId === t.id} onClick={() => approve(t)}>通过上架</Button>{' '}
-              <Button size="small" variant="gray" disabled={busyId === t.id} onClick={() => { setRejecting(t); setReason(''); }}>驳回</Button>
-            </div>
-          </div>
-        );
-      })}
-      <div style={{ marginTop: 8 }}>
-        <Button size="small" variant="gray" onClick={load}>刷新</Button>
-      </div>
-      {rejecting && (
-        <Dialog open onClose={() => setRejecting(null)} title={`驳回「${rejecting.name}」`}>
-          <Field label="驳回原因（会记入审计）">
-            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="如：海报图片涉及违规内容" autoFocus />
-          </Field>
-          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-            <Button onClick={reject}>确认驳回</Button>
-            <Button variant="gray" onClick={() => setRejecting(null)}>取消</Button>
-          </div>
-        </Dialog>
-      )}
     </div>
   );
 }
