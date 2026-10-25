@@ -651,6 +651,61 @@ export async function searchKbTest(
   };
 }
 
+/* ---------- v1.5.0 L：平台公告 + 按空间消息线程 ---------- */
+export interface AnnouncementItem {
+  id: string;
+  title: string;
+  body: string;
+  scope: 'all' | 'selected';
+  workspaceIds: string[];
+  status: 'published' | 'withdrawn';
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export async function fetchAnnouncements(): Promise<AnnouncementItem[]> {
+  const j = await requestRaw('GET', '/api/announcements');
+  return (j.announcements as AnnouncementItem[]) ?? [];
+}
+export async function fetchAdminAnnouncements(): Promise<AnnouncementItem[]> {
+  const j = await requestRaw('GET', '/api/admin/announcements');
+  return (j.announcements as AnnouncementItem[]) ?? [];
+}
+export interface ThreadMessageItem {
+  id: string;
+  senderType: 'admin' | 'owner' | 'system';
+  senderUserId: string | null;
+  body: string;
+  kind: string;
+  teamId: string | null;
+  teamName: string | null;
+  createdAt: string;
+}
+export async function fetchMyThread(): Promise<{ messages: ThreadMessageItem[]; unread: number }> {
+  const j = await requestRaw('GET', '/api/messages/thread');
+  return { messages: (j.messages as ThreadMessageItem[]) ?? [], unread: Number(j.unread ?? 0) };
+}
+export async function fetchThreadUnread(): Promise<number> {
+  const j = await requestRaw('GET', '/api/messages/unread');
+  return Number(j.threadUnread ?? 0);
+}
+export interface AdminThreadItem {
+  workspaceId: string;
+  workspaceName: string;
+  ownerName: string;
+  unread: number;
+  lastMessage: { body: string; senderType: string; createdAt: string } | null;
+  updatedAt: string;
+}
+export async function fetchAdminThreads(): Promise<AdminThreadItem[]> {
+  const j = await requestRaw('GET', '/api/admin/threads');
+  return (j.threads as AdminThreadItem[]) ?? [];
+}
+export async function fetchAdminThreadMessages(workspaceId: string): Promise<ThreadMessageItem[]> {
+  const j = await requestRaw('GET', `/api/admin/threads/${workspaceId}`);
+  return (j.messages as ThreadMessageItem[]) ?? [];
+}
+
 /* ---------- v1.5.0 A：管理台平台知识 ---------- */
 export interface AdminPlatformKbItem extends KbEntry {
   injectedCount: number;

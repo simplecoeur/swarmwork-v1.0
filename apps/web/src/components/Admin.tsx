@@ -5,8 +5,11 @@ import {
   adminFeatureSkill,
   adminRejectStyleTemplate,
   fetchAdminAgentTemplates,
+  fetchAdminAnnouncements,
   fetchAdminPlatformKb,
   fetchAdminStyleTemplatesPending,
+  fetchAdminThreadMessages,
+  fetchAdminThreads,
   fetchAgentSyncRuns,
   fetchAgentSyncSources,
   fetchSkills,
@@ -15,10 +18,13 @@ import {
   saveAgentSyncSources,
   type AdminAgentTemplateItem,
   type AdminPlatformKbItem,
+  type AdminThreadItem,
   type AgentSyncBoardItem,
   type AgentSyncRunItem,
   type AgentSyncSourceItem,
+  type AnnouncementItem,
   type StyleTemplateItem,
+  type ThreadMessageItem,
 } from '../api';
 import { yuan } from '../utils';
 import { Badge, Button, Dialog, Field, Input, Select, Spinner, useConfirm } from './ui';
@@ -251,6 +257,9 @@ export default function Admin() {
 
       {/* ---------- 平台知识维护（v1.5.0 A） ---------- */}
       <PlatformKbCard />
+
+      {/* ---------- 沟通运营：公告 + 按空间消息（v1.5.0 L） ---------- */}
+      <AdminCommsCard />
 
       {/* ---------- skill 上架审核（M7） ---------- */}
       <SkillReviewCard />
@@ -719,6 +728,229 @@ function PlatformKbCard() {
         </div>
       )}
       {confirmNode}
+    </div>
+  );
+}
+
+/* ---------------- 沟通运营（v1.5.0 L）：平台公告 + 按空间双向消息 ----------------
+ * 公告：发布即经站内通知触达目标空间 + 用户端办公室首页公告区；撤下写审计。
+ * 消息：按空间一条线程，收件人恒为空间所有者；未读计数在收件箱列表呈现，打开线程即已读。 */
+function AdminCommsCard() {
+  const { post, send, toast } = useApp();
+  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
+  const [threads, setThreads] = useState<AdminThreadItem[]>([]);
+  const [workspaces, setWorkspaces] = useState<AdminWorkspace[]>([]);
+  const [annForm, setAnnForm] = useState({ title: '', body: '', scope: 'all' as 'all' | 'selected', workspaceId: '' });
+  const [editingAnn, setEditingAnn] = useState<AnnouncementItem | null>(null);
+  const [openWs, setOpenWs] = useState('');
+  const [threadMsgs, setThreadMsgs] = useState<ThreadMessageItem[]>([]);
+  const [reply, setReply] = useState('');
+  const [replyTeamId, setReplyTeamId] = useState('');
+  const [threadTeams, setThreadTeams] = useState<Array<{ id: string; name: string }>>([]);
+  const [newMsgWs, setNewMsgWs] = useState('');
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [anns, ths, wsj] = await Promise.all([
+        fetchAdminAnnouncements(),
+        fetchAdminThreads(),
+        requestRaw('GET', '/api/admin/workspaces'),
+      ]);
+      setAnnouncements(anns);
+      setThreads(ths);
+      setWorkspaces((wsj.workspaces as AdminWorkspace[]) ?? []);
+    } catch {
+      /* 忽略瞬时错误 */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function publishAnn() {
+    if (!annForm.title.trim() || !annForm.body.trim()) return toast('公告标题与正文必填');
+    const payload = {
+      title: annForm.title.trim(),
+      body: annForm.body.trim(),
+      scope: annForm.scope,
+      workspaceIds: annForm.scope === 'selected' ? [annForm.workspaceId].filter(Boolean) : [],
+    };
+    try {
+      if (editingAnn) await send('PUT', `/api/admin/announcements/${editingAnn.id}`, payload);
+      else await post('/api/admin/announcements', payload);
+    } catch { return; }
+    toast(editingAnn ? '公告已更新' : '公告已发布并触达目标空间');
+    setAnnForm({ title: '', body: '', scope: 'all', workspaceId: '' });
+    setEditingAnn(null);
+    load();
+  }
+
+  async function withdrawAnn(a: AnnouncementItem) {
+    try {
+      await post(`/api/admin/announcements/${a.id}/withdraw`);
+    } catch { return; }
+    toast('公告已撤下');
+    load();
+  }
+
+  async function openThread(workspaceId: string) {
+    setOpenWs(workspaceId);
+    try {
+      setThreadMsgs(await fetchAdminThreadMessages(workspaceId));
+      const j = await requestRaw('GET', `/api/admin/workspaces/${workspaceId}/teams`).catch(() => null);
+      setThreadTeams(((j?.teams as Array<{ id: string; name: string }>) ?? []));
+      await post(`/api/admin/threads/${workspaceId}/read`);
+      setThreads((prev) => prev.map((t) => (t.workspaceId === workspaceId ? { ...t, unread: 0 } : t)));
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  async function sendReply() {
+    const target = openWs || newMsgWs;
+    if (!target) return toast('先选择一个空间');
+    if (!reply.trim()) return;
+    try {
+      await post(`/api/admin/threads/${target}/messages`, {
+        body: reply.trim(),
+        ...(replyTeamId ? { teamId: replyTeamId } : {}),
+      });
+    } catch { return; }
+    setReply('');
+    setReplyTeamId('');
+    await openThread(target);
+    load();
+  }
+
+  const totalUnread = threads.reduce((s, t) => s + t.unread, 0);
+
+  return (
+    <div className="card">
+      <h2>
+        沟通运营{' '}
+        <span className="tag">平台公告（首页公告区 + 通知触达）与按空间消息线程；收件箱未读 {totalUnread} 条</span>
+      </h2>
+
+      <h3>发布公告</h3>
+      <div className="apicard">
+        <label>标题</label>
+        <Input value={annForm.title} onChange={(e) => setAnnForm({ ...annForm, title: e.target.value })} />
+        <label>正文</label>
+        <textarea rows={3} value={annForm.body} onChange={(e) => setAnnForm({ ...annForm, body: e.target.value })} style={{ width: '100%' }} />
+        <div className="row" style={{ alignItems: 'flex-end', marginTop: 6 }}>
+          <div style={{ flex: '0 0 180px' }}>
+            <label>投放范围</label>
+            <Select
+              value={annForm.scope}
+              onValueChange={(v) => setAnnForm({ ...annForm, scope: v as 'all' | 'selected' })}
+              options={[
+                { value: 'all', label: '全部空间' },
+                { value: 'selected', label: '选定空间' },
+              ]}
+            />
+          </div>
+          {annForm.scope === 'selected' && (
+            <div style={{ flex: '0 0 220px' }}>
+              <label>空间</label>
+              <Select
+                value={annForm.workspaceId}
+                onValueChange={(v) => setAnnForm({ ...annForm, workspaceId: v })}
+                placeholder="选择空间"
+                options={workspaces.map((w) => ({ value: w.id, label: w.name }))}
+              />
+            </div>
+          )}
+          <div>
+            <Button size="small" variant="blue" onClick={publishAnn}>{editingAnn ? '保存修改' : '发布公告'}</Button>{' '}
+            {editingAnn && (
+              <Button size="small" variant="gray" onClick={() => { setEditingAnn(null); setAnnForm({ title: '', body: '', scope: 'all', workspaceId: '' }); }}>
+                取消编辑
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+      {loaded && announcements.length === 0 && <p className="hint">暂无公告。</p>}
+      {announcements.map((a) => (
+        <div className="task" key={a.id}>
+          <span className="tt">{a.title}</span>{' '}
+          <Badge variant={a.status === 'published' ? 'done' : 'rej'}>{a.status === 'published' ? '已发布' : '已撤下'}</Badge>{' '}
+          <Badge>{a.scope === 'all' ? '全部空间' : `选定 ${a.workspaceIds.length} 个空间`}</Badge>
+          <div className="meta">发布于 {fmtTime(a.publishedAt)}</div>
+          <div style={{ whiteSpace: 'pre-wrap', fontSize: 13.5 }}>{a.body}</div>
+          <Button
+            size="small"
+            variant="gray"
+            onClick={() => {
+              setEditingAnn(a);
+              setAnnForm({ title: a.title, body: a.body, scope: a.scope, workspaceId: a.workspaceIds[0] ?? '' });
+            }}
+          >
+            编辑
+          </Button>{' '}
+          {a.status === 'published' && (
+            <Button size="small" variant="gray" onClick={() => withdrawAnn(a)}>撤下</Button>
+          )}
+        </div>
+      ))}
+
+      <h3 style={{ marginTop: 16 }}>空间收件箱</h3>
+      {loaded && threads.length === 0 && <p className="hint">暂无任何空间的会话（给空间发第一条消息后会出现）。</p>}
+      {threads.map((t) => (
+        <div className="task" key={t.workspaceId}>
+          <span className="tt">{t.workspaceName}</span>{' '}
+          {t.unread > 0 && <Badge variant="rej">未读 {t.unread}</Badge>}
+          <div className="meta">
+            所有者：{t.ownerName || '—'}
+            {t.lastMessage ? <> · 最近：{t.lastMessage.body.slice(0, 60)}（{fmtTime(t.lastMessage.createdAt)}）</> : null}
+          </div>
+          <Button size="small" variant="gray" onClick={() => openThread(t.workspaceId)}>
+            {openWs === t.workspaceId ? '收起' : '打开会话'}
+          </Button>
+        </div>
+      ))}
+      <div className="apicard" style={{ marginTop: 10 }}>
+        <label>{openWs ? `回复「${threads.find((t) => t.workspaceId === openWs)?.workspaceName ?? openWs}」` : '给空间发新消息'}</label>
+        {!openWs && (
+          <div style={{ maxWidth: 260, marginBottom: 6 }}>
+            <Select
+              value={newMsgWs}
+              onValueChange={setNewMsgWs}
+              placeholder="选择空间"
+              options={workspaces.map((w) => ({ value: w.id, label: w.name }))}
+            />
+          </div>
+        )}
+        {openWs && threadMsgs.map((m) => (
+          <div key={m.id} className="meta" style={{ margin: '4px 0' }}>
+            <b>{m.senderType === 'owner' ? '空间所有者' : m.senderUserId === 'user_ai_operator' ? 'AI 运营官' : '平台（我方）'}</b>
+            {m.kind === 'skill_push' ? ' · 技能下发说明' : m.kind === 'review_note' ? ' · 审核说明' : ''}
+            {m.teamName ? ` · 关于小组「${m.teamName}」` : ''} · {fmtTime(m.createdAt)}
+            <div style={{ whiteSpace: 'pre-wrap' }}>{m.body}</div>
+          </div>
+        ))}
+        <textarea rows={3} value={reply} onChange={(e) => setReply(e.target.value)} style={{ width: '100%' }} placeholder="输入消息正文…" />
+        <div className="row" style={{ alignItems: 'flex-end', marginTop: 6 }}>
+          {openWs && threadTeams.length > 0 && (
+            <div style={{ flex: '0 0 200px' }}>
+              <label>关联小组（可选）</label>
+              <Select
+                value={replyTeamId}
+                onValueChange={setReplyTeamId}
+                placeholder="不关联"
+                emptyLabel="不关联"
+                options={threadTeams.map((t) => ({ value: t.id, label: t.name }))}
+              />
+            </div>
+          )}
+          <div>
+            <Button size="small" variant="blue" onClick={sendReply}>发送</Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

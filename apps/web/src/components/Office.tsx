@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { HairStyle } from '@swarm/shared';
 import { useApp } from '../context';
+import { fetchAnnouncements, fetchThreadUnread, type AnnouncementItem } from '../api';
 import PixelOffice, { autoAppearanceOf, drawMemberPreview } from './PixelOffice';
 import { HAIR_PALETTE, HAIR_STYLES, SHIRT_PALETTE, SKINS } from './appearanceCatalog';
 import CheckinCard from './CheckinCard';
@@ -225,18 +226,64 @@ function LiveStatusBar() {
   );
 }
 
+/** 平台公告区（v1.5.0 L）：办公室首页展示当前空间命中的已发布公告（最新 3 条） */
+function AnnouncementBar() {
+  const { currentWorkspace, openDialog } = useApp();
+  const [items, setItems] = useState<AnnouncementItem[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchAnnouncements()
+      .then((list) => {
+        if (!cancelled) setItems(list.slice(0, 3));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [currentWorkspace?.id]);
+  if (items.length === 0) return null;
+  return (
+    <div className="card" style={{ borderLeft: '4px solid #b78a2e' }} aria-label="平台公告">
+      {items.map((a) => (
+        <div key={a.id} style={{ marginBottom: 6 }}>
+          <b>📢 {a.title}</b>{' '}
+          <span className="hint">{a.publishedAt ? new Date(a.publishedAt).toLocaleString() : ''}</span>
+          <div style={{ whiteSpace: 'pre-wrap', fontSize: 13.5 }}>{a.body}</div>
+        </div>
+      ))}
+      <Button size="small" variant="gray" onClick={() => openDialog('messages')}>
+        有问题？回复平台管理员
+      </Button>
+    </div>
+  );
+}
+
 /** 功能坞（v1.3.0 E）：全部功能改走弹窗，项目/成果库走 tasks 弹窗对应 section */
 function Dock() {
-  const { openDialog } = useApp();
-  const items: Array<{ label: string; icon: string; onClick: () => void }> = [
+  const { openDialog, currentWorkspace, dialog } = useApp();
+  const [msgUnread, setMsgUnread] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    fetchThreadUnread()
+      .then((n) => {
+        if (!cancelled) setMsgUnread(n);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [currentWorkspace?.id, dialog?.name]);
+  const items: Array<{ label: string; icon: string; badge?: number; onClick: () => void }> = [
     { label: '发单', icon: '📝', onClick: () => openDialog('publish') },
     { label: '任务墙', icon: '📌', onClick: () => openDialog('tasks', { section: 'taskwall' }) },
     { label: '项目', icon: '🗂️', onClick: () => openDialog('tasks', { section: 'projects' }) },
     { label: '成果库', icon: '🏆', onClick: () => openDialog('tasks', { section: 'results' }) },
+    { label: '资源中心', icon: '🧰', onClick: () => openDialog('resources') },
     { label: '技能', icon: '🧩', onClick: () => openDialog('skills') },
     { label: '人才库', icon: '🧑‍💼', onClick: () => openDialog('talents') },
     { label: '资产库', icon: '🗄️', onClick: () => openDialog('assets') },
     { label: '知识库', icon: '📚', onClick: () => openDialog('kb') },
+    { label: '消息', icon: '💬', badge: msgUnread, onClick: () => openDialog('messages') },
     { label: '成本', icon: '💰', onClick: () => openDialog('cost') },
     { label: '定时任务', icon: '⏰', onClick: () => openDialog('schedules') },
     { label: '设置', icon: '⚙️', onClick: () => openDialog('settings') },
@@ -247,6 +294,7 @@ function Dock() {
         <button key={it.label} type="button" className="shell-dock-btn" onClick={it.onClick}>
           <span aria-hidden="true">{it.icon}</span>
           {it.label}
+          {it.badge ? <span className="dock-badge">{it.badge}</span> : null}
         </button>
       ))}
     </div>
@@ -292,6 +340,8 @@ export default function Office() {
       {/* v1.3.0 E：实况状态栏 + 功能坞 + 快速发单条（办公室顶部中枢） */}
       <LiveStatusBar />
       <Dock />
+      {/* v1.5.0 L：平台公告区（有公告才出现） */}
+      <AnnouncementBar />
       <QuickPublish />
       {/* v1.3.0 G：签到卡 + 晨报卡（实况栏之后、新手卡之前） */}
       <CheckinCard />

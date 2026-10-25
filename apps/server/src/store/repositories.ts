@@ -2449,6 +2449,16 @@ export class Repos {
   getAnnouncement(id: string): AnnouncementRow | undefined {
     return this.db.prepare('SELECT * FROM announcements WHERE id = ?').get(id) as unknown as AnnouncementRow | undefined;
   }
+  /** 某空间可见的已发布公告：scope='all' 或 workspace_ids 含本空间 */
+  listPublishedAnnouncementsFor(workspaceId: string): AnnouncementRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM announcements WHERE status = 'published'
+           AND (scope = 'all' OR workspace_ids LIKE ?)
+         ORDER BY published_at DESC`,
+      )
+      .all(`%"${workspaceId}"%`) as unknown as AnnouncementRow[];
+  }
   listAnnouncements(): AnnouncementRow[] {
     return this.db
       .prepare('SELECT * FROM announcements ORDER BY created_at DESC, id DESC')
