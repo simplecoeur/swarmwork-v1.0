@@ -40,6 +40,13 @@ import {
   verifyPassword,
 } from '../auth/auth';
 import { testApiConnection } from '../domain/apiTest';
+import {
+  AGENT_SYNC_SOURCES_KEY,
+  getAgentSyncSources,
+  saveAgentSyncSources,
+  syncAgentSource,
+} from '../domain/agentSyncService';
+import { BASE_ROLES } from '../domain/parseAgencyAgent';
 import { saveDailySettings } from '../domain/dailySettings';
 import type { ForgeSummary } from '../domain/teamForge';
 import { balanceMilli, buildReport, checkLowBalance, trialBalanceMilli } from '../domain/costService';
@@ -57,6 +64,7 @@ import {
   memberAppearanceOf,
   PLATFORM_WORKSPACE_ID,
   sanitizeAppearance,
+  type AgentTemplateRow,
   type ApiRow,
   type IndustryPackRow,
   type KbRow,
@@ -84,6 +92,11 @@ import { registerV130Routes } from './v130';
 import { registerV130StyleRoutes } from './v130style';
 import {
   adjudicateSchema,
+  agentSourcesSaveSchema,
+  agentSyncSchema,
+  agentTemplateApproveSchema,
+  agentTemplateRecruitSchema,
+  agentTemplateRejectSchema,
   apiDeleteSchema,
   apiSaveSchema,
   apiTestSchema,
@@ -1870,6 +1883,179 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     registerPackExtensions(repos, row);
     audit(req, ctx, 'create_industry_pack', 'industry_pack', row.id);
     return { ok: true, id: row.id };
+  });
+
+  /* ================= v1.4.0 J 智能体人才库（GitHub 同步 → 管理员审核 → 用户招募） =================
+   * 同步只写 draft_*（服务层语义）；本组路由负责审核态流转与招募落成员，
+   * 成员生成只调 insertMember，不动 members 既有逻辑。 */
+  const agentTemplateAdminDto = (t: AgentTemplateRow) => ({
+    id: t.id,
+    sourceRepo: t.source_repo,
+    sourcePath: t.source_path,
+    division: t.division,
+    draftName: t.draft_name,
+    draftSpecialty: t.draft_specialty,
+    draftPersona: t.draft_persona,
+    draftRole: t.draft_role,
+    pubName: t.pub_name,
+    pubSpecialty: t.pub_specialty,
+    pubPersona: t.pub_persona,
+    pubRole: t.pub_role,
+    language: t.language,
+    sourceAuthor: t.source_author,
+    license: t.license,
+    status: t.status,
+    hasPendingUpdate: t.has_pending_update === 1,
+    rejectReason: t.reject_reason,
+    recruitCount: t.recruit_count,
+    createdAt: t.created_at,
+    updatedAt: t.updated_at,
+  });
+  const getAgentTemplateOr404 = (id: string): AgentTemplateRow => {
+    const t = repos.getAgentTemplate(id);
+    if (!t) fail(ErrorCode.NOT_FOUND, '智能体模板不存在', 404);
+    return t!;
+  };
+
+  app.get('/api/admin/agent-sources', async (req) => {
+    requireAdmin(req);
+    return { ok: true, sources: getAgentSyncSources(repos) };
+  });
+  app.post('/api/admin/agent-sources', async (req) => {
+    const ctx = requireAdmin(req);
+    const body = agentSourcesSaveSchema.parse(req.body ?? {});
+    const sources = saveAgentSyncSources(repos, body.sources);
+    audit(req, ctx, 'save_agent_sync_sources', 'settings', AGENT_SYNC_SOURCES_KEY, `${sources.length} 个源`);
+    return { ok: true, sources };
+  });
+  app.post('/api/admin/agent-sync', async (req, reply) => {
+    const ctx = requireAdmin(req);
+    const body = agentSyncSchema.parse(req.body ?? {});
+    const source = getAgentSyncSources(repos).find((s) => s.id === body.sourceId);
+    if (!source) fail(ErrorCode.NOT_FOUND, '同步源不存在', 404);
+    let result;
+    try {
+      result = await syncAgentSource(repos, source!);
+    } catch (e) {
+      // 整源拉取失败：502 + 上游原文，不编造计数
+      audit(req, ctx, 'agent_sync_failed', 'agent_source', source!.id, e instanceof Error ? e.message : String(e));
+      reply.code(502);
+      return { ok: false, error: { code: 'UPSTREAM', message: `同步失败：${e instanceof Error ? e.message : String(e)}` } };
+    }
+    audit(
+      req, ctx, 'agent_sync', 'agent_source', source!.id,
+      `fetched=${result.fetched} created=${result.created} updated=${result.updated} unchanged=${result.unchanged} failed=${result.failed}`,
+    );
+    logger.info('api', '智能体同步完成', { sourceId: source!.id, ...result });
+    return { ok: true, ...result };
+  });
+  app.get('/api/admin/agent-templates', async (req) => {
+    requireAdmin(req);
+    return { ok: true, templates: repos.listAgentTemplates().map(agentTemplateAdminDto) };
+  });
+  app.post('/api/admin/agent-templates/:id/approve', async (req) => {
+    const ctx = requireAdmin(req);
+    const { id } = req.params as { id: string };
+    const body = agentTemplateApproveSchema.parse(req.body ?? {});
+    const t = getAgentTemplateOr404(id);
+    if (body.suggestedRole !== undefined && !(BASE_ROLES as readonly string[]).includes(body.suggestedRole)) {
+      fail(ErrorCode.VALIDATION, `工种必须是基础工种之一：${BASE_ROLES.join('/')}`);
+    }
+    // pub = draft 快照（工种可覆盖）；清待复审标记与驳回原因
+    const next: AgentTemplateRow = {
+      ...t,
+      pub_name: t.draft_name,
+      pub_specialty: t.draft_specialty,
+      pub_persona: t.draft_persona,
+      pub_role: body.suggestedRole ?? t.draft_role,
+      status: 'public',
+      has_pending_update: 0,
+      reject_reason: '',
+      updated_at: nowIso(),
+    };
+    repos.updateAgentTemplate(next);
+    audit(req, ctx, 'approve_agent_template', 'agent_template', id, `${next.pub_name}（${next.pub_role}）`);
+    return { ok: true, template: agentTemplateAdminDto(next) };
+  });
+  app.post('/api/admin/agent-templates/:id/reject', async (req) => {
+    const ctx = requireAdmin(req);
+    const { id } = req.params as { id: string };
+    const body = agentTemplateRejectSchema.parse(req.body ?? {});
+    const t = getAgentTemplateOr404(id);
+    let next: AgentTemplateRow;
+    if (t.status === 'public') {
+      // 复审更新被驳：draft 回滚为 pub 内容、清待复审标记、保留 public（哈希随内容回滚，避免下轮同步误判未变）
+      next = {
+        ...t,
+        draft_name: t.pub_name ?? t.draft_name,
+        draft_specialty: t.pub_specialty ?? t.draft_specialty,
+        draft_persona: t.pub_persona ?? t.draft_persona,
+        draft_role: t.pub_role ?? t.draft_role,
+        content_hash: '',
+        has_pending_update: 0,
+        reject_reason: body.reason,
+        updated_at: nowIso(),
+      };
+    } else {
+      next = { ...t, status: 'rejected', reject_reason: body.reason, updated_at: nowIso() };
+    }
+    repos.updateAgentTemplate(next);
+    audit(req, ctx, 'reject_agent_template', 'agent_template', id, body.reason);
+    return { ok: true, template: agentTemplateAdminDto(next) };
+  });
+
+  /* ----- 用户侧人才库：只出已上架 pub 快照 ----- */
+  app.get('/api/agent-templates', async (req) => {
+    wsAuth(req);
+    const templates = repos.listPublicAgentTemplates().map((t) => ({
+      id: t.id,
+      name: t.pub_name ?? '',
+      specialty: t.pub_specialty ?? '',
+      persona: t.pub_persona ?? '',
+      role: t.pub_role ?? '',
+      division: t.division,
+      language: t.language,
+      sourceRepo: t.source_repo,
+      sourceAuthor: t.source_author,
+      license: t.license,
+      recruitCount: t.recruit_count,
+    }));
+    return { ok: true, templates };
+  });
+  app.post('/api/agent-templates/:id/recruit', async (req) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    const body = agentTemplateRecruitSchema.parse(req.body ?? {});
+    const t = repos.getAgentTemplate(id);
+    if (!t || t.status !== 'public' || t.pub_name === null) {
+      fail(ErrorCode.NOT_FOUND, '智能体模板不存在或未上架', 404);
+    }
+    const team = repos.getTeam(body.teamId, ctx.workspaceId);
+    if (!team) fail(ErrorCode.VALIDATION, '小组不存在或不属于本空间');
+    // 工种以本空间注册表可见集为准，不可见回退文案
+    const wsRow = repos.getWorkspace(ctx.workspaceId);
+    const visibleRoleIds = repos
+      .listRolesVisible(ctx.workspaceId, wsRow?.industry_pack_id ?? null)
+      .map((r) => r.role_id);
+    const role = t!.pub_role && visibleRoleIds.includes(t!.pub_role) ? t!.pub_role : '文案';
+    const row: MemberRow = {
+      id: uid('member'),
+      team_id: body.teamId,
+      name: t!.pub_name,
+      role,
+      persona: t!.pub_persona ?? '',
+      prompt: '',
+      skill_tags: '[]',
+      color: '',
+      workspace_id: ctx.workspaceId,
+      api_id: null,
+      appearance: '',
+    };
+    repos.insertMember(row);
+    repos.incrementAgentTemplateRecruit(id);
+    logger.info('api', '从人才库招募成员', { templateId: id, memberId: row.id });
+    audit(req, ctx, 'recruit_agent_template', 'agent_template', id, `${row.name} → ${team!.name}`);
+    return { ok: true, memberId: row.id };
   });
 
   /* ================= M7 路由组（skill 系统 / 交付闭环 / 渠道适配器） ================= */

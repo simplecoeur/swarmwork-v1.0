@@ -123,6 +123,7 @@ function Dock() {
     { label: '项目', icon: '🗂️', onClick: () => openDialog('tasks', { section: 'projects' }) },
     { label: '成果库', icon: '🏆', onClick: () => openDialog('tasks', { section: 'results' }) },
     { label: '技能', icon: '🧩', onClick: () => openDialog('skills') },
+    { label: '人才库', icon: '🧑‍💼', onClick: () => openDialog('talents') },
     { label: '资产库', icon: '🗄️', onClick: () => openDialog('assets') },
     { label: '知识库', icon: '📚', onClick: () => openDialog('kb') },
     { label: '成本', icon: '💰', onClick: () => openDialog('cost') },

@@ -344,6 +344,33 @@ export interface BriefingRow {
   created_at: string;
 }
 
+/* ----- v1.4.0 J 智能体人才库模板（迁移 021）：平台级，无 workspace 归属 ----- */
+export type AgentTemplateStatus = 'pending_review' | 'public' | 'rejected';
+export interface AgentTemplateRow {
+  id: string;
+  source_repo: string;
+  source_path: string;
+  division: string;
+  draft_name: string;
+  draft_specialty: string;
+  draft_persona: string;
+  draft_role: string;
+  pub_name: string | null;
+  pub_specialty: string | null;
+  pub_persona: string | null;
+  pub_role: string | null;
+  language: string;
+  source_author: string;
+  license: string;
+  content_hash: string;
+  status: AgentTemplateStatus;
+  has_pending_update: number;
+  reject_reason: string;
+  recruit_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
 /* ----- v1.3.0 C2 问卷存档（迁移 018） ----- */
 export interface QuestionnaireRow {
   id: string;
@@ -2103,5 +2130,72 @@ export class Repos {
          ORDER BY created_at DESC LIMIT ?`,
       )
       .all(workspaceId, pattern, pattern, limit) as unknown as ProjectRow[];
+  }
+
+  /* ----- v1.4.0 J 智能体人才库（agent_templates，平台级） ----- */
+  insertAgentTemplate(row: AgentTemplateRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO agent_templates (id, source_repo, source_path, division,
+           draft_name, draft_specialty, draft_persona, draft_role,
+           pub_name, pub_specialty, pub_persona, pub_role,
+           language, source_author, license, content_hash, status, has_pending_update,
+           reject_reason, recruit_count, created_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.id, row.source_repo, row.source_path, row.division,
+        row.draft_name, row.draft_specialty, row.draft_persona, row.draft_role,
+        row.pub_name, row.pub_specialty, row.pub_persona, row.pub_role,
+        row.language, row.source_author, row.license, row.content_hash, row.status,
+        row.has_pending_update, row.reject_reason, row.recruit_count, row.created_at, row.updated_at,
+      );
+  }
+  getAgentTemplate(id: string): AgentTemplateRow | undefined {
+    return this.db.prepare('SELECT * FROM agent_templates WHERE id = ?').get(id) as unknown as
+      | AgentTemplateRow
+      | undefined;
+  }
+  getAgentTemplateBySource(sourceRepo: string, sourcePath: string): AgentTemplateRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM agent_templates WHERE source_repo = ? AND source_path = ?')
+      .get(sourceRepo, sourcePath) as unknown as AgentTemplateRow | undefined;
+  }
+  /** 管理台全量（含 draft/pub/状态），待审与待复审优先、其余按来源路径 */
+  listAgentTemplates(): AgentTemplateRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM agent_templates
+         ORDER BY (status = 'pending_review') DESC, has_pending_update DESC, source_path`,
+      )
+      .all() as unknown as AgentTemplateRow[];
+  }
+  /** 用户侧人才库：仅已上架，按招募数降序 */
+  listPublicAgentTemplates(): AgentTemplateRow[] {
+    return this.db
+      .prepare(
+        "SELECT * FROM agent_templates WHERE status = 'public' ORDER BY recruit_count DESC, pub_name, id",
+      )
+      .all() as unknown as AgentTemplateRow[];
+  }
+  updateAgentTemplate(row: AgentTemplateRow): void {
+    this.db
+      .prepare(
+        `UPDATE agent_templates SET division=?, draft_name=?, draft_specialty=?, draft_persona=?, draft_role=?,
+           pub_name=?, pub_specialty=?, pub_persona=?, pub_role=?, language=?, source_author=?, license=?,
+           content_hash=?, status=?, has_pending_update=?, reject_reason=?, recruit_count=?, updated_at=?
+         WHERE id=?`,
+      )
+      .run(
+        row.division, row.draft_name, row.draft_specialty, row.draft_persona, row.draft_role,
+        row.pub_name, row.pub_specialty, row.pub_persona, row.pub_role, row.language,
+        row.source_author, row.license, row.content_hash, row.status, row.has_pending_update,
+        row.reject_reason, row.recruit_count, row.updated_at, row.id,
+      );
+  }
+  incrementAgentTemplateRecruit(id: string): void {
+    this.db
+      .prepare('UPDATE agent_templates SET recruit_count = recruit_count + 1, updated_at = ? WHERE id = ?')
+      .run(now(), id);
   }
 }

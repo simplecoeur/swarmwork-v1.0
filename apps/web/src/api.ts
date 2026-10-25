@@ -607,3 +607,97 @@ export async function fetchQuestionnaire(): Promise<Questionnaire | null> {
 export async function putQuestionnaire(questionnaire: Questionnaire): Promise<void> {
   await requestRaw('PUT', '/api/questionnaire', { questionnaire });
 }
+
+/* ---------- v1.4.0 J 智能体人才库 ---------- */
+
+/** 用户侧人才库条目：仅已上架 pub 快照 + 署名（仓库·作者·许可证） */
+export interface AgentTemplateItem {
+  id: string;
+  name: string;
+  specialty: string;
+  persona: string;
+  role: string;
+  division: string;
+  language: string;
+  sourceRepo: string;
+  sourceAuthor: string;
+  license: string;
+  recruitCount: number;
+}
+
+export async function fetchAgentTemplates(): Promise<AgentTemplateItem[]> {
+  const j = await requestRaw('GET', '/api/agent-templates');
+  return (j.templates as AgentTemplateItem[]) ?? [];
+}
+
+export async function recruitAgentTemplate(id: string, teamId: string): Promise<string> {
+  const j = await requestRaw('POST', `/api/agent-templates/${id}/recruit`, { teamId });
+  return String(j.memberId ?? '');
+}
+
+/** 管理台模板全量（draft/pub 双份 + 状态） */
+export interface AdminAgentTemplateItem {
+  id: string;
+  sourceRepo: string;
+  sourcePath: string;
+  division: string;
+  draftName: string;
+  draftSpecialty: string;
+  draftPersona: string;
+  draftRole: string;
+  pubName: string | null;
+  pubSpecialty: string | null;
+  pubPersona: string | null;
+  pubRole: string | null;
+  language: string;
+  sourceAuthor: string;
+  license: string;
+  status: 'pending_review' | 'public' | 'rejected';
+  hasPendingUpdate: boolean;
+  rejectReason: string;
+  recruitCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentSyncSourceItem {
+  id: string;
+  repo: string;
+  branch: string;
+  license: string;
+  author: string;
+}
+
+export interface AgentSyncResult {
+  fetched: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  failed: number;
+}
+
+export async function fetchAdminAgentTemplates(): Promise<AdminAgentTemplateItem[]> {
+  const j = await requestRaw('GET', '/api/admin/agent-templates');
+  return (j.templates as AdminAgentTemplateItem[]) ?? [];
+}
+
+export async function fetchAgentSyncSources(): Promise<AgentSyncSourceItem[]> {
+  const j = await requestRaw('GET', '/api/admin/agent-sources');
+  return (j.sources as AgentSyncSourceItem[]) ?? [];
+}
+
+export async function saveAgentSyncSources(sources: AgentSyncSourceItem[]): Promise<AgentSyncSourceItem[]> {
+  const j = await requestRaw('POST', '/api/admin/agent-sources', { sources });
+  return (j.sources as AgentSyncSourceItem[]) ?? [];
+}
+
+export async function runAgentSync(sourceId: string): Promise<AgentSyncResult> {
+  const j = await requestRaw('POST', '/api/admin/agent-sync', { sourceId });
+  return {
+    fetched: Number(j.fetched ?? 0),
+    created: Number(j.created ?? 0),
+    updated: Number(j.updated ?? 0),
+    unchanged: Number(j.unchanged ?? 0),
+    failed: Number(j.failed ?? 0),
+  };
+}

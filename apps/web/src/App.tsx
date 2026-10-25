@@ -22,6 +22,7 @@ import FeedbackDialog from './components/FeedbackDialog';
 import NotificationBell, { NotificationCenterDialog } from './components/NotificationBell';
 import NewWorkspaceModal from './components/NewWorkspace';
 import StylePanel from './components/StylePanel';
+import TalentLibrary from './components/TalentLibrary';
 import { AuthGate, ChangePasswordGate } from './components/AuthGate';
 import { Button, Card, Dialog, DropdownMenu, Select, Spinner } from './components/ui';
 import type { TabKey } from './types';
@@ -43,6 +44,7 @@ function hashForDialog(d: ActiveDialog | null): string {
     case 'schedules': return '#/schedules';
     case 'settings': return '#/settings';
     case 'style': return '#/style';
+    case 'talents': return '#/talents';
     case 'member': return `#/member/${encodeURIComponent(d.memberId ?? '')}`;
   }
 }
@@ -61,6 +63,7 @@ function parseHash(hash: string): ActiveDialog | null {
   if (h === 'schedules') return { name: 'schedules' };
   if (h === 'settings') return { name: 'settings' };
   if (h === 'style') return { name: 'style' };
+  if (h === 'talents') return { name: 'talents' };
   if (h.startsWith('member/')) {
     const id = decodeURIComponent(h.slice('member/'.length));
     return id ? { name: 'member', memberId: id } : null;
@@ -247,6 +250,7 @@ function Shell() {
     schedules: '定时任务',
     settings: '设置后台',
     style: '装修',
+    talents: '人才库',
   };
 
   return (
@@ -409,6 +413,11 @@ function Shell() {
           {dialog?.name === 'style' && (
             <Sheet title={sheetTitle.style} onClose={closeDialog}>
               <StylePanel />
+            </Sheet>
+          )}
+          {dialog?.name === 'talents' && (
+            <Sheet title={sheetTitle.talents} onClose={closeDialog}>
+              <TalentLibrary />
             </Sheet>
           )}
           {dialog?.name === 'member' && dialog.memberId && (

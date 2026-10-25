@@ -4,9 +4,15 @@ import {
   adminApproveStyleTemplate,
   adminFeatureSkill,
   adminRejectStyleTemplate,
+  fetchAdminAgentTemplates,
   fetchAdminStyleTemplatesPending,
+  fetchAgentSyncSources,
   fetchSkills,
   requestRaw,
+  runAgentSync,
+  saveAgentSyncSources,
+  type AdminAgentTemplateItem,
+  type AgentSyncSourceItem,
   type StyleTemplateItem,
 } from '../api';
 import { yuan } from '../utils';
@@ -247,6 +253,9 @@ export default function Admin() {
       {/* ---------- 风格模板审核（v1.3.0 F） ---------- */}
       <StyleTemplateReviewCard />
 
+      {/* ---------- 智能体人才库（v1.4.0 J） ---------- */}
+      <AgentTalentCard />
+
       {/* ---------- 用户反馈（G-05） ---------- */}
       <FeedbackCard />
 
@@ -284,6 +293,217 @@ export default function Admin() {
 }
 
 /* ---------------- 用户反馈（G-05）：只落库 + 置已处理，不做工单流转 ---------------- */
+
+/* ---------------- 智能体人才库（v1.4.0 J） ----------------
+ * 白名单源（settings 平台伪空间）+ 立即同步（结果计数原文回显）+ 模板审核：
+ * 通过 = pub 快照取 draft（可改工种）；驳回原因必填——首次审置 rejected，
+ * 已上架模板的更新被驳则 draft 回滚为 pub、保留上架。基础工种与服务端注册表一致。 */
+const AGENT_BASE_ROLES = ['组长', '研究员', '文案', '程序员', '审核'];
+const AGENT_STATUS_BADGE: Record<AdminAgentTemplateItem['status'], { label: string; variant: 'adj' | 'done' | 'rej' }> = {
+  pending_review: { label: '待审核', variant: 'adj' },
+  public: { label: '已上架', variant: 'done' },
+  rejected: { label: '已驳回', variant: 'rej' },
+};
+
+function AgentTalentCard() {
+  const { post, toast } = useApp();
+  const [sources, setSources] = useState<AgentSyncSourceItem[]>([]);
+  const [templates, setTemplates] = useState<AdminAgentTemplateItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [syncingId, setSyncingId] = useState('');
+  const [syncResult, setSyncResult] = useState('');
+  const [roleByTpl, setRoleByTpl] = useState<Record<string, string>>({});
+  const [rejecting, setRejecting] = useState<AdminAgentTemplateItem | null>(null);
+  const [reason, setReason] = useState('');
+  const [newSource, setNewSource] = useState<AgentSyncSourceItem>({ id: '', repo: '', branch: 'main', license: '', author: '' });
+
+  const load = useCallback(async () => {
+    try {
+      const [src, tpl] = await Promise.all([fetchAgentSyncSources(), fetchAdminAgentTemplates()]);
+      setSources(src);
+      setTemplates(tpl);
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setLoaded(true);
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function sync(src: AgentSyncSourceItem) {
+    setSyncingId(src.id);
+    setSyncResult('');
+    try {
+      const r = await runAgentSync(src.id);
+      setSyncResult(
+        `${src.repo}：拉取 ${r.fetched} · 新增 ${r.created} · 更新 ${r.updated} · 未变 ${r.unchanged} · 失败 ${r.failed}`,
+      );
+      toast('同步完成');
+      load();
+    } catch (e) {
+      // 整源失败：后端 502 原文（含上游状态）直接回显
+      setSyncResult(`${src.repo}：同步失败——${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSyncingId('');
+    }
+  }
+
+  async function addSource() {
+    if (!newSource.id.trim() || !newSource.repo.trim()) {
+      toast('源 id 与 repo 必填');
+      return;
+    }
+    try {
+      const saved = await saveAgentSyncSources([...sources, { ...newSource, id: newSource.id.trim(), repo: newSource.repo.trim() }]);
+      setSources(saved);
+      setNewSource({ id: '', repo: '', branch: 'main', license: '', author: '' });
+      toast('已保存白名单');
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  async function removeSource(src: AgentSyncSourceItem) {
+    try {
+      const saved = await saveAgentSyncSources(sources.filter((s) => s.id !== src.id));
+      setSources(saved);
+      toast(`已移除源 ${src.id}`);
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  async function approve(t: AdminAgentTemplateItem) {
+    const role = roleByTpl[t.id] || t.draftRole;
+    try {
+      await post(`/api/admin/agent-templates/${t.id}/approve`, role !== t.draftRole ? { suggestedRole: role } : {});
+    } catch { return; }
+    toast(`已通过「${t.draftName}」，已上架人才库`);
+    load();
+  }
+
+  async function reject() {
+    if (!rejecting) return;
+    if (!reason.trim()) {
+      toast('驳回原因必填');
+      return;
+    }
+    const t = rejecting;
+    try {
+      await post(`/api/admin/agent-templates/${t.id}/reject`, { reason: reason.trim() });
+    } catch { return; }
+    toast(
+      t.status === 'public'
+        ? `已驳回「${t.draftName}」的更新，草稿已回滚为上架版`
+        : `已驳回「${t.draftName}」`,
+    );
+    setRejecting(null);
+    setReason('');
+    load();
+  }
+
+  const pendingCount = templates.filter((t) => t.status === 'pending_review' || t.hasPendingUpdate).length;
+
+  return (
+    <div className="card">
+      <h2>
+        智能体人才库{' '}
+        <span className="tag">GitHub 白名单源同步 → 本台审核上架 → 用户在人才库招募；待处理 {pendingCount} 条</span>
+      </h2>
+
+      <h3>同步源（白名单）</h3>
+      {sources.length === 0 && <p className="hint">暂无同步源。</p>}
+      {sources.map((s) => (
+        <div className="task" key={s.id}>
+          <span className="tt">{s.repo}</span> <Badge>{s.branch}</Badge> <Badge>{s.license || '未标注许可'}</Badge>
+          <div className="meta">
+            id：{s.id} · 署名：{s.author || '—'}
+          </div>
+          <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
+            <Button size="small" variant="blue" disabled={syncingId === s.id} onClick={() => sync(s)}>
+              {syncingId === s.id ? '同步中…' : '立即同步'}
+            </Button>
+            <Button size="small" variant="gray" onClick={() => removeSource(s)}>移除源</Button>
+          </div>
+        </div>
+      ))}
+      {syncResult && <p className="hint">最近同步：{syncResult}</p>}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+        <Input placeholder="源 id（如 agency-agents）" value={newSource.id} onChange={(e) => setNewSource({ ...newSource, id: e.target.value })} />
+        <Input placeholder="仓库 owner/repo" value={newSource.repo} onChange={(e) => setNewSource({ ...newSource, repo: e.target.value })} />
+        <Input placeholder="分支" value={newSource.branch} onChange={(e) => setNewSource({ ...newSource, branch: e.target.value })} />
+        <Input placeholder="许可证（如 MIT）" value={newSource.license} onChange={(e) => setNewSource({ ...newSource, license: e.target.value })} />
+        <Input placeholder="署名作者" value={newSource.author} onChange={(e) => setNewSource({ ...newSource, author: e.target.value })} />
+        <Button size="small" onClick={addSource}>添加源</Button>
+      </div>
+
+      <h3 style={{ marginTop: 16 }}>模板审核（全部 {templates.length} 条）</h3>
+      {!loaded && <p><Spinner label="加载中…" /></p>}
+      {loaded && templates.length === 0 && <p className="hint">暂无模板，先对同步源点「立即同步」。</p>}
+      {templates.map((t) => {
+        const st = AGENT_STATUS_BADGE[t.status];
+        const actionable = t.status === 'pending_review' || t.hasPendingUpdate;
+        return (
+          <div className="task" key={t.id}>
+            <span className="tt">{t.draftName}</span>{' '}
+            <Badge variant={st.variant}>{st.label}</Badge>{' '}
+            {t.hasPendingUpdate && <Badge variant="rev">有更新待复审</Badge>}{' '}
+            <Badge>{t.draftRole}</Badge> <Badge>{t.language === 'zh' ? '中文' : '英文'}</Badge>{' '}
+            <Badge>已招募 {t.recruitCount} 次</Badge>
+            <div className="meta">
+              来源：{t.sourceRepo}/{t.sourcePath} · 署名 {t.sourceAuthor} · {t.license}
+              <br />
+              草稿专长：{t.draftSpecialty || '（无）'}
+              {t.status === 'public' && (
+                <>
+                  <br />
+                  已上架：{t.pubName}（{t.pubRole}）{t.hasPendingUpdate ? '——上方为待复审的新草稿，线上仍是此版' : ''}
+                </>
+              )}
+              {t.rejectReason && (
+                <>
+                  <br />
+                  驳回原因：{t.rejectReason}
+                </>
+              )}
+            </div>
+            {actionable && (
+              <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <Select
+                  value={roleByTpl[t.id] || t.draftRole}
+                  onValueChange={(v) => setRoleByTpl((m) => ({ ...m, [t.id]: v }))}
+                  options={AGENT_BASE_ROLES.map((r) => ({ value: r, label: r }))}
+                  ariaLabel="上架工种"
+                />
+                <Button size="small" variant="green" onClick={() => approve(t)}>
+                  {t.hasPendingUpdate ? '通过更新' : '通过上架'}
+                </Button>
+                <Button size="small" variant="gray" onClick={() => { setRejecting(t); setReason(''); }}>驳回</Button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div style={{ marginTop: 8 }}>
+        <Button size="small" variant="gray" onClick={load}>刷新</Button>
+      </div>
+      {rejecting && (
+        <Dialog open onClose={() => setRejecting(null)} title={`驳回「${rejecting.draftName}」`}>
+          <Field label="驳回原因（必填，会记入审计）">
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="如：人设含违规内容 / 质量不达标" autoFocus />
+          </Field>
+          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+            <Button onClick={reject}>确认驳回</Button>
+            <Button variant="gray" onClick={() => setRejecting(null)}>取消</Button>
+          </div>
+        </Dialog>
+      )}
+    </div>
+  );
+}
 
 const FEEDBACK_CATEGORY_LABEL: Record<string, string> = {
   bug: '问题',

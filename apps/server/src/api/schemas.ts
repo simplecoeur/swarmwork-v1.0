@@ -648,3 +648,32 @@ export const styleTemplateCreateSchema = z.object({
 export const styleTemplateRejectSchema = z.object({
   reason: z.string().trim().min(1, '驳回原因必填'),
 });
+
+/* ----- v1.4.0 J 智能体人才库 ----- */
+export const agentSyncSchema = z.object({
+  sourceId: z.string().trim().min(1, 'sourceId 必填'),
+});
+
+export const agentTemplateApproveSchema = z.object({
+  suggestedRole: z.string().trim().min(1).optional(),
+});
+
+export const agentTemplateRejectSchema = z.object({
+  reason: z.string().trim().min(1, '驳回原因必填'),
+});
+
+export const agentSyncSourceSchema = z.object({
+  id: z.string().trim().min(1, '源 id 必填'),
+  repo: z.string().trim().min(1, 'repo 必填'),
+  branch: z.string().trim().min(1).default('main'),
+  license: z.string().trim().default(''),
+  author: z.string().trim().default(''),
+});
+
+export const agentSourcesSaveSchema = z.object({
+  sources: z.array(agentSyncSourceSchema),
+});
+
+export const agentTemplateRecruitSchema = z.object({
+  teamId: z.string().min(1, '必须指定招募到的小组'),
+});

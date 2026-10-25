@@ -17,7 +17,7 @@ export type AuthStatus = 'loading' | 'anon' | 'authed';
 
 /* ----- v1.3.0 E 外壳：功能弹窗契约（办公室为唯一主场景，其余功能以弹窗打开） ----- */
 export interface ActiveDialog {
-  name: 'publish' | 'tasks' | 'skills' | 'assets' | 'kb' | 'cost' | 'schedules' | 'settings' | 'member' | 'style';
+  name: 'publish' | 'tasks' | 'skills' | 'assets' | 'kb' | 'cost' | 'schedules' | 'settings' | 'member' | 'style' | 'talents';
   memberId?: string;
   section?: 'projects' | 'taskwall' | 'results';
 }
