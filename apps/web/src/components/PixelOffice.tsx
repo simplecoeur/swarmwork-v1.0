@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react';
+import type { HairStyle, MemberAppearance } from '@swarm/shared';
 import { useApp } from '../context';
 import type { AppState, Member, OfficeStyleConfig, Team } from '../types';
 import { Button, Tooltip } from './ui';
+import { SKINS } from './appearanceCatalog';
 import { DEFAULT_OFFICE_STYLE, resolveStyleKey } from './styleCatalog';
 
 /* ============================================================
@@ -22,7 +24,7 @@ const TCOLS = 3;
 const VIEW_W = 960;
 const VIEW_H = 540;
 
-const SKINS = ['#f2c79b', '#eec39a', '#f6cfae', '#e9bd8d', '#d9a06b'];
+/* 肤色 5 档在 appearanceCatalog（与服务端 MEMBER_SKINS 同值同序，哈希推导口径不变） */
 const ROLE_SHIRT: Record<string, string> = {
   组长: '#e8862e',
   研究员: '#1f8a70',
@@ -54,6 +56,8 @@ interface AgentView {
   shirt: string;
   skin: string;
   hair: string;
+  /** v1.4.0 I：发型（未定制恒 'short'，与原画法逐像素一致） */
+  hairStyle: HairStyle;
   status: StatusText;
   bubble: string;
 }
@@ -101,9 +105,11 @@ function buildAgents(S: AppState, zones: Map<string, Zone>): AgentView[] {
     return {
       member: m,
       x, y, deskX, deskY,
-      shirt: ROLE_SHIRT[m.role] ?? FALLBACK_SHIRTS[h % FALLBACK_SHIRTS.length],
-      skin: SKINS[h % SKINS.length],
-      hair: ROLE_HAIR[m.role] ?? '#3a2a1a',
+      // v1.4.0 I：外观定制优先，缺省字段回落原自动推导（未定制时与原画法逐像素一致）
+      shirt: m.appearance?.shirt ?? ROLE_SHIRT[m.role] ?? FALLBACK_SHIRTS[h % FALLBACK_SHIRTS.length],
+      skin: m.appearance?.skin ?? SKINS[h % SKINS.length],
+      hair: m.appearance?.hairColor ?? ROLE_HAIR[m.role] ?? '#3a2a1a',
+      hairStyle: m.appearance?.hairStyle ?? 'short',
       status: st,
       bubble: bubbleOf(m, st),
     };
@@ -134,6 +140,20 @@ function buildAgents(S: AppState, zones: Map<string, Zone>): AgentView[] {
       out.push(mk(m, seat[0], seat[1], -1, -1));
     });
   return out;
+}
+
+/**
+ * v1.4.0 I：未定制成员的自动推导外观（与 buildAgents 的 mk() 回落口径完全一致），
+ * 供成员编辑器在「未定制」时展示当前实际长相作默认值；hairStyle 恒 'short'。
+ */
+export function autoAppearanceOf(m: { id: string; role: string }): Required<MemberAppearance> {
+  const h = hashStr(m.id);
+  return {
+    skin: SKINS[h % SKINS.length],
+    shirt: ROLE_SHIRT[m.role] ?? FALLBACK_SHIRTS[h % FALLBACK_SHIRTS.length],
+    hairColor: ROLE_HAIR[m.role] ?? '#3a2a1a',
+    hairStyle: 'short',
+  };
 }
 
 /* ---------- 绘制（原型 draw* 函数移植，ctx 显式传参） ---------- */
@@ -657,9 +677,23 @@ function drawAgent(ctx: CanvasRenderingContext2D, a: AgentView, now: number) {
     px(ctx, cx + 8, y0 + 14, 4, 9, a.shirt);
   }
   px(ctx, cx - 7, y0 + 1, 14, 12, a.skin);
-  px(ctx, cx - 7, y0 + 1, 14, 5, a.hair);
-  px(ctx, cx - 7, y0 + 1, 3, 8, a.hair);
-  px(ctx, cx + 4, y0 + 1, 3, 8, a.hair);
+  /* v1.4.0 I：头发按发型分支（仅此段）——'short' 三笔与原画法逐像素不变；
+     'bald' 不画；'long' 顶带不变、两侧条 3 宽自 y0+1 加长至 17（垂过肩线 y0+13、止于 y0+18，不遮眼：眼在 cx-4 起）；
+     'bun' 顶带收窄为 10 宽（cx-5 起、高 5 不变、无侧条）+ 头顶中央发髻块 6x4（cx-3, y0-3）。 */
+  if (a.hairStyle === 'bald') {
+    /* 光头：不画头发 */
+  } else if (a.hairStyle === 'long') {
+    px(ctx, cx - 7, y0 + 1, 14, 5, a.hair);
+    px(ctx, cx - 7, y0 + 1, 3, 17, a.hair);
+    px(ctx, cx + 4, y0 + 1, 3, 17, a.hair);
+  } else if (a.hairStyle === 'bun') {
+    px(ctx, cx - 3, y0 - 3, 6, 4, a.hair);
+    px(ctx, cx - 5, y0 + 1, 10, 5, a.hair);
+  } else {
+    px(ctx, cx - 7, y0 + 1, 14, 5, a.hair);
+    px(ctx, cx - 7, y0 + 1, 3, 8, a.hair);
+    px(ctx, cx + 4, y0 + 1, 3, 8, a.hair);
+  }
   px(ctx, cx - 4, y0 + 8, 2.4, 2.4, '#26221c');
   px(ctx, cx + 2, y0 + 8, 2.4, 2.4, '#26221c');
   if (a.member.role === '审核') {
@@ -668,6 +702,41 @@ function drawAgent(ctx: CanvasRenderingContext2D, a: AgentView, now: number) {
     ctx.strokeRect(cx - 6, y0 + 6.5, 6, 5);
     ctx.strokeRect(cx + 1, y0 + 6.5, 6, 5);
   }
+}
+
+/**
+ * v1.4.0 I：成员编辑器实时预览——构造一个最小 AgentView（格子 (0,0)、status '待命'、now=0、
+ * member id 空串使 hash 相位为 0、bob 恒 0），复用 drawAgent 同一绘制口径（身体/头/发型/审核眼镜），
+ * 按 canvas 尺寸等比缩放并居中（纵向预留 42 世界单位：小人占 y0+1..y0+32.5、束发发髻上探至 y0-3）。
+ * 调用方负责 canvas 的 width/height 与背景（本函数先清透明）。
+ */
+export function drawMemberPreview(
+  canvas: HTMLCanvasElement,
+  opts: { skin: string; shirt: string; hairColor: string; hairStyle: HairStyle; role: string },
+): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const s = Math.min(canvas.width / CELL, canvas.height / 42);
+  const ox = (canvas.width - CELL * s) / 2;
+  const oy = (canvas.height - 42 * s) / 2;
+  ctx.setTransform(s, 0, 0, s, ox, oy);
+  const view: AgentView = {
+    member: { id: '', role: opts.role } as unknown as Member,
+    x: 0,
+    y: 0,
+    deskX: -1,
+    deskY: -1,
+    shirt: opts.shirt,
+    skin: opts.skin,
+    hair: opts.hairColor,
+    hairStyle: opts.hairStyle,
+    status: '待命',
+    bubble: '',
+  };
+  drawAgent(ctx, view, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 function drawBubble(ctx: CanvasRenderingContext2D, a: AgentView, camX: number, viewWpx: number, now: number) {

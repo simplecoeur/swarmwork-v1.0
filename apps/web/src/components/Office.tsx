@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { HairStyle } from '@swarm/shared';
 import { useApp } from '../context';
-import PixelOffice from './PixelOffice';
+import PixelOffice, { autoAppearanceOf, drawMemberPreview } from './PixelOffice';
+import { HAIR_PALETTE, HAIR_STYLES, SHIRT_PALETTE, SKINS } from './appearanceCatalog';
 import CheckinCard from './CheckinCard';
 import BriefingCard from './BriefingCard';
 import { CapabilitiesShelf, OnboardingCard } from './Onboarding';
 import { VisitLinksCard } from './Settings';
 import { yuan } from '../utils';
-import { Button, Input, Select, Textarea } from './ui';
+import { Button, Input, RadioGroup, RadioItem, Select, Textarea } from './ui';
 
 /** 成员档案编辑器（v1.3.0 起由 App 的 member 弹窗承载，Office 画布点小人 → openDialog('member')） */
 export function MemberEditor({ memberId, onClose }: { memberId: string; onClose: () => void }) {
@@ -15,6 +17,15 @@ export function MemberEditor({ memberId, onClose }: { memberId: string; onClose:
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
   const [apiId, setApiId] = useState('');
+  // v1.4.0 I 外观表单：初值 = 已定制字段 ?? 自动推导（展示用）；未实际改过前提交仍送原值，不把打开弹窗变成定制
+  const [skin, setSkin] = useState('');
+  const [shirt, setShirt] = useState('');
+  const [hairColor, setHairColor] = useState('');
+  const [hairStyle, setHairStyle] = useState<HairStyle>('short');
+  const [appearanceTouched, setAppearanceTouched] = useState(false);
+  const [appearanceCleared, setAppearanceCleared] = useState(false);
+  const previewRef = useRef<HTMLCanvasElement | null>(null);
+  const role = m?.role ?? '';
 
   // 打开编辑器时把该成员的现有名字/提示词灌进表单（与原生版点击时渲染表单一致）
   useEffect(() => {
@@ -22,11 +33,60 @@ export function MemberEditor({ memberId, onClose }: { memberId: string; onClose:
       setName(m.name);
       setPrompt(m.prompt || '');
       setApiId(m.apiId || '');
+      const auto = autoAppearanceOf(m);
+      setSkin(m.appearance?.skin ?? auto.skin);
+      setShirt(m.appearance?.shirt ?? auto.shirt);
+      setHairColor(m.appearance?.hairColor ?? auto.hairColor);
+      setHairStyle(m.appearance?.hairStyle ?? auto.hairStyle);
+      setAppearanceTouched(false);
+      setAppearanceCleared(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberId]);
 
+  // 外观预览：选择即重绘（与办公室小人同一绘制口径）
+  useEffect(() => {
+    if (previewRef.current && skin && shirt && hairColor) {
+      drawMemberPreview(previewRef.current, { skin, shirt, hairColor, hairStyle, role });
+    }
+  }, [skin, shirt, hairColor, hairStyle, role, memberId]);
+
   if (!S || !m) return null;
+
+  // 任一外观控件被实际改动 → 本次保存送完整外观对象；点「恢复自动」→ 送 null 清除（之后再改又回到送对象）
+  const pickSkin = (v: string) => { setSkin(v); setAppearanceTouched(true); setAppearanceCleared(false); };
+  const pickShirt = (v: string) => { setShirt(v); setAppearanceTouched(true); setAppearanceCleared(false); };
+  const pickHairColor = (v: string) => { setHairColor(v); setAppearanceTouched(true); setAppearanceCleared(false); };
+  const pickHairStyle = (v: HairStyle) => { setHairStyle(v); setAppearanceTouched(true); setAppearanceCleared(false); };
+  const restoreAuto = () => {
+    const auto = autoAppearanceOf(m);
+    setSkin(auto.skin);
+    setShirt(auto.shirt);
+    setHairColor(auto.hairColor);
+    setHairStyle(auto.hairStyle);
+    setAppearanceTouched(false);
+    setAppearanceCleared(true);
+  };
+  const swatches = (
+    palette: Array<{ hex: string; name: string }>,
+    cur: string,
+    pick: (v: string) => void,
+    label: string,
+  ) => (
+    <span className="style-swatches">
+      {palette.map((s) => (
+        <button
+          key={s.hex}
+          type="button"
+          className={`style-swatch${cur === s.hex ? ' on' : ''}`}
+          style={{ background: s.hex }}
+          title={s.name}
+          aria-label={`${label}：${s.name}`}
+          onClick={() => pick(s.hex)}
+        />
+      ))}
+    </span>
+  );
 
   // 当前生效模型（成员绑定 → 小组绑定 → 空间默认，与服务端解析同口径；查不到不显示）
   const team = S.teams.find((t) => t.id === m.teamId);
@@ -45,6 +105,12 @@ export function MemberEditor({ memberId, onClose }: { memberId: string; onClose:
           teamId: m!.teamId,
           prompt,
           apiId: apiId || null,
+          // v1.4.0 I：与 apiId 同一次提交——恢复自动送 null、实际改过送完整对象、没改过送原值（不改）
+          appearance: appearanceCleared
+            ? null
+            : appearanceTouched
+              ? { skin, shirt, hairColor, hairStyle }
+              : m!.appearance,
         },
       });
     } catch { return; }
@@ -68,6 +134,51 @@ export function MemberEditor({ memberId, onClose }: { memberId: string; onClose:
         emptyLabel="跟随小组"
         options={S.apis.map((a) => ({ value: a.id, label: `${a.name} · ${a.model}` }))}
       />
+      <label>外观</label>
+      <div className="appearance-wrap">
+        <div className="appearance-controls">
+          <div className="style-color-row">
+            <span className="style-color-label">肤色</span>
+            {swatches(SKINS.map((hex) => ({ hex, name: hex })), skin, pickSkin, '肤色')}
+          </div>
+          <div className="style-color-row">
+            <span className="style-color-label">衬衫</span>
+            {swatches(SHIRT_PALETTE, shirt, pickShirt, '衬衫')}
+          </div>
+          <div className="style-color-row">
+            <span className="style-color-label">发色</span>
+            {swatches(HAIR_PALETTE, hairColor, pickHairColor, '发色')}
+          </div>
+          <div className="style-color-row">
+            <span className="style-color-label">发型</span>
+            <RadioGroup
+              className="appearance-hair-group"
+              value={hairStyle}
+              onValueChange={(v) => pickHairStyle(v as HairStyle)}
+              ariaLabel="发型"
+            >
+              {HAIR_STYLES.map((s) => (
+                <RadioItem key={s.value} value={s.value}>
+                  {s.label}
+                </RadioItem>
+              ))}
+            </RadioGroup>
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <Button size="small" variant="gray" onClick={restoreAuto}>恢复自动</Button>{' '}
+            <span className="hint">
+              {appearanceCleared
+                ? '保存后恢复自动推导'
+                : appearanceTouched
+                  ? '已定制（未保存）'
+                  : m.appearance
+                    ? '已定制'
+                    : '未定制 · 按工种/编号自动推导'}
+            </span>
+          </div>
+        </div>
+        <canvas ref={previewRef} className="appearance-preview" width={96} height={126} aria-label="外观预览" />
+      </div>
       <label>专属提示词（只对这个成员生效，会拼进他的干活指令）</label>
       <Textarea
         rows={3}
