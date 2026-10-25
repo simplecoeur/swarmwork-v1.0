@@ -118,9 +118,9 @@ describe('J 同步服务（注入 fetcher）', () => {
       };
       const src = sources[0];
       const r1 = await syncAgentSource(repos, src, fetcher);
-      expect(r1).toEqual({ fetched: 1, created: 1, updated: 0, unchanged: 0, failed: 0 });
+      expect(r1).toEqual({ fetched: 1, created: 1, updated: 0, unchanged: 0, failed: 0, failedDetails: [] }); // v1.5.0 C：结果新增 failedDetails 明细
       const r2 = await syncAgentSource(repos, src, fetcher);
-      expect(r2).toEqual({ fetched: 1, created: 0, updated: 0, unchanged: 1, failed: 0 });
+      expect(r2).toEqual({ fetched: 1, created: 0, updated: 0, unchanged: 1, failed: 0, failedDetails: [] });
 
       // 管理员过审后源文件变更：pub 快照不动、has_pending_update=1
       const row = repos.getAgentTemplateBySource(REPO, MARKETING_PATH)!;
@@ -134,7 +134,7 @@ describe('J 同步服务（注入 fetcher）', () => {
       });
       files.set(MARKETING_PATH, FIXTURE_MARKETING.replace('Expert content strategist', 'Expert content strategist v2'));
       const r3 = await syncAgentSource(repos, src, fetcher);
-      expect(r3).toEqual({ fetched: 1, created: 0, updated: 1, unchanged: 0, failed: 0 });
+      expect(r3).toEqual({ fetched: 1, created: 0, updated: 1, unchanged: 0, failed: 0, failedDetails: [] });
       const after = repos.getAgentTemplateBySource(REPO, MARKETING_PATH)!;
       expect(after.has_pending_update).toBe(1);
       expect(after.draft_specialty).toContain('v2');
