@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { HairStyle } from '@swarm/shared';
 import { useApp } from '../context';
-import { fetchAnnouncements, fetchThreadUnread, type AnnouncementItem } from '../api';
+import { fetchAnnouncements, fetchReviewCenter, fetchThreadUnread, type AnnouncementItem } from '../api';
 import PixelOffice, { autoAppearanceOf, drawMemberPreview } from './PixelOffice';
 import { HAIR_PALETTE, HAIR_STYLES, SHIRT_PALETTE, SKINS } from './appearanceCatalog';
 import CheckinCard from './CheckinCard';
@@ -197,13 +197,34 @@ export function MemberEditor({ memberId, onClose }: { memberId: string; onClose:
 
 /** 实况状态栏（v1.3.0 E）：余额/进行中/待审核/待裁决全部取真实 state（S.apis / S.tasks） */
 function LiveStatusBar() {
-  const { S, openDialog } = useApp();
+  const { S, openDialog, user, setTab } = useApp();
+  /* v1.5.0 F：管理员额外聚合「同步待审」（审核中心队列数），普通用户为 0 */
+  const [adminPending, setAdminPending] = useState(0);
+  const isAdmin = !!user?.isPlatformAdmin;
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    fetchReviewCenter()
+      .then((items) => {
+        if (!cancelled) setAdminPending(items.length);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdmin]);
   if (!S) return null;
   const balance = S.apis.reduce((sum, a) => sum + (a.balanceYuan || 0), 0);
   const running = S.tasks.filter((t) => t.status === '执行中').length;
   const reviewing = S.tasks.filter((t) => t.status === '待审核').length;
   const adjudicating = S.tasks.filter((t) => t.status === '待裁决').length;
   const goTasks = () => openDialog('tasks', { section: 'taskwall' });
+  const pendingTotal = reviewing + adjudicating + (isAdmin ? adminPending : 0);
+  const goPending = () => {
+    // 直达锚点：任务侧有待处理先去任务墙，全是平台待审则去管理台审核中心
+    if (reviewing + adjudicating > 0 || !isAdmin) goTasks();
+    else setTab('admin');
+  };
   return (
     <div className="shell-livebar" role="status" aria-label="办公室实况">
       <button type="button" className="shell-live-item" onClick={() => openDialog('cost')}>
@@ -221,6 +242,15 @@ function LiveStatusBar() {
       <button type="button" className="shell-live-item" onClick={goTasks}>
         <span>待裁决</span>
         <b>{adjudicating}</b>
+      </button>
+      <button
+        type="button"
+        className="shell-live-item"
+        onClick={goPending}
+        title={isAdmin ? '待审核 + 待裁决 + 平台待审（审核中心）' : '待审核 + 待裁决'}
+      >
+        <span>待你处理</span>
+        <b>{pendingTotal}</b>
       </button>
     </div>
   );
