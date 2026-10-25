@@ -7,6 +7,7 @@ import {
   fetchAdminAgentTemplates,
   fetchAdminPlatformKb,
   fetchAdminStyleTemplatesPending,
+  fetchAgentSyncRuns,
   fetchAgentSyncSources,
   fetchSkills,
   requestRaw,
@@ -14,6 +15,8 @@ import {
   saveAgentSyncSources,
   type AdminAgentTemplateItem,
   type AdminPlatformKbItem,
+  type AgentSyncBoardItem,
+  type AgentSyncRunItem,
   type AgentSyncSourceItem,
   type StyleTemplateItem,
 } from '../api';
@@ -321,12 +324,21 @@ function AgentTalentCard() {
   const [rejecting, setRejecting] = useState<AdminAgentTemplateItem | null>(null);
   const [reason, setReason] = useState('');
   const [newSource, setNewSource] = useState<AgentSyncSourceItem>({ id: '', repo: '', branch: 'main', license: '', author: '' });
+  /* v1.5.0 C 流水线看板 */
+  const [board, setBoard] = useState<AgentSyncBoardItem[]>([]);
+  const [runs, setRuns] = useState<AgentSyncRunItem[]>([]);
 
   const load = useCallback(async () => {
     try {
-      const [src, tpl] = await Promise.all([fetchAgentSyncSources(), fetchAdminAgentTemplates()]);
+      const [src, tpl, pipe] = await Promise.all([
+        fetchAgentSyncSources(),
+        fetchAdminAgentTemplates(),
+        fetchAgentSyncRuns().catch(() => ({ board: [], runs: [] })),
+      ]);
       setSources(src);
       setTemplates(tpl);
+      setBoard(pipe.board);
+      setRuns(pipe.runs);
     } catch (e) {
       toast('出错：' + (e instanceof Error ? e.message : String(e)));
     } finally {
@@ -343,16 +355,35 @@ function AgentTalentCard() {
     setSyncResult('');
     try {
       const r = await runAgentSync(src.id);
-      setSyncResult(
-        `${src.repo}：拉取 ${r.fetched} · 新增 ${r.created} · 更新 ${r.updated} · 未变 ${r.unchanged} · 失败 ${r.failed}`,
-      );
-      toast('同步完成');
+      if (r.paused) {
+        setSyncResult(`${src.repo}：${r.message ?? '源已暂停'}`);
+        toast('源已被暂停（许可证漂移）');
+      } else {
+        setSyncResult(
+          `${src.repo}：拉取 ${r.fetched} · 新增 ${r.created} · 更新 ${r.updated} · 未变 ${r.unchanged} · 失败 ${r.failed}` +
+            (r.sourceCommit ? ` · 锚定 commit ${r.sourceCommit.slice(0, 7)}` : ''),
+        );
+        toast('同步完成');
+      }
       load();
     } catch (e) {
       // 整源失败：后端 502 原文（含上游状态）直接回显
       setSyncResult(`${src.repo}：同步失败——${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSyncingId('');
+    }
+  }
+
+  async function resumeSource(src: AgentSyncSourceItem) {
+    try {
+      const saved = await saveAgentSyncSources(
+        sources.map((s) => (s.id === src.id ? { ...s, paused: false, pauseReason: '' } : s)),
+      );
+      setSources(saved);
+      toast(`已恢复源 ${src.repo}，可重新同步`);
+      load();
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
     }
   }
 
@@ -424,18 +455,55 @@ function AgentTalentCard() {
       {sources.map((s) => (
         <div className="task" key={s.id}>
           <span className="tt">{s.repo}</span> <Badge>{s.branch}</Badge> <Badge>{s.license || '未标注许可'}</Badge>
+          {s.paused && <Badge variant="rej">已暂停</Badge>}
           <div className="meta">
             id：{s.id} · 署名：{s.author || '—'}
+            {s.paused && s.pauseReason ? <><br />暂停原因：{s.pauseReason}</> : null}
           </div>
           <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
-            <Button size="small" variant="blue" disabled={syncingId === s.id} onClick={() => sync(s)}>
+            <Button size="small" variant="blue" disabled={syncingId === s.id || !!s.paused} onClick={() => sync(s)}>
               {syncingId === s.id ? '同步中…' : '立即同步'}
             </Button>
+            {s.paused && (
+              <Button size="small" variant="gray" onClick={() => resumeSource(s)}>恢复源</Button>
+            )}
             <Button size="small" variant="gray" onClick={() => removeSource(s)}>移除源</Button>
           </div>
         </div>
       ))}
       {syncResult && <p className="hint">最近同步：{syncResult}</p>}
+
+      <h3 style={{ marginTop: 16 }}>同步流水线（月度自动同步每月 1 日凌晨自动跑）</h3>
+      {board.length === 0 && <p className="hint">暂无流水线数据。</p>}
+      {board.map((b) => (
+        <div className="task" key={b.sourceId}>
+          <span className="tt">{b.repo}</span>{' '}
+          {b.paused ? <Badge variant="rej">已暂停</Badge> : <Badge variant="done">正常</Badge>}{' '}
+          <Badge>待审 {b.pendingCount}</Badge>
+          {b.consecutiveFailures > 0 && <Badge variant="rej">连续失败 {b.consecutiveFailures} 次</Badge>}
+          <div className="meta">
+            最近成功：{b.lastSuccessAt ? fmtTime(b.lastSuccessAt) : '—'} · 最近运行：{b.lastRunAt ? fmtTime(b.lastRunAt) : '—'}
+            （{b.lastStatus ?? '—'}）
+            {b.lastCommit ? <> · 锚定 commit {b.lastCommit.slice(0, 7)}</> : null}
+          </div>
+        </div>
+      ))}
+      {runs.slice(0, 8).map((r) => (
+        <div className="task" key={r.id} style={{ opacity: 0.85 }}>
+          <span className="tt" style={{ fontSize: 13 }}>
+            {fmtTime(r.createdAt)} · {r.sourceRepo} · {r.trigger === 'auto' ? '自动' : '手动'} · {r.status}
+          </span>
+          <div className="meta">
+            拉取 {r.fetched} · 新增 {r.created} · 更新 {r.updated} · 未变 {r.unchanged} · 失败 {r.failed} · 耗时 {r.durationMs}ms
+            {r.error ? <><br />错误：{r.error}</> : null}
+            {r.failedDetails.length > 0 && (
+              <>
+                <br />失败明细：{r.failedDetails.map((d) => `${d.path}（${d.reason}）`).join('；')}
+              </>
+            )}
+          </div>
+        </div>
+      ))}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
         <Input placeholder="源 id（如 agency-agents）" value={newSource.id} onChange={(e) => setNewSource({ ...newSource, id: e.target.value })} />
         <Input placeholder="仓库 owner/repo" value={newSource.repo} onChange={(e) => setNewSource({ ...newSource, repo: e.target.value })} />
@@ -458,8 +526,13 @@ function AgentTalentCard() {
             {t.hasPendingUpdate && <Badge variant="rev">有更新待复审</Badge>}{' '}
             <Badge>{t.draftRole}</Badge> <Badge>{t.language === 'zh' ? '中文' : '英文'}</Badge>{' '}
             <Badge>已招募 {t.recruitCount} 次</Badge>
+            {(t.riskFlags ?? []).map((f) => (
+              <Badge key={f} variant="rej">风险：{f}</Badge>
+            ))}
             <div className="meta">
               来源：{t.sourceRepo}/{t.sourcePath} · 署名 {t.sourceAuthor} · {t.license}
+              <br />
+              {t.diffSummary}
               <br />
               草稿专长：{t.draftSpecialty || '（无）'}
               {t.status === 'public' && (

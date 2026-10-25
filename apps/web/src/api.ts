@@ -623,6 +623,14 @@ export interface AgentTemplateItem {
   sourceAuthor: string;
   license: string;
   recruitCount: number;
+  /* v1.5.0 C */
+  heatScore: number | null;
+  sourceStars: number | null;
+  effectiveRecruits: number | null;
+  lastSyncAt: string | null;
+  isNewThisMonth: boolean;
+  hasPendingUpdate: boolean;
+  pubAt: string | null;
 }
 
 /* ---------- v1.5.0 E：KB 搜索测试 ---------- */
@@ -685,6 +693,9 @@ export interface AdminAgentTemplateItem {
   recruitCount: number;
   createdAt: string;
   updatedAt: string;
+  /* v1.5.0 C */
+  riskFlags: string[];
+  diffSummary: string;
 }
 
 export interface AgentSyncSourceItem {
@@ -693,6 +704,48 @@ export interface AgentSyncSourceItem {
   branch: string;
   license: string;
   author: string;
+  /* v1.5.0 C：许可证漂移暂停 */
+  paused?: boolean;
+  pauseReason?: string;
+}
+
+/* ---------- v1.5.0 C：同步流水线看板 ---------- */
+export interface AgentSyncBoardItem {
+  sourceId: string;
+  repo: string;
+  paused: boolean;
+  pauseReason: string;
+  lastRunAt: string | null;
+  lastSuccessAt: string | null;
+  lastStatus: string | null;
+  lastCommit: string;
+  consecutiveFailures: number;
+  pendingCount: number;
+}
+export interface AgentSyncRunItem {
+  id: string;
+  sourceId: string;
+  sourceRepo: string;
+  trigger: string;
+  status: string;
+  sourceCommit: string;
+  fetched: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  failed: number;
+  failedDetails: Array<{ path: string; reason: string }>;
+  error: string;
+  durationMs: number;
+  createdAt: string;
+  finishedAt: string;
+}
+export async function fetchAgentSyncRuns(): Promise<{ board: AgentSyncBoardItem[]; runs: AgentSyncRunItem[] }> {
+  const j = await requestRaw('GET', '/api/admin/agent-sync-runs');
+  return {
+    board: (j.board as AgentSyncBoardItem[]) ?? [],
+    runs: (j.runs as AgentSyncRunItem[]) ?? [],
+  };
 }
 
 export interface AgentSyncResult {
@@ -701,6 +754,11 @@ export interface AgentSyncResult {
   updated: number;
   unchanged: number;
   failed: number;
+  /* v1.5.0 C：流水线扩展（暂停时 result 计数为空、看 message） */
+  paused?: boolean;
+  message?: string;
+  runId?: string;
+  sourceCommit?: string;
 }
 
 export async function fetchAdminAgentTemplates(): Promise<AdminAgentTemplateItem[]> {

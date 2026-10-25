@@ -44,8 +44,8 @@ import {
   AGENT_SYNC_SOURCES_KEY,
   getAgentSyncSources,
   saveAgentSyncSources,
-  syncAgentSource,
 } from '../domain/agentSyncService';
+import { runAgentSyncPipeline } from '../domain/agentSyncPipeline';
 import { BASE_ROLES } from '../domain/parseAgencyAgent';
 import { saveDailySettings } from '../domain/dailySettings';
 import type { ForgeSummary } from '../domain/teamForge';
@@ -1889,6 +1889,22 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   /* ================= v1.4.0 J 智能体人才库（GitHub 同步 → 管理员审核 → 用户招募） =================
    * 同步只写 draft_*（服务层语义）；本组路由负责审核态流转与招募落成员，
    * 成员生成只调 insertMember，不动 members 既有逻辑。 */
+  /** v1.5.0 D：draft vs pub 变更摘要（审核中心/管理台共用）：改了哪些字段 + 人设行级差异计数 */
+  const agentTemplateDiffSummary = (t: AgentTemplateRow): string => {
+    if (t.status !== 'public' && !t.pub_name) return '首次上架（无已发布版本）';
+    const changed: string[] = [];
+    if (t.draft_name !== t.pub_name) changed.push('名称');
+    if (t.draft_specialty !== t.pub_specialty) changed.push('专长');
+    if (t.draft_role !== t.pub_role) changed.push('工种');
+    if (t.draft_persona !== t.pub_persona) {
+      const a = (t.pub_persona ?? '').split('\n');
+      const b = t.draft_persona.split('\n');
+      const setA = new Set(a);
+      const diffLines = b.filter((l) => !setA.has(l)).length;
+      changed.push(`人设（约 ${diffLines} 行变动）`);
+    }
+    return changed.length ? `变更：${changed.join('、')}` : '无内容变更';
+  };
   const agentTemplateAdminDto = (t: AgentTemplateRow) => ({
     id: t.id,
     sourceRepo: t.source_repo,
@@ -1911,6 +1927,15 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     recruitCount: t.recruit_count,
     createdAt: t.created_at,
     updatedAt: t.updated_at,
+    riskFlags: (() => {
+      try {
+        const v = JSON.parse(t.risk_flags || '[]') as unknown;
+        return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+      } catch {
+        return [];
+      }
+    })(),
+    diffSummary: agentTemplateDiffSummary(t),
   });
   const getAgentTemplateOr404 = (id: string): AgentTemplateRow => {
     const t = repos.getAgentTemplate(id);
@@ -1934,21 +1959,27 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const body = agentSyncSchema.parse(req.body ?? {});
     const source = getAgentSyncSources(repos).find((s) => s.id === body.sourceId);
     if (!source) fail(ErrorCode.NOT_FOUND, '同步源不存在', 404);
-    let result;
+    if (source!.paused) fail(ErrorCode.VALIDATION, `该源已暂停（${source!.pauseReason ?? '许可证漂移'}），请先在同步源里恢复`);
+    let outcome;
     try {
-      result = await syncAgentSource(repos, source!);
+      outcome = await runAgentSyncPipeline(repos, source!, 'manual');
     } catch (e) {
-      // 整源拉取失败：502 + 上游原文，不编造计数
+      // 整源拉取失败：502 + 上游原文，不编造计数（run 记录已落 failed 行）
       audit(req, ctx, 'agent_sync_failed', 'agent_source', source!.id, e instanceof Error ? e.message : String(e));
       reply.code(502);
       return { ok: false, error: { code: 'UPSTREAM', message: `同步失败：${e instanceof Error ? e.message : String(e)}` } };
     }
+    if (outcome.paused || !outcome.result) {
+      audit(req, ctx, 'agent_sync_paused', 'agent_source', source!.id, outcome.run.error);
+      return { ok: true, paused: true, message: outcome.run.error, runId: outcome.run.id };
+    }
+    const result = outcome.result;
     audit(
       req, ctx, 'agent_sync', 'agent_source', source!.id,
-      `fetched=${result.fetched} created=${result.created} updated=${result.updated} unchanged=${result.unchanged} failed=${result.failed}`,
+      `fetched=${result.fetched} created=${result.created} updated=${result.updated} unchanged=${result.unchanged} failed=${result.failed} run=${outcome.run.id} commit=${outcome.run.source_commit}`,
     );
     logger.info('api', '智能体同步完成', { sourceId: source!.id, ...result });
-    return { ok: true, ...result };
+    return { ok: true, ...result, runId: outcome.run.id, sourceCommit: outcome.run.source_commit };
   });
   app.get('/api/admin/agent-templates', async (req) => {
     requireAdmin(req);
@@ -1962,7 +1993,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     if (body.suggestedRole !== undefined && !(BASE_ROLES as readonly string[]).includes(body.suggestedRole)) {
       fail(ErrorCode.VALIDATION, `工种必须是基础工种之一：${BASE_ROLES.join('/')}`);
     }
-    // pub = draft 快照（工种可覆盖）；清待复审标记与驳回原因
+    // pub = draft 快照（工种可覆盖）；清待复审标记与驳回原因；v1.5.0 C：记 pub_at 供「本月上新」
     const next: AgentTemplateRow = {
       ...t,
       pub_name: t.draft_name,
@@ -1973,6 +2004,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       has_pending_update: 0,
       reject_reason: '',
       updated_at: nowIso(),
+      pub_at: nowIso(),
     };
     repos.updateAgentTemplate(next);
     audit(req, ctx, 'approve_agent_template', 'agent_template', id, `${next.pub_name}（${next.pub_role}）`);
@@ -2008,6 +2040,15 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   /* ----- 用户侧人才库：只出已上架 pub 快照 ----- */
   app.get('/api/agent-templates', async (req) => {
     wsAuth(req);
+    // v1.5.0 C：热度快照（当月）、源最近成功同步时间、本月上新/待审更新标记
+    const month = nowIso().slice(0, 7);
+    const heat = new Map(repos.listAgentHeatSnapshots(month).map((s) => [s.template_id, s]));
+    const lastSyncByRepo = new Map<string, string>();
+    for (const r of repos.listAgentSyncRuns(200)) {
+      if (r.status === 'success' && !lastSyncByRepo.has(r.source_repo)) {
+        lastSyncByRepo.set(r.source_repo, r.finished_at || r.created_at);
+      }
+    }
     const templates = repos.listPublicAgentTemplates().map((t) => ({
       id: t.id,
       name: t.pub_name ?? '',
@@ -2020,8 +2061,15 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       sourceAuthor: t.source_author,
       license: t.license,
       recruitCount: t.recruit_count,
+      heatScore: heat.get(t.id)?.score ?? null,
+      sourceStars: heat.get(t.id)?.source_stars ?? null,
+      effectiveRecruits: heat.get(t.id)?.effective_recruits ?? null,
+      lastSyncAt: lastSyncByRepo.get(t.source_repo) ?? null,
+      isNewThisMonth: !!t.pub_at && t.pub_at.slice(0, 7) === month,
+      hasPendingUpdate: t.has_pending_update === 1,
+      pubAt: t.pub_at,
     }));
-    return { ok: true, templates };
+    return { ok: true, templates, heatMonth: month };
   });
   app.post('/api/agent-templates/:id/recruit', async (req) => {
     const ctx = wsAuth(req);
@@ -2054,6 +2102,14 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     };
     repos.insertMember(row);
     repos.incrementAgentTemplateRecruit(id);
+    // v1.5.0 C：招募事件落表，热度榜「有效招募」（满 7 天未删、同空间去重）据此计
+    repos.insertAgentRecruitEvent({
+      id: uid('recruit'),
+      template_id: id,
+      workspace_id: ctx.workspaceId,
+      member_id: row.id,
+      created_at: nowIso(),
+    });
     logger.info('api', '从人才库招募成员', { templateId: id, memberId: row.id });
     audit(req, ctx, 'recruit_agent_template', 'agent_template', id, `${row.name} → ${team!.name}`);
     return { ok: true, memberId: row.id };

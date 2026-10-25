@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { SCHEDULE_SCAN_MS } from '@swarm/shared';
+import { runAgentMonthlyTick } from '../domain/agentSyncPipeline';
 import { doCheckin, getCheckinStatus, runDailyTick } from '../domain/dailyService';
 import {
   getDailySettings,
@@ -100,6 +101,10 @@ export function registerDailyRoutes(
   const timer = setInterval(() => {
     runDailyTick(repos, new Date()).catch((e) => {
       logger.error('daily', `每日调度扫描异常：${e instanceof Error ? e.message : String(e)}`);
+    });
+    // v1.5.0 C：智能体月度自动同步同 tick 顺带检查（每月 1 日平台时区触发、当月只跑一次，内部防重）
+    runAgentMonthlyTick(repos, new Date()).catch((e) => {
+      logger.error('agent-sync', `月度自动同步扫描异常：${e instanceof Error ? e.message : String(e)}`);
     });
   }, tickMs);
   timer.unref?.();

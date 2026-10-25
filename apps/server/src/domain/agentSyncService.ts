@@ -5,7 +5,7 @@ import {
   type Repos,
 } from '../store/repositories';
 import { nowIso, uid } from '../util';
-import { parseAgencyAgent } from './parseAgencyAgent';
+import { parseAgencyAgent, parseFrontmatter } from './parseAgencyAgent';
 
 /**
  * v1.4.0 J：GitHub 智能体同步服务（白名单源 → agent_templates 草稿区）。
@@ -21,6 +21,9 @@ export interface AgentSyncSource {
   branch: string;
   license: string;
   author: string;
+  /** v1.5.0 C：许可证漂移整源暂停标记（管理员在源管理里手动恢复） */
+  paused?: boolean;
+  pauseReason?: string;
 }
 
 export const AGENT_SYNC_SOURCES_KEY = 'agentSyncSources';
@@ -87,6 +90,34 @@ export interface AgentSyncResult {
   updated: number;
   unchanged: number;
   failed: number;
+  /** v1.5.0 C：单文件失败明细（结构校验不过/拉取失败），进 run 记录 */
+  failedDetails: Array<{ path: string; reason: string }>;
+}
+
+/**
+ * v1.5.0 C 内容安全预筛（只标记 risk、不自动驳回，最终过/驳由管理员在审核中心定）：
+ * sensitive_word 敏感词 / external_link 正文含外链 / install_command 含安装或执行命令段落 /
+ * prompt_injection 疑似提示词注入话术 / overlong 正文超长。
+ */
+const RISK_SENSITIVE_WORDS = [
+  '身份证号', '银行卡号', '转账到', '提供密码', '短信验证码',
+  'credit card number', 'wire transfer to', 'send your password', 'social security number',
+];
+const RISK_INJECTION_PATTERNS = [
+  '忽略以上指令', '忽略之前的指令', '无视系统提示', 'ignore previous instructions',
+  'ignore all previous', 'disregard the system prompt', 'you are now in developer mode',
+];
+export function scanAgentRiskFlags(persona: string): string[] {
+  const flags: string[] = [];
+  const lower = persona.toLowerCase();
+  if (RISK_SENSITIVE_WORDS.some((w) => lower.includes(w.toLowerCase()))) flags.push('sensitive_word');
+  if (/https?:\/\/[^\s)]+/i.test(persona)) flags.push('external_link');
+  if (/(npm install|pip install|yarn add|pnpm add|curl\s+https?:|wget\s+https?:|bash\s+-c|powershell\s)/i.test(persona)) {
+    flags.push('install_command');
+  }
+  if (RISK_INJECTION_PATTERNS.some((w) => lower.includes(w.toLowerCase()))) flags.push('prompt_injection');
+  if (persona.length > 20000) flags.push('overlong');
+  return flags;
 }
 
 interface TreeEntry {
@@ -152,12 +183,25 @@ export async function syncAgentSource(
     })
     .sort();
 
-  const result: AgentSyncResult = { fetched: paths.length, created: 0, updated: 0, unchanged: 0, failed: 0 };
+  const result: AgentSyncResult = {
+    fetched: paths.length, created: 0, updated: 0, unchanged: 0, failed: 0, failedDetails: [],
+  };
   await mapPool(paths, 6, async (sourcePath) => {
     try {
       const raw = await fetcher(`${rawBase()}/${source.repo}/${source.branch}/${sourcePath}`);
+      // v1.5.0 C 结构校验：frontmatter 缺 name/description 的文件不进待审，直接记 failed 明细
+      const { fm } = parseFrontmatter(raw);
+      if (!(fm.name ?? '').trim() || !(fm.description ?? '').trim()) {
+        result.failed++;
+        result.failedDetails.push({
+          path: sourcePath,
+          reason: `frontmatter 缺 ${!(fm.name ?? '').trim() ? 'name' : 'description'}`,
+        });
+        return;
+      }
       const hash = createHash('sha256').update(raw, 'utf8').digest('hex');
       const parsed = parseAgencyAgent(raw, sourcePath);
+      const riskFlags = JSON.stringify(scanAgentRiskFlags(parsed.persona));
       const division = sourcePath.split('/')[0];
       const existing = repos.getAgentTemplateBySource(source.repo, sourcePath);
       const ts = nowIso();
@@ -185,7 +229,7 @@ export async function syncAgentSource(
           recruit_count: 0,
           created_at: ts,
           updated_at: ts,
-          risk_flags: '',
+          risk_flags: riskFlags,
           pub_at: null,
         };
         repos.insertAgentTemplate(row);
@@ -208,6 +252,7 @@ export async function syncAgentSource(
         source_author: source.author,
         license: source.license,
         content_hash: hash,
+        risk_flags: riskFlags,
         updated_at: ts,
       };
       if (existing.status === 'public') {
@@ -218,8 +263,12 @@ export async function syncAgentSource(
       }
       repos.updateAgentTemplate(next);
       result.updated++;
-    } catch {
+    } catch (e) {
       result.failed++;
+      result.failedDetails.push({
+        path: sourcePath,
+        reason: e instanceof Error ? e.message : String(e),
+      });
     }
   });
   return result;
