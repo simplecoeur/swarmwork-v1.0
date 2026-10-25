@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { createTemplateFromTask, fetchKb } from '../api';
+import { createTemplateFromTask, fetchAssets, fetchKb } from '../api';
 import { yuan } from '../utils';
 import TaskTimeline from './TaskTimeline';
 import ResultView from './ResultView';
@@ -40,6 +40,15 @@ export default function TaskWall() {
       .then((entries) => setKbTitles(Object.fromEntries(entries.map((e) => [e.id, e.title]))))
       .catch(() => {});
   }, [injectedSig]);
+  // v1.5.0 E：注入资产同样呈现（injectedAssets 记的是 assetId@version，映射成资产名 + 版本）
+  const [assetNames, setAssetNames] = useState<Record<string, string>>({});
+  const injectedAssetSig = S ? S.tasks.map((t) => (t.injectedAssets ?? []).join(',')).join('|') : '';
+  useEffect(() => {
+    if (!injectedAssetSig.replace(/[|,]/g, '')) return;
+    fetchAssets()
+      .then((assets) => setAssetNames(Object.fromEntries(assets.map((a) => [a.id, a.name]))))
+      .catch(() => {});
+  }, [injectedAssetSig]);
 
   if (!S) return null;
 
@@ -112,6 +121,12 @@ export default function TaskWall() {
                 {t.reviewNote ? <><br />审核结论：{t.reviewNote}</> : null}
                 {t.injectedKbIds.length ? (
                   <><br />本单注入知识：{t.injectedKbIds.map((id) => kbTitles[id] ?? id).join('、')}</>
+                ) : null}
+                {(t.injectedAssets ?? []).length ? (
+                  <><br />本单注入资产：{(t.injectedAssets ?? []).map((ref) => {
+                    const [aid, ver] = ref.split('@');
+                    return `${assetNames[aid] ?? aid}${ver ? `（v${ver}）` : ''}`;
+                  }).join('、')}</>
                 ) : null}
               </div>
               {t.status === '已完成' && t.result ? (

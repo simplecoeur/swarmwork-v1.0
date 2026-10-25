@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { confirmKbImport, fetchKb, previewKbImport } from '../api';
+import { confirmKbImport, fetchKb, previewKbImport, searchKbTest, type KbSearchTestHit } from '../api';
 import { Badge, Button, Checkbox, Dialog, EmptyState, Input, Select, Switch, Textarea, useConfirm } from './ui';
 import type { KbEntry, KbImportDraft } from '../types';
 import type { KbScope } from '@swarm/shared';
@@ -54,6 +54,27 @@ export default function KnowledgeBase() {
   const [impFilename, setImpFilename] = useState('');
   const [impDrafts, setImpDrafts] = useState<Array<KbImportDraft & { include: boolean }>>([]);
   const [impBusy, setImpBusy] = useState(false);
+  /* v1.5.0 E 搜索测试：按当前注入策略回放一句话会命中哪些条目 */
+  const [testQuery, setTestQuery] = useState('');
+  const [testTeamId, setTestTeamId] = useState('');
+  const [testHits, setTestHits] = useState<KbSearchTestHit[] | null>(null);
+  const [testMeta, setTestMeta] = useState<{ capTokens: number; totalTokens: number } | null>(null);
+  const [testBusy, setTestBusy] = useState(false);
+
+  async function runSearchTest() {
+    const q = testQuery.trim();
+    if (!q) return toast('先输入一句任务描述');
+    setTestBusy(true);
+    try {
+      const r = await searchKbTest(q, { teamId: testTeamId || undefined });
+      setTestHits(r.hits);
+      setTestMeta({ capTokens: r.capTokens, totalTokens: r.totalTokens });
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setTestBusy(false);
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -195,6 +216,54 @@ export default function KnowledgeBase() {
             </>
           )}
         </div>
+      </div>
+
+      <div className="apicard" style={{ marginBottom: 10 }}>
+        <div className="hint" style={{ fontWeight: 600, marginBottom: 6 }}>
+          搜索测试 <span style={{ fontWeight: 400 }}>输入一句任务描述，预览按当前注入策略实际会命中的条目与顺序（发单前先验知识会不会被用上）</span>
+        </div>
+        <div className="row" style={{ alignItems: 'flex-end' }}>
+          <div style={{ flex: '1 1 320px' }}>
+            <label>任务描述</label>
+            <Input
+              value={testQuery}
+              onChange={(ev) => setTestQuery(ev.target.value)}
+              placeholder="如：给新剧写一版招商标题"
+              onKeyDown={(ev) => {
+                if (ev.key === 'Enter') void runSearchTest();
+              }}
+            />
+          </div>
+          <div style={{ flex: '0 0 200px' }}>
+            <label>以哪个小组视角</label>
+            <Select
+              value={testTeamId}
+              onValueChange={setTestTeamId}
+              placeholder="（第一个小组）"
+              options={S.teams.map((t) => ({ value: t.id, label: t.name }))}
+            />
+          </div>
+          <div>
+            <Button variant="blue" onClick={runSearchTest} disabled={testBusy}>
+              {testBusy ? '测试中…' : '测试命中'}
+            </Button>
+          </div>
+        </div>
+        {testHits !== null && (
+          <div style={{ marginTop: 8 }}>
+            {testHits.length === 0 && <div className="hint">没有命中任何条目：换个说法，或检查条目是否启用、标签是否覆盖关键词。</div>}
+            {testHits.map((h, i) => (
+              <div key={h.id} className="meta" style={{ margin: '4px 0' }}>
+                {i + 1}. <b>{h.title}</b> <Badge>{h.rankLabel}</Badge> 约 {h.tokens} token
+              </div>
+            ))}
+            {testMeta && (
+              <div className="hint" style={{ marginTop: 4 }}>
+                合计约 {testMeta.totalTokens} token（无预算时注入上限 {testMeta.capTokens} token，超限的条目会被跳过）
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {editingId !== null && (

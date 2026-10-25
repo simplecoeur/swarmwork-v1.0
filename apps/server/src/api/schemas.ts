@@ -677,3 +677,65 @@ export const agentSourcesSaveSchema = z.object({
 export const agentTemplateRecruitSchema = z.object({
   teamId: z.string().min(1, '必须指定招募到的小组'),
 });
+
+/* ----- v1.5.0 ----- */
+export const kbSearchTestSchema = z.object({
+  query: z.string().trim().min(1, '测试文本必填').max(2000),
+  teamId: z.string().trim().min(1).optional(),
+  memberId: z.string().trim().min(1).optional(),
+});
+
+export const announcementCreateSchema = z.object({
+  title: z.string().trim().min(1, '标题必填').max(200),
+  body: z.string().trim().min(1, '正文必填').max(5000),
+  scope: z.enum(['all', 'selected']).default('all'),
+  workspaceIds: z.array(z.string().trim().min(1)).max(500).optional(),
+});
+export const announcementUpdateSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+  body: z.string().trim().min(1).max(5000).optional(),
+  scope: z.enum(['all', 'selected']).optional(),
+  workspaceIds: z.array(z.string().trim().min(1)).max(500).optional(),
+});
+
+export const messageSendSchema = z.object({
+  body: z.string().trim().min(1, '消息不能为空').max(5000),
+  teamId: z.string().trim().min(1).optional(),
+});
+
+export const skillImportSchema = z.object({
+  repoUrl: z.string().trim().min(1, '仓库地址必填').max(500),
+});
+export const skillPushSchema = z.object({
+  workspaceIds: z.union([z.literal('all'), z.array(z.string().trim().min(1)).min(1)]),
+  note: z.string().trim().max(1000).optional(),
+});
+export const platformSkillUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  description: z.string().trim().max(2000).optional(),
+  role: z.string().trim().min(1).max(40).optional(),
+  promptTemplate: z.string().max(20000).optional(),
+  outputSpec: z.string().max(5000).optional(),
+});
+
+export const reviewBatchSchema = z.object({
+  action: z.enum(['approve', 'reject']),
+  reason: z.string().trim().max(1000).optional(),
+  note: z.string().trim().max(2000).optional(),
+  items: z
+    .array(
+      z.object({
+        type: z.enum(['skill', 'style', 'agent']),
+        id: z.string().trim().min(1),
+      }),
+    )
+    .min(1)
+    .max(200),
+});
+
+export const aiOpsPlanSchema = z.object({
+  instruction: z.string().trim().min(1, '指令不能为空').max(2000),
+});
+export const aiOpsExecuteSchema = z.object({
+  confirmDestructive: z.boolean().optional(),
+});

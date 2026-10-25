@@ -625,6 +625,24 @@ export interface AgentTemplateItem {
   recruitCount: number;
 }
 
+/* ---------- v1.5.0 E：KB 搜索测试 ---------- */
+export interface KbSearchTestHit extends KbEntry {
+  rank: number;
+  rankLabel: string;
+  tokens: number;
+}
+export async function searchKbTest(
+  query: string,
+  opts?: { teamId?: string; memberId?: string },
+): Promise<{ capTokens: number; totalTokens: number; hits: KbSearchTestHit[] }> {
+  const j = await requestRaw('POST', '/api/kb/search-test', { query, ...(opts ?? {}) });
+  return {
+    capTokens: Number(j.capTokens ?? 0),
+    totalTokens: Number(j.totalTokens ?? 0),
+    hits: (j.hits as KbSearchTestHit[]) ?? [],
+  };
+}
+
 /* ---------- v1.5.0 A：管理台平台知识 ---------- */
 export interface AdminPlatformKbItem extends KbEntry {
   injectedCount: number;
