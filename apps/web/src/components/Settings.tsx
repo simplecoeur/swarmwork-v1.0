@@ -1453,7 +1453,7 @@ function ChannelBindForm({
       <div className="row">
         <div>
           <label>平台地址 baseUrl</label>
-          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="如：https://mjdramacente.cn" />
+          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="如：https://example.com" />
         </div>
         <div>
           <label>账号（可空，用于标注绑定身份）</label>
