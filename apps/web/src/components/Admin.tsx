@@ -12,6 +12,8 @@ import {
   fetchAdminThreads,
   fetchAgentSyncRuns,
   fetchAgentSyncSources,
+  fetchPlatformSkillsAdmin,
+  fetchSkillImports,
   fetchSkills,
   requestRaw,
   runAgentSync,
@@ -23,6 +25,7 @@ import {
   type AgentSyncRunItem,
   type AgentSyncSourceItem,
   type AnnouncementItem,
+  type SkillImportItem,
   type StyleTemplateItem,
   type ThreadMessageItem,
 } from '../api';
@@ -260,6 +263,9 @@ export default function Admin() {
 
       {/* ---------- 沟通运营：公告 + 按空间消息（v1.5.0 L） ---------- */}
       <AdminCommsCard />
+
+      {/* ---------- 技能下发（v1.5.0 K） ---------- */}
+      <SkillDispatchCard />
 
       {/* ---------- skill 上架审核（M7） ---------- */}
       <SkillReviewCard />
@@ -951,6 +957,209 @@ function AdminCommsCard() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ---------------- 技能下发（v1.5.0 K） ----------------
+ * GitHub 导入（LICENSE 预检，非宽松拒绝并留痕）→ 平台草稿（可编辑）→ 上架平台库 /
+ * 推送下发（选空间或全部，服务端快照安装、同版幂等，空间线程同步落说明消息）。 */
+function SkillDispatchCard() {
+  const { post, send, toast } = useApp();
+  const [repoUrl, setRepoUrl] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [imports, setImports] = useState<SkillImportItem[]>([]);
+  const [skills, setSkills] = useState<SkillListItem[]>([]);
+  const [workspaces, setWorkspaces] = useState<AdminWorkspace[]>([]);
+  const [editing, setEditing] = useState<SkillListItem | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', description: '', role: '', promptTemplate: '', outputSpec: '' });
+  const [pushTarget, setPushTarget] = useState<Record<string, string>>({});
+  const [pushNote, setPushNote] = useState<Record<string, string>>({});
+  const [loaded, setLoaded] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [imps, sks, wsj] = await Promise.all([
+        fetchSkillImports(),
+        fetchPlatformSkillsAdmin(),
+        requestRaw('GET', '/api/admin/workspaces'),
+      ]);
+      setImports(imps);
+      setSkills(sks);
+      setWorkspaces((wsj.workspaces as AdminWorkspace[]) ?? []);
+    } catch {
+      /* 忽略瞬时错误 */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function doImport() {
+    if (!repoUrl.trim()) return toast('先填 GitHub 仓库地址');
+    setImporting(true);
+    try {
+      const j = await post('/api/admin/skill-imports', { repoUrl: repoUrl.trim() });
+      const rec = j.record as SkillImportItem;
+      toast(
+        rec.status === 'imported'
+          ? `导入完成：${rec.detail}`
+          : rec.status === 'rejected_license'
+            ? `已拒绝：${rec.detail}`
+            : `导入失败：${rec.detail}`,
+      );
+      setRepoUrl('');
+      load();
+    } catch {
+      /* post 已 toast */
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function saveEdit() {
+    if (!editing) return;
+    try {
+      await send('PUT', `/api/admin/skills/${editing.id}`, editForm);
+    } catch { return; }
+    toast('草稿已保存');
+    setEditing(null);
+    load();
+  }
+
+  async function publish(s: SkillListItem) {
+    try {
+      await post(`/api/admin/skills/${s.id}/publish`);
+    } catch { return; }
+    toast(`「${s.name}」已上架平台技能库`);
+    load();
+  }
+
+  async function push(s: SkillListItem) {
+    const target = pushTarget[s.id] ?? 'all';
+    try {
+      const j = await post(`/api/admin/skills/${s.id}/push`, {
+        workspaceIds: target === 'all' ? 'all' : [target],
+        ...(pushNote[s.id]?.trim() ? { note: pushNote[s.id].trim() } : {}),
+      });
+      toast(`推送完成：新装 ${j.installed} · 升级 ${j.upgraded} · 跳过 ${j.skipped}（同版不重复装）`);
+    } catch {
+      /* post 已 toast */
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>技能下发 <span className="tag">从 GitHub 导入平台技能（许可证预检）→ 草稿编辑 → 上架自装 / 推送下发到空间</span></h2>
+      <div className="row" style={{ alignItems: 'flex-end' }}>
+        <div style={{ flex: '1 1 320px' }}>
+          <label>GitHub 仓库地址（内含 SKILL.md 定义文件）</label>
+          <Input
+            value={repoUrl}
+            onChange={(e) => setRepoUrl(e.target.value)}
+            placeholder="如 https://github.com/owner/repo 或 owner/repo"
+          />
+        </div>
+        <div>
+          <Button variant="blue" disabled={importing} onClick={doImport}>
+            {importing ? '导入中…' : '导入'}
+          </Button>
+        </div>
+      </div>
+      {imports.slice(0, 5).map((r) => (
+        <div className="meta" key={r.id} style={{ marginTop: 6 }}>
+          {fmtTime(r.created_at)} · {r.repo || r.repo_url} · 许可证 {r.license || '—'}
+          {r.license_ok ? '' : '（未过预检）'} · {r.status}——{r.detail}
+        </div>
+      ))}
+
+      <h3 style={{ marginTop: 14 }}>平台技能（导入来源）</h3>
+      {loaded && skills.filter((s) => s.sourceRepo).length === 0 && (
+        <p className="hint">暂无导入的平台技能（上方导入后在这里编辑、上架、推送）。</p>
+      )}
+      {skills
+        .filter((s) => s.sourceRepo)
+        .map((s) => (
+          <div className="task" key={s.id}>
+            <span className="tt">{s.name}</span>{' '}
+            <Badge>{s.role}</Badge> <Badge>v{s.version}</Badge>{' '}
+            <Badge variant={s.status === 'published' ? 'done' : 'adj'}>{s.status === 'published' ? '已上架' : '草稿'}</Badge>
+            <div className="meta">
+              来源：{s.sourceRepo} · {s.sourceAuthor} · {s.sourceLicense}
+              <br />
+              {s.description || '（无说明）'}
+            </div>
+            <div className="row" style={{ alignItems: 'flex-end', marginTop: 6 }}>
+              <div>
+                <Button
+                  size="small"
+                  variant="gray"
+                  onClick={() => {
+                    setEditing(s);
+                    setEditForm({
+                      name: s.name,
+                      description: s.description,
+                      role: s.role,
+                      promptTemplate: s.promptTemplate,
+                      outputSpec: s.outputSpec ?? '',
+                    });
+                  }}
+                >
+                  编辑
+                </Button>{' '}
+                {s.status !== 'published' && (
+                  <Button size="small" variant="green" onClick={() => publish(s)}>上架平台库</Button>
+                )}
+              </div>
+              {s.status === 'published' && (
+                <>
+                  <div style={{ flex: '0 0 200px' }}>
+                    <label>推送到</label>
+                    <Select
+                      value={pushTarget[s.id] ?? 'all'}
+                      onValueChange={(v) => setPushTarget((m) => ({ ...m, [s.id]: v }))}
+                      options={[
+                        { value: 'all', label: '全部空间' },
+                        ...workspaces.map((w) => ({ value: w.id, label: w.name })),
+                      ]}
+                    />
+                  </div>
+                  <div style={{ flex: '1 1 160px' }}>
+                    <label>附言（可选，进空间线程）</label>
+                    <Input
+                      value={pushNote[s.id] ?? ''}
+                      onChange={(e) => setPushNote((m) => ({ ...m, [s.id]: e.target.value }))}
+                      placeholder="如：本周统一改用这个写标题"
+                    />
+                  </div>
+                  <div>
+                    <Button size="small" variant="blue" onClick={() => push(s)}>推送下发</Button>
+                  </div>
+                </>
+              )}
+            </div>
+            {editing?.id === s.id && (
+              <div className="apicard" style={{ marginTop: 8 }}>
+                <label>名称</label>
+                <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+                <label>说明</label>
+                <Input value={editForm.description} onChange={(e) => setEditForm({ ...editForm, description: e.target.value })} />
+                <label>工种</label>
+                <Input value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })} />
+                <label>提示词模板</label>
+                <textarea rows={6} value={editForm.promptTemplate} onChange={(e) => setEditForm({ ...editForm, promptTemplate: e.target.value })} style={{ width: '100%' }} />
+                <label>产出规格</label>
+                <Input value={editForm.outputSpec} onChange={(e) => setEditForm({ ...editForm, outputSpec: e.target.value })} />
+                <div style={{ marginTop: 8 }}>
+                  <Button size="small" variant="blue" onClick={saveEdit}>保存草稿</Button>{' '}
+                  <Button size="small" variant="gray" onClick={() => setEditing(null)}>取消</Button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
     </div>
   );
 }

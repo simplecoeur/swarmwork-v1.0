@@ -8,16 +8,22 @@ import {
 } from '../domain/adminComms';
 import { getAgentSyncSources } from '../domain/agentSyncService';
 import { kbCapTokens, kbScopeRank, selectKbForInjection } from '../domain/kbService';
+import { notifyOwner } from '../domain/notify';
+import { copySkillSnapshot } from '../domain/skillService';
+import { importSkillsFromGithub } from '../domain/skillImportService';
 import { estimateTokens } from '../llm/parse';
 import type { Logger } from '../logger';
-import type { AnnouncementRow, KbRow, Repos } from '../store/repositories';
+import type { AnnouncementRow, KbRow, Repos, SkillRow } from '../store/repositories';
 import { nowIso, uid } from '../util';
-import type { M7Helpers } from './m7';
+import { skillDto, type M7Helpers } from './m7';
 import {
   announcementCreateSchema,
   announcementUpdateSchema,
   kbSearchTestSchema,
   messageSendSchema,
+  platformSkillUpdateSchema,
+  skillImportSchema,
+  skillPushSchema,
 } from './schemas';
 
 function fail(code: string, message: string, status = 400): never {
@@ -292,6 +298,140 @@ export function registerV150Routes(
       ok: true,
       teams: repos.listTeams(workspaceId).map((t) => ({ id: t.id, name: t.name })),
     };
+  });
+
+  /* ================= K 技能下发：GitHub 导入（许可证预检）→ 平台草稿 → 上架 / 推送下发 ================= */
+  app.post('/api/admin/skill-imports', async (req) => {
+    const ctx = requireAdmin(req);
+    const body = skillImportSchema.parse(req.body ?? {});
+    const outcome = await importSkillsFromGithub(repos, { repoUrl: body.repoUrl, importedBy: ctx.user.id });
+    audit(
+      req, ctx, 'skill_import', 'skill_source', outcome.record.repo || body.repoUrl,
+      `status=${outcome.record.status} license=${outcome.record.license} created=${outcome.createdSkillIds.length}｜${outcome.record.detail}`,
+    );
+    return { ok: true, record: outcome.record, createdSkillIds: outcome.createdSkillIds };
+  });
+  app.get('/api/admin/skill-imports', async (req) => {
+    requireAdmin(req);
+    return { ok: true, imports: repos.listSkillSourceImports(50) };
+  });
+  app.get('/api/admin/platform-skills', async (req) => {
+    requireAdmin(req);
+    return { ok: true, skills: repos.listPlatformSkills().map((s) => skillDto(repos, s)) };
+  });
+  app.put('/api/admin/skills/:id', async (req) => {
+    const ctx = requireAdmin(req);
+    const { id } = req.params as { id: string };
+    const cur = repos.getSkill(id);
+    if (!cur || cur.owner_type !== 'platform') fail(ErrorCode.NOT_FOUND, '平台技能不存在', 404);
+    const body = platformSkillUpdateSchema.parse(req.body ?? {});
+    const next: SkillRow = {
+      ...cur!,
+      name: body.name ?? cur!.name,
+      description: body.description ?? cur!.description,
+      role: body.role ?? cur!.role,
+      prompt_template: body.promptTemplate ?? cur!.prompt_template,
+      output_spec: body.outputSpec ?? cur!.output_spec,
+      updated_at: nowIso(),
+    };
+    repos.updateSkill(next);
+    audit(req, ctx, 'platform_skill_update', 'skill', id, next.name);
+    return { ok: true, skill: skillDto(repos, next) };
+  });
+  app.post('/api/admin/skills/:id/publish', async (req) => {
+    const ctx = requireAdmin(req);
+    const { id } = req.params as { id: string };
+    const cur = repos.getSkill(id);
+    if (!cur || cur.owner_type !== 'platform') fail(ErrorCode.NOT_FOUND, '平台技能不存在', 404);
+    const next: SkillRow = {
+      ...cur!,
+      status: 'published',
+      visibility: 'public',
+      listed_at: cur!.listed_at ?? nowIso(),
+      updated_at: nowIso(),
+    };
+    repos.updateSkill(next);
+    audit(req, ctx, 'platform_skill_publish', 'skill', id, `${next.name} v${next.version}`);
+    return { ok: true, skill: skillDto(repos, next) };
+  });
+  app.post('/api/admin/skills/:id/push', async (req) => {
+    const ctx = requireAdmin(req);
+    const { id } = req.params as { id: string };
+    const skill = repos.getSkill(id);
+    if (!skill || skill.owner_type !== 'platform') fail(ErrorCode.NOT_FOUND, '平台技能不存在', 404);
+    if (skill!.status !== 'published') fail(ErrorCode.VALIDATION, '先上架再推送下发');
+    const body = skillPushSchema.parse(req.body ?? {});
+    const targets =
+      body.workspaceIds === 'all'
+        ? repos.listWorkspaces().map((w) => w.id)
+        : [...new Set(body.workspaceIds)];
+    let installed = 0;
+    let upgraded = 0;
+    let skipped = 0;
+    for (const wsId of targets) {
+      if (!repos.getWorkspace(wsId)) continue;
+      const existing = repos.findInstalledCopy(wsId, skill!.id);
+      let copyId: string;
+      let action: 'installed' | 'upgraded';
+      if (existing && existing.source_version === skill!.version) {
+        skipped++;
+        continue;
+      } else if (existing) {
+        repos.updateSkill({
+          ...existing,
+          name: skill!.name,
+          description: skill!.description,
+          role: skill!.role,
+          prompt_template: skill!.prompt_template,
+          input_schema: skill!.input_schema,
+          kb_binding: skill!.kb_binding,
+          output_spec: skill!.output_spec,
+          example_input: skill!.example_input,
+          example_output: skill!.example_output,
+          source_version: skill!.version,
+          updated_at: nowIso(),
+        });
+        copyId = existing.id;
+        action = 'upgraded';
+        upgraded++;
+      } else {
+        const copy = copySkillSnapshot(repos, skill!, wsId, ctx.user.id);
+        copyId = copy.id;
+        action = 'installed';
+        installed++;
+      }
+      repos.insertSkillPush({
+        id: uid('skpush'),
+        skill_id: skill!.id,
+        workspace_id: wsId,
+        version: skill!.version,
+        copy_skill_id: copyId,
+        pushed_by: ctx.user.id,
+        created_at: nowIso(),
+      });
+      notifyOwner(
+        repos, wsId, 'skill_pushed',
+        `平台下发技能：${skill!.name}`,
+        `管理员把技能「${skill!.name}」v${skill!.version} ${action === 'installed' ? '装入' : '更新到'}了本空间，在技能库里带「平台下发」徽标。`,
+        copyId,
+      );
+      // L 衔接：线程里同步落一条下发说明（带 skill 名与版本）
+      appendThreadMessage(repos, wsId, {
+        senderType: 'admin',
+        senderUserId: ctx.user.id,
+        body:
+          `平台下发了技能「${skill!.name}」v${skill!.version}` +
+          (skill!.source_repo ? `（来源 ${skill!.source_repo}·${skill!.source_author ?? ''}·${skill!.source_license ?? ''}）` : '') +
+          `，已${action === 'installed' ? '装入' : '更新到'}本空间技能库，发单时可直接套用。` +
+          (body.note ? `\n管理员附言：${body.note}` : ''),
+        kind: 'skill_push',
+      });
+    }
+    audit(
+      req, ctx, 'skill_push', 'skill', id,
+      `${skill!.name} v${skill!.version} → 目标 ${targets.length} 空间：新装 ${installed}、升级 ${upgraded}、跳过 ${skipped}`,
+    );
+    return { ok: true, installed, upgraded, skipped, targets: targets.length };
   });
 
   /* ================= E KB 搜索测试：纯读 selectKbForInjection，按当前注入策略回放命中与排序档 ================= */

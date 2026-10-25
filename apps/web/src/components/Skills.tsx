@@ -386,12 +386,19 @@ export default function Skills() {
         <Badge>安装 {s.installCount}</Badge>
         {s.ownerType === 'platform' && <Badge variant="done">官方</Badge>}
         {s.featured && <Badge variant="adj">官方精选</Badge>}
+        {s.platformPushed && <Badge variant="adj">平台下发</Badge>}
         {s.sourceSkillId && <Badge>安装副本</Badge>}
         {mine && s.hasNewerSource && <Badge variant="rej">来源有新版</Badge>}
         <div className="meta">
           {s.description || '（无说明）'}
           <br />
           slug：{s.slug} · 更新于 {s.updatedAt.slice(0, 16).replace('T', ' ')}
+          {s.sourceRepo && (
+            <>
+              <br />
+              GitHub 来源：{s.sourceRepo} · {s.sourceAuthor ?? ''} · {s.sourceLicense ?? ''}
+            </>
+          )}
           {!mine && s.ownerType === 'workspace' && (
             <>
               <br />

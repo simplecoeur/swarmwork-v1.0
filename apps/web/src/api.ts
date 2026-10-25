@@ -651,6 +651,27 @@ export async function searchKbTest(
   };
 }
 
+/* ---------- v1.5.0 K：技能下发（导入/上架/推送） ---------- */
+export interface SkillImportItem {
+  id: string;
+  repo_url: string;
+  repo: string;
+  branch: string;
+  license: string;
+  license_ok: number;
+  status: string;
+  detail: string;
+  created_at: string;
+}
+export async function fetchSkillImports(): Promise<SkillImportItem[]> {
+  const j = await requestRaw('GET', '/api/admin/skill-imports');
+  return (j.imports as SkillImportItem[]) ?? [];
+}
+export async function fetchPlatformSkillsAdmin(): Promise<SkillListItem[]> {
+  const j = await requestRaw('GET', '/api/admin/platform-skills');
+  return (j.skills as SkillListItem[]) ?? [];
+}
+
 /* ---------- v1.5.0 L：平台公告 + 按空间消息线程 ---------- */
 export interface AnnouncementItem {
   id: string;

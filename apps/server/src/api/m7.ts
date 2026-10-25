@@ -139,6 +139,11 @@ export function skillDto(repos: Repos, row: SkillRow, forWorkspaceId?: string): 
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     installedCopyId,
+    /* v1.5.0 K：平台下发徽标（副本在 skill_pushes 里有记录）与 GitHub 来源署名 */
+    platformPushed: row.workspace_id ? !!repos.getSkillPushByCopyId(row.id) : false,
+    sourceRepo: row.source_repo ?? null,
+    sourceAuthor: row.source_author ?? null,
+    sourceLicense: row.source_license ?? null,
   };
 }
 
