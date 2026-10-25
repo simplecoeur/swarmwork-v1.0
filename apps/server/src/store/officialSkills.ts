@@ -167,6 +167,11 @@ verified_notes: '',
 created_by: null,
 created_at: ts,
 updated_at: ts,
+featured: 0,
+featured_at: null,
+listed_at: ts,
+contributor_name: null,
+contributor_workspace_name: null,
 };
 repos.insertSkill(row);
 }

@@ -2,18 +2,32 @@
 // 此处只做别名映射，保持各组件既有引用名不变；DTO 的唯一事实来源在 packages/shared。
 import type {
   ApiDto,
+  ApiTokenCreatedDto,
+  ApiTokenDto,
   AssetContentDto,
   AssetDto,
+  AssetImportConfirmDto,
+  AssetImportPreviewDto,
   AssetSectionDto,
   AssetTypeDto,
   AuthUserDto,
+  CapabilitiesDto,
   ChannelPushDto,
+  CostEstimateDto,
+  CostSummaryDto,
   DeliveryLinkDto,
+  FeedbackDto,
+  ImpersonationDto,
   IndustryPackDto,
   KbEntryDto,
+  KbImportConfirmDto,
+  KbImportDraftDto,
+  KbImportPreviewDto,
   LedgerEntryDto,
   MemberDto,
   NotificationDto,
+  NotifyPrefsDto,
+  OnboardingDto,
   OutcomeMarkDto,
   ParamsDto,
   PipelineTemplateDto,
@@ -22,12 +36,20 @@ import type {
   RegistryRoleDto,
   RegistryTaskTypeDto,
   ReviewStandardsDto,
+  SearchResponseDto,
+  SearchResultItemDto,
+  SkillActivityItemDto,
   SkillDto,
   SkillInputFieldDto,
   SkillKbBindingDto,
   StateDto,
   TaskDto,
+  TaskTemplateDto,
+  TaskStepDto,
+  TaskTimelineDto,
   TeamDto,
+  WebhookDeliveryDto,
+  WebhookDto,
   WorkspaceDto,
 } from '@swarm/shared';
 
@@ -61,6 +83,8 @@ export interface AdminUser {
   workspaceCount: number;
   lastLoginAt: string | null;
   createdAt: string;
+  /** G-11：头像地址（随 /api/admin/users 的 userDto 下发，无头像为 null、读取端回占位） */
+  avatarUrl?: string | null;
 }
 
 export interface AdminWorkspace {
@@ -91,14 +115,74 @@ export interface TrialApi {
 
 export type Presets = Record<string, { baseUrl: string; model: string }>;
 
-export type TabKey = 'office' | 'cost' | 'settings' | 'kb' | 'admin' | 'skills' | 'assets';
+export type TabKey = 'office' | 'cost' | 'settings' | 'kb' | 'admin' | 'skills' | 'assets' | 'help' | 'search' | 'schedules' | 'account';
+
+/* ---------- G-06 文件导入 ---------- */
+export type KbImportDraft = KbImportDraftDto;
+export type KbImportPreview = KbImportPreviewDto;
+export type KbImportConfirm = KbImportConfirmDto;
+export type AssetImportPreview = AssetImportPreviewDto;
+export type AssetImportConfirm = AssetImportConfirmDto;
+
+/* ---------- G-07/G-09（v1.2.0 批次二） ---------- */
+export type ApiToken = ApiTokenDto;
+export type ScheduleItem = import('@swarm/shared').ScheduleDto;
+
+/* G-11 账号设置：与 shared DTO 同口径 */
+export type AccountInfo = import('@swarm/shared').AccountDto;
+export type SessionItem = import('@swarm/shared').AuthSessionDto;
+export type ApiTokenCreated = ApiTokenCreatedDto;
+export type WebhookItem = WebhookDto;
+export type WebhookDelivery = WebhookDeliveryDto;
+export type SearchItem = SearchResultItemDto;
+export type SearchResponse = SearchResponseDto;
+
+/* ---------- G-02/G-03/G-05/G-08（v1.2.0 批次一） ---------- */
+export type Capabilities = CapabilitiesDto;
+export type Onboarding = OnboardingDto;
+export type NotifyPrefs = NotifyPrefsDto;
+export type FeedbackItem = FeedbackDto;
+export type CostEstimate = CostEstimateDto;
+export type CostSummary = CostSummaryDto;
 
 /* ---------- M7/M8：直接沿用 shared DTO ---------- */
 export type Skill = SkillDto;
 export type SkillInputField = SkillInputFieldDto;
 export type SkillKbBinding = SkillKbBindingDto;
-/** GET /api/skills 的行：shared DTO + 服务端拼的已安装副本 id */
-export type SkillListItem = SkillDto & { installedCopyId: string | null };
+/** GET /api/skills 的行：shared DTO + 服务端拼的已安装副本 id。
+ *  v1.3.0 生态字段（featured/featuredAt/contributorName/listedAt 等）已在 SkillDto 内，此处显式再声明以固定前端契约 */
+export type SkillListItem = SkillDto & {
+  installedCopyId: string | null;
+  featured: boolean;
+  featuredAt: string | null;
+  contributorName: string | null;
+  contributorWorkspaceName: string | null;
+  listedAt: string | null;
+};
+
+/* ---------- v1.3.0 A3 任务模板 / B3 生态公示 / F 办公室风格 ---------- */
+export type TaskTemplate = TaskTemplateDto;
+export type SkillActivityItem = SkillActivityItemDto;
+
+/** F 公司风格定制：办公室风格配置（服务端 office-style 接口的线缆形） */
+export interface OfficeStyleConfig {
+  palette: { wall: string; floor: string; accent: string };
+  floorPattern: string;
+  furniture: Record<string, string | null>;
+  poster: { imageFileId: string | null };
+  sign: { mode: 'text' | 'image'; text: string; imageFileId: string | null };
+}
+
+/** F 风格模板（官方/平台库/我的三级分享的线缆形） */
+export interface OfficeStyleTemplate {
+  id: string;
+  name: string;
+  scope: 'official' | 'industry' | 'workspace' | 'platform';
+  contributorName?: string | null;
+  contributorWorkspaceName?: string | null;
+  style: OfficeStyleConfig;
+  createdAt?: string;
+}
 export type Delivery = DeliveryLinkDto;
 export type ChannelPush = ChannelPushDto;
 export type Asset = AssetDto;
@@ -108,6 +192,9 @@ export type AssetSection = AssetSectionDto;
 export type OutcomeMark = OutcomeMarkDto;
 export type AppNotification = NotificationDto;
 export type PipelineTemplate = PipelineTemplateDto;
+/** G-04 任务过程时间线 */
+export type TaskStep = TaskStepDto;
+export type TaskTimelineData = TaskTimelineDto;
 
 /** 资产引用（发单 / skill 发单共用，M8 §11.4） */
 export interface AssetRef {
@@ -130,6 +217,9 @@ export interface ResultItem {
   mark: OutcomeMark | null;
 }
 
+/** G-14 代入态（GET /api/auth/me 顶层字段） */
+export type Impersonation = ImpersonationDto;
+
 /** GET /api/channels 的行 */
 export interface ChannelInfo {
   type: string;
@@ -138,6 +228,12 @@ export interface ChannelInfo {
   account: string;
   hasToken: boolean;
   bound: boolean;
+  /** G-17 通用 Webhook 专用字段（MJ 行无此组字段） */
+  url?: string;
+  hasSecret?: boolean;
+  secretMasked?: string;
+  events?: string[];
+  supportsMetrics?: boolean;
 }
 
 /** GET /api/ledger-view 的时间线行 */

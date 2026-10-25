@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { KB_SCOPES, PROVIDERS } from '@swarm/shared';
+import { API_TOKEN_SCOPES, IMPORT_LIMITS, KB_SCOPES, PROVIDERS } from '@swarm/shared';
 
 /** 入参 zod 校验（设计 §7：校验失败不进 domain） */
 export const apiSaveSchema = z.object({
@@ -54,6 +54,18 @@ export const memberSaveSchema = z.object({
     role: z.string().trim().min(1, '工种必填'),
     teamId: z.string().min(1, '必须指定所属小组'),
     prompt: z.string().default(''),
+    // v1.4.0 H：成员级 API 绑定（undefined 不改 / null 清除 / 字符串 换绑，合法性在路由层查本空间 apis）
+    apiId: z.string().min(1).nullable().optional(),
+    // v1.4.0 I：外观定制（undefined 不改 / null 清除 / 对象 覆盖，字段合法性在仓储 sanitizeAppearance 清洗）
+    appearance: z
+      .object({
+        skin: z.string().optional(),
+        shirt: z.string().optional(),
+        hairColor: z.string().optional(),
+        hairStyle: z.enum(['short', 'long', 'bald', 'bun']).optional(),
+      })
+      .nullable()
+      .optional(),
   }),
 });
 
@@ -108,6 +120,8 @@ export const taskBatchSchema = z.object({
   type: z.string().trim().min(1).default('文案'),
   briefSuffix: z.string().default(''),
   references: z.string().optional(),
+  /** 资产引用（M8 §11.4）：批量各单共用同一组引用，逐单发单时按当前版本落快照 */
+  assetRefs: z.array(assetRefSchema).optional(),
   teamId: z.string().min(1),
   projectId: z.string().nullable().optional(),
 });
@@ -169,9 +183,67 @@ export const switchWorkspaceSchema = z.object({
   workspaceId: z.string().min(1),
 });
 
+const hhmmSchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, '时间须为 HH:MM');
+
+/** C2 问卷（建空间时可选携带；apiKey 只在本请求内用于建 API，存档时脱敏，绝不落 questionnaire_responses） */
+export const questionnaireApiSchema = z.object({
+  provider: z.string().trim().min(1).default('custom'),
+  baseUrl: z.string().default(''),
+  model: z.string().default(''),
+  apiKey: z.string().optional(),
+});
+
+export const workspaceQuestionnaireSchema = z.object({
+  api: questionnaireApiSchema.nullable().optional(),
+  industry: z.string().trim().max(100).optional(),
+  job: z.string().trim().max(200).optional(),
+  uses: z.array(z.string().trim().min(1)).max(20).optional(),
+  problems: z.string().max(2000).optional(),
+  checkinReminderEnabled: z.boolean().optional(),
+  checkinReminderTime: hhmmSchema.optional(),
+  briefingEnabled: z.boolean().optional(),
+  briefingTime: hhmmSchema.optional(),
+  supervisionItems: z.string().max(2000).optional(),
+});
+
 export const workspaceCreateSchema = z.object({
   name: z.string().trim().min(1, '空间名必填'),
   industryPackId: z.string().nullable().optional(),
+  questionnaire: workspaceQuestionnaireSchema.optional(),
+});
+
+/* ---------- v1.3.0 G 每日设置 / 签到 / C2 问卷存档 ---------- */
+
+export const dailySettingsPutSchema = z.object({
+  briefingEnabled: z.boolean().optional(),
+  briefingTime: hhmmSchema.optional(),
+  checkinReminderEnabled: z.boolean().optional(),
+  checkinReminderTime: hhmmSchema.optional(),
+  newsTopic: z.enum(['short_drama', 'film', 'ai', 'general']).optional(),
+  supervisionItems: z.string().max(2000).optional(),
+});
+
+/** 问卷存档更新：只许档案字段 + 提醒字段；api/apiKey 即使传入也由路由层忽略（zod 默认剥离未声明键） */
+export const questionnairePutSchema = z.object({
+  industry: z.string().trim().max(100).optional(),
+  job: z.string().trim().max(200).optional(),
+  uses: z.array(z.string().trim().min(1)).max(20).optional(),
+  problems: z.string().max(2000).optional(),
+  supervisionItems: z.string().max(2000).optional(),
+  checkinReminderEnabled: z.boolean().optional(),
+  checkinReminderTime: hhmmSchema.optional(),
+  briefingEnabled: z.boolean().optional(),
+  briefingTime: hhmmSchema.optional(),
+});
+
+/** C2 裸配置测试连接（仅登录态，不要求空间）：与 /api/apis/test 共用 domain/apiTest 本体 */
+export const apiTestConnectionSchema = z.object({
+  provider: z.string().trim().min(1).default('custom'),
+  baseUrl: z.string().default(''),
+  model: z.string().default(''),
+  apiKey: z.string().optional(),
 });
 
 export const registryRoleSchema = z.object({
@@ -291,12 +363,24 @@ export const deliveryCreateSchema = z.object({
   expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
 });
 
+/** 参观链接创建（G-13）：有效期/口令口径与交付页 deliveryCreateSchema 同组字段 */
+export const visitLinkCreateSchema = z.object({
+  password: z.string().min(4, '口令至少 4 位').optional(),
+  expiresInDays: z.number().int().min(1).max(365).nullable().optional(),
+});
+
 export const channelBindSchema = z.object({
   channelType: z.string().trim().min(1).default('mj'),
-  baseUrl: z.string().trim().min(1, '渠道地址必填'),
+  /** MJ 渠道必填；G-17 通用 Webhook 走 url 字段（按渠道类型在路由层分别校验） */
+  baseUrl: z.string().trim().optional().default(''),
   token: z.string().optional(),
   clearToken: z.boolean().optional(),
   account: z.string().optional(),
+  /** G-17 通用 Webhook：接收端 URL / 签名密钥 / 订阅事件 */
+  url: z.string().trim().optional(),
+  secret: z.string().optional(),
+  clearSecret: z.boolean().optional(),
+  events: z.array(z.string().trim().min(1)).optional(),
 });
 
 export const channelPushSchema = z.object({
@@ -364,4 +448,232 @@ export const pipelineRunSchema = z.object({
 export const notifyConfigSchema = z.object({
   emailEnabled: z.boolean().default(false),
   email: z.string().default(''),
+});
+
+/* ---------- G-05 反馈 / G-08 成本设置（v1.2.0） ---------- */
+
+export const feedbackCreateSchema = z.object({
+  category: z.enum(['bug', 'suggestion', 'question', 'other']).default('other'),
+  content: z.string().trim().min(1, '反馈内容必填').max(2000, '反馈内容最长 2000 字'),
+  contact: z.string().trim().max(200).optional(),
+});
+
+export const feedbackHandleSchema = z.object({
+  adminNote: z.string().trim().max(1000).optional(),
+});
+
+/** 低余额阈值设置：以元提交（null = 清除显式设置，回落默认口径：最近一笔采购额/体验发放额的 20%） */
+export const costSettingsSchema = z.object({
+  lowBalanceThresholdYuan: z.number().min(0).nullable(),
+});
+
+/* ---------- G-06 文件导入 confirm（preview 走 multipart，不经 zod） ---------- */
+
+/**
+ * KB 导入 confirm：drafts 上限 500 在此整体校验（超限 VALIDATION 且零落库）；
+ * 单条 title/body 不在此设 min —— 逐条走创建路径校验、逐条回成败（见 v120 路由）。
+ */
+export const kbImportConfirmSchema = z.object({
+  filename: z.string().max(300).optional(),
+  scope: z.enum(KB_SCOPES).default('company'),
+  scopeId: z.string().nullable().optional(),
+  drafts: z
+    .array(
+      z.object({
+        title: z.string().default(''),
+        body: z.string().default(''),
+        tags: z.array(z.string()).default([]),
+      }),
+    )
+    .min(1, '没有可导入的条目草案')
+    .max(IMPORT_LIMITS.MAX_KB_DRAFTS, 'KB 单次导入最多 500 条，请拆分文件分批导入'),
+});
+
+/* ---------- G-07 开放 API / Webhook（v1.2.0 批次二） ---------- */
+
+export const apiTokenCreateSchema = z.object({
+  name: z.string().trim().min(1, 'Token 名称必填').max(100),
+  scopes: z
+    .array(z.enum(API_TOKEN_SCOPES))
+    .min(1, '至少选择一个权限')
+    .default(['dispatch', 'read']),
+});
+
+/** Webhook 可订阅事件：三类终态事件（test 为系统试投递事件，不开放订阅） */
+const subscribableEventSchema = z.enum(['task.done', 'task.adjudication', 'task.failed']);
+
+export const webhookCreateSchema = z.object({
+  url: z.string().trim().min(1, 'Webhook URL 必填').max(2000),
+  secret: z.string().trim().max(500).optional(),
+  events: z
+    .array(subscribableEventSchema)
+    .min(1, '至少订阅一个事件')
+    .default(['task.done']),
+  enabled: z.boolean().default(true),
+});
+
+/** Webhook 更新（启停/改址/改订阅）：未传字段保持不变 */
+export const webhookUpdateSchema = z.object({
+  url: z.string().trim().min(1, 'Webhook URL 必填').max(2000).optional(),
+  secret: z.string().trim().max(500).optional(),
+  clearSecret: z.boolean().optional(),
+  events: z.array(subscribableEventSchema).min(1, '至少订阅一个事件').optional(),
+  enabled: z.boolean().optional(),
+});
+
+/** 开放面发单（POST /api/open/tasks）：与页面发单 taskCreateSchema 同口径，另加可选 skillId 透传 */
+export const openTaskCreateSchema = taskCreateSchema.extend({
+  skillParams: z.record(z.string(), z.unknown()).optional(),
+});
+
+/* ---------- G-15 空间所有权转让（v1.2.0 批次二接口先行） ---------- */
+
+export const workspaceTransferSchema = z.object({
+  targetUserId: z.string().min(1, '必须指定接收人'),
+  password: z.string().min(1, '密码必填（转让须验密确认）'),
+});
+
+/* ---------- G-10 定时任务（v1.2.0 批次二） ---------- */
+
+const scheduleTimeSchema = z
+  .string()
+  .regex(/^\d{2}:\d{2}$/, '时间须为 HH:MM 格式');
+
+export const scheduleCreateSchema = z.object({
+  kind: z.enum(['skill', 'pipeline', 'task']),
+  skillId: z.string().min(1).nullable().optional(),
+  pipelineTemplateId: z.string().min(1).nullable().optional(),
+  teamId: z.string().min(1, '必须指定小组'),
+  title: z.string().trim().max(200).default(''),
+  brief: z.string().default(''),
+  type: z.string().trim().min(1).default('文案'),
+  params: z.record(z.string(), z.unknown()).default({}),
+  assetRefs: z.array(assetRefSchema).optional(),
+  freq: z.enum(['daily', 'weekly']),
+  weekday: z.number().int().min(0).max(6).nullable().optional(),
+  timeLocal: scheduleTimeSchema,
+  timezone: z.string().trim().min(1).default('Asia/Shanghai'),
+  enabled: z.boolean().default(true),
+});
+
+/** 计划更新：未传字段保持不变；改目标/参数时路由层按合并后取值重新走建单校验 */
+export const scheduleUpdateSchema = z.object({
+  kind: z.enum(['skill', 'pipeline', 'task']).optional(),
+  skillId: z.string().min(1).nullable().optional(),
+  pipelineTemplateId: z.string().min(1).nullable().optional(),
+  teamId: z.string().min(1).optional(),
+  title: z.string().trim().max(200).optional(),
+  brief: z.string().optional(),
+  type: z.string().trim().min(1).optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
+  assetRefs: z.array(assetRefSchema).optional(),
+  freq: z.enum(['daily', 'weekly']).optional(),
+  weekday: z.number().int().min(0).max(6).nullable().optional(),
+  timeLocal: scheduleTimeSchema.optional(),
+  timezone: z.string().trim().min(1).optional(),
+  enabled: z.boolean().optional(),
+});
+
+/* ---------- G-11 账号设置（v1.2.0 批次二） ---------- */
+
+export const accountProfileSchema = z.object({
+  displayName: z.string().trim().min(1, '显示名必填').max(50),
+});
+
+export const deleteRequestSchema = z.object({
+  password: z.string().min(1, '密码必填（注销须验密确认）'),
+});
+
+/* ---------- G-09 全局搜索（v1.2.0 批次二）：q 必填，types 为逗号分隔过滤（路由层解析） ---------- */
+
+/** 资产导入 confirm：sections 上限 200 整体校验（超限 VALIDATION 且零落库）；资产为单行创建，字段在此收紧 */
+export const assetImportConfirmSchema = z.object({
+  filename: z.string().max(300).optional(),
+  name: z.string().trim().min(1, '资产名必填'),
+  typeId: z.string().trim().min(1, '资产类型必填'),
+  summary: z.string().default(''),
+  sections: z
+    .array(
+      z.object({
+        key: z.string().trim().min(1, '分段 key 必填'),
+        title: z.string().default(''),
+        body: z.string().default(''),
+      }),
+    )
+    .min(1, '没有可导入的分段草案')
+    .max(IMPORT_LIMITS.MAX_ASSET_SECTIONS, '资产单次导入最多 200 个分段，请拆分文件分批导入'),
+});
+
+/* ---------- v1.3.0 A3 任务模板 / B 精选 / F 办公室风格 ---------- */
+
+export const templateCreateSchema = z.object({
+  name: z.string().trim().min(1, '模板名必填').max(100),
+  typeId: z.string().trim().min(1).default('文案'),
+  briefTemplate: z.string().max(4000).default(''),
+  suggestedRole: z.string().trim().max(50).default(''),
+});
+
+export const skillFeatureSchema = z.object({
+  featured: z.boolean(),
+});
+
+/** 办公室风格配置（宽松校验：palette 三色字符串、floorPattern 枚举、furniture 任意槽位映射） */
+export const officeStyleConfigSchema = z.object({
+  palette: z.object({
+    wall: z.string().max(64),
+    floor: z.string().max(64),
+    accent: z.string().max(64),
+  }),
+  floorPattern: z.enum(['plain', 'wood', 'tile', 'checker']),
+  furniture: z.record(z.string(), z.string().nullable()),
+  poster: z.object({ imageFileId: z.string().nullable() }),
+  sign: z.object({
+    mode: z.enum(['text', 'image']),
+    text: z.string().max(100),
+    imageFileId: z.string().nullable(),
+  }),
+});
+
+/** PUT /api/office-style：兼容 { style } 包裹与直接传配置本体两种形态 */
+export const officeStyleSchema = z.union([
+  z.object({ style: officeStyleConfigSchema }),
+  officeStyleConfigSchema,
+]);
+
+export const styleTemplateCreateSchema = z.object({
+  name: z.string().trim().min(1, '模板名必填').max(100),
+  config: officeStyleConfigSchema,
+});
+
+export const styleTemplateRejectSchema = z.object({
+  reason: z.string().trim().min(1, '驳回原因必填'),
+});
+
+/* ----- v1.4.0 J 智能体人才库 ----- */
+export const agentSyncSchema = z.object({
+  sourceId: z.string().trim().min(1, 'sourceId 必填'),
+});
+
+export const agentTemplateApproveSchema = z.object({
+  suggestedRole: z.string().trim().min(1).optional(),
+});
+
+export const agentTemplateRejectSchema = z.object({
+  reason: z.string().trim().min(1, '驳回原因必填'),
+});
+
+export const agentSyncSourceSchema = z.object({
+  id: z.string().trim().min(1, '源 id 必填'),
+  repo: z.string().trim().min(1, 'repo 必填'),
+  branch: z.string().trim().min(1).default('main'),
+  license: z.string().trim().default(''),
+  author: z.string().trim().default(''),
+});
+
+export const agentSourcesSaveSchema = z.object({
+  sources: z.array(agentSyncSourceSchema),
+});
+
+export const agentTemplateRecruitSchema = z.object({
+  teamId: z.string().min(1, '必须指定招募到的小组'),
 });

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef } from 'react';
+import type { HairStyle, MemberAppearance } from '@swarm/shared';
 import { useApp } from '../context';
-import type { AppState, Member, Team } from '../types';
+import type { AppState, Member, OfficeStyleConfig, Team } from '../types';
+import { Button, Tooltip } from './ui';
+import { SKINS } from './appearanceCatalog';
+import { DEFAULT_OFFICE_STYLE, resolveStyleKey } from './styleCatalog';
 
 /* ============================================================
    像素办公室（UI 恢复 v0.4.0）：视觉实现移植自用户认可的原型
@@ -20,7 +24,7 @@ const TCOLS = 3;
 const VIEW_W = 960;
 const VIEW_H = 540;
 
-const SKINS = ['#f2c79b', '#eec39a', '#f6cfae', '#e9bd8d', '#d9a06b'];
+/* 肤色 5 档在 appearanceCatalog（与服务端 MEMBER_SKINS 同值同序，哈希推导口径不变） */
 const ROLE_SHIRT: Record<string, string> = {
   组长: '#e8862e',
   研究员: '#1f8a70',
@@ -52,6 +56,8 @@ interface AgentView {
   shirt: string;
   skin: string;
   hair: string;
+  /** v1.4.0 I：发型（未定制恒 'short'，与原画法逐像素一致） */
+  hairStyle: HairStyle;
   status: StatusText;
   bubble: string;
 }
@@ -99,9 +105,11 @@ function buildAgents(S: AppState, zones: Map<string, Zone>): AgentView[] {
     return {
       member: m,
       x, y, deskX, deskY,
-      shirt: ROLE_SHIRT[m.role] ?? FALLBACK_SHIRTS[h % FALLBACK_SHIRTS.length],
-      skin: SKINS[h % SKINS.length],
-      hair: ROLE_HAIR[m.role] ?? '#3a2a1a',
+      // v1.4.0 I：外观定制优先，缺省字段回落原自动推导（未定制时与原画法逐像素一致）
+      shirt: m.appearance?.shirt ?? ROLE_SHIRT[m.role] ?? FALLBACK_SHIRTS[h % FALLBACK_SHIRTS.length],
+      skin: m.appearance?.skin ?? SKINS[h % SKINS.length],
+      hair: m.appearance?.hairColor ?? ROLE_HAIR[m.role] ?? '#3a2a1a',
+      hairStyle: m.appearance?.hairStyle ?? 'short',
       status: st,
       bubble: bubbleOf(m, st),
     };
@@ -134,6 +142,20 @@ function buildAgents(S: AppState, zones: Map<string, Zone>): AgentView[] {
   return out;
 }
 
+/**
+ * v1.4.0 I：未定制成员的自动推导外观（与 buildAgents 的 mk() 回落口径完全一致），
+ * 供成员编辑器在「未定制」时展示当前实际长相作默认值；hairStyle 恒 'short'。
+ */
+export function autoAppearanceOf(m: { id: string; role: string }): Required<MemberAppearance> {
+  const h = hashStr(m.id);
+  return {
+    skin: SKINS[h % SKINS.length],
+    shirt: ROLE_SHIRT[m.role] ?? FALLBACK_SHIRTS[h % FALLBACK_SHIRTS.length],
+    hairColor: ROLE_HAIR[m.role] ?? '#3a2a1a',
+    hairStyle: 'short',
+  };
+}
+
 /* ---------- 绘制（原型 draw* 函数移植，ctx 显式传参） ---------- */
 
 function px(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, color: string) {
@@ -162,15 +184,15 @@ function drawZone(ctx: CanvasRenderingContext2D, team: Team, z: Zone) {
   ctx.textBaseline = 'alphabetic';
 }
 
-function drawBossOffice(ctx: CanvasRenderingContext2D) {
-  for (let y = 0; y <= 3; y++) px(ctx, 6 * CELL, y * CELL, CELL, CELL, '#b09a76');
+function drawBossOffice(ctx: CanvasRenderingContext2D, wall: string, accent: string) {
+  for (let y = 0; y <= 3; y++) px(ctx, 6 * CELL, y * CELL, CELL, CELL, wall);
   for (let x = 0; x <= 6; x++) {
-    if (x !== 2) px(ctx, x * CELL, 4 * CELL, CELL, CELL, '#b09a76');
+    if (x !== 2) px(ctx, x * CELL, 4 * CELL, CELL, CELL, wall);
   }
   px(ctx, 1 * CELL + 3, 1 * CELL + 8, 2 * CELL - 6, 16, '#7a4a21');
   px(ctx, 1 * CELL + 8, 1 * CELL + 2, 16, 10, '#2b2b33');
   px(ctx, 1 * CELL + 10, 1 * CELL + 4, 12, 6, '#7fd4ff');
-  px(ctx, 1 * CELL + 13, 2 * CELL + 2, 18, 12, '#d93a2b');
+  px(ctx, 1 * CELL + 13, 2 * CELL + 2, 18, 12, accent);
   px(ctx, 3.15 * CELL, 0.25 * CELL, 22, 20, '#8a8f7a');
   px(ctx, 3.15 * CELL, 0.6 * CELL, 22, 3, '#6d7260');
   ctx.fillStyle = '#5a4632';
@@ -285,6 +307,335 @@ function drawPlant(ctx: CanvasRenderingContext2D, cx: number, cy: number) {
   px(ctx, dx + 3, dy + 9, 8, 8, '#35853f');
 }
 
+/* ---------- v1.3.0 F 风格渲染（配置驱动；默认值 = 现画布硬编码，像素级一致） ---------- */
+
+/** 程序加深/变色：checker 暗格用 (-7,-10,-18)，恰好把默认地板 #ead9b8 推到现暗格 #e3cfa6 */
+function shade(hex: string, dr: number, dg: number, db: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const c = (v: number, d: number) => Math.max(0, Math.min(255, v + d));
+  return `rgb(${c(n >> 16, dr)},${c((n >> 8) & 255, dg)},${c(n & 255, db)})`;
+}
+
+/** 风格图片缓存（海报/招牌图）：同源 <img> 自带 cookie，加载完成由 rAF 循环自动画上 */
+const styleImgCache = new Map<string, HTMLImageElement>();
+function styleImage(fileId: string): HTMLImageElement {
+  let img = styleImgCache.get(fileId);
+  if (!img) {
+    img = new Image();
+    img.src = `/api/style-images/${fileId}`;
+    styleImgCache.set(fileId, img);
+  }
+  return img;
+}
+
+function drawImageCover(ctx: CanvasRenderingContext2D, img: HTMLImageElement, x: number, y: number, w: number, h: number) {
+  const iw = img.naturalWidth;
+  const ih = img.naturalHeight;
+  if (!iw || !ih) return;
+  const scale = Math.max(w / iw, h / ih);
+  const sw = w / scale;
+  const sh = h / scale;
+  ctx.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, x, y, w, h);
+}
+
+function imgReady(img: HTMLImageElement): boolean {
+  return img.complete && img.naturalWidth > 0;
+}
+
+/** 绿植款式（green = 现 drawPlant 原画法）；槽位坐标见 drawFurniture 的槽位图 */
+function drawPlantVariant(ctx: CanvasRenderingContext2D, cx: number, cy: number, key: string) {
+  if (key === 'green') return drawPlant(ctx, cx, cy);
+  const dx = cx * CELL;
+  const dy = cy * CELL;
+  px(ctx, dx + 9, dy + 16, 12, 10, '#b0562f'); // 花盆（与现绿植同色）
+  if (key === 'sakura') {
+    px(ctx, dx + 6, dy + 3, 18, 13, '#f2a7c3');
+    px(ctx, dx + 11, dy + 0, 8, 8, '#f7c3d7');
+    px(ctx, dx + 3, dy + 9, 8, 8, '#eda0bd');
+    px(ctx, dx + 14, dy + 13, 3, 4, '#7a4a21');
+  } else if (key === 'cactus') {
+    px(ctx, dx + 12, dy + 2, 7, 15, '#3f9e4d');
+    px(ctx, dx + 5, dy + 7, 5, 6, '#35853f');
+    px(ctx, dx + 21, dy + 5, 5, 7, '#35853f');
+    px(ctx, dx + 14, dy + 0, 3, 3, '#e77fa2');
+  } else if (key === 'flower') {
+    px(ctx, dx + 14, dy + 8, 2, 9, '#35853f');
+    px(ctx, dx + 8, dy + 10, 2, 7, '#35853f');
+    px(ctx, dx + 20, dy + 10, 2, 7, '#35853f');
+    px(ctx, dx + 11, dy + 3, 8, 8, '#e77fa2');
+    px(ctx, dx + 5, dy + 6, 6, 6, '#d93a2b');
+    px(ctx, dx + 19, dy + 6, 6, 6, '#d98a16');
+    px(ctx, dx + 13, dy + 5, 4, 4, '#ffe08a');
+  } else if (key === 'fern') {
+    for (let i = 0; i < 5; i++) px(ctx, dx + 4 + i * 5, dy + 10 - Math.abs(i - 2) * 2, 4, 8 + (2 - Math.abs(i - 2)) * 2, i % 2 ? '#3f9e4d' : '#35853f');
+    px(ctx, dx + 13, dy + 6, 4, 11, '#54b765');
+  } else {
+    // monstera 龟背竹：大叶
+    px(ctx, dx + 3, dy + 5, 11, 10, '#2e7d46');
+    px(ctx, dx + 16, dy + 3, 11, 12, '#3f9e4d');
+    px(ctx, dx + 10, dy + 0, 9, 9, '#54b765');
+    px(ctx, dx + 6, dy + 8, 3, 3, '#b9d977');
+    px(ctx, dx + 20, dy + 7, 3, 3, '#b9d977');
+  }
+}
+
+function drawSofa(ctx: CanvasRenderingContext2D, key: string) {
+  const x = 25.3 * CELL;
+  const y = 13.1 * CELL;
+  const w = 3.5 * CELL;
+  const main = key === 'linen' ? '#d9c9a8' : key === 'green' ? '#4e7d4a' : key === 'leather' ? '#8a5a2b' : '#8a97a5';
+  const dark = key === 'linen' ? '#bfa87e' : key === 'green' ? '#3c6339' : key === 'leather' ? '#6e4520' : '#6d7885';
+  px(ctx, x, y, w, 14, dark); // 靠背
+  px(ctx, x, y + 12, w, 16, main); // 坐垫区
+  px(ctx, x, y + 4, 10, 30, dark); // 左扶手
+  px(ctx, x + w - 10, y + 4, 10, 30, dark); // 右扶手
+  px(ctx, x + w / 2 - 1, y + 14, 2, 12, 'rgba(0,0,0,.15)');
+  px(ctx, x + 16, y + 17, 14, 8, '#fff3d6'); // 抱枕
+}
+
+function drawBookshelf(ctx: CanvasRenderingContext2D, key: string) {
+  const x = 30.15 * CELL;
+  const y = 9.2 * CELL;
+  const w = 1.55 * CELL;
+  const h = 2.7 * CELL;
+  const frame = key === 'metal' ? '#5a5f6a' : key === 'white' ? '#e8e3d8' : '#8a5a2b';
+  px(ctx, x, y, w, h, frame);
+  const spine = ['#d93a2b', '#3a6fd8', '#1f8a70', '#d98a16', '#8a5aa8'];
+  for (let s = 0; s < 3; s++) {
+    const sy = y + 6 + s * 26;
+    px(ctx, x + 3, sy, w - 6, 20, '#2b2519');
+    for (let i = 0; i < 5; i++) px(ctx, x + 5 + i * 8, sy + 3 + (i % 2) * 2, 5, 15 - (i % 2) * 2, spine[(i + s) % spine.length]);
+    px(ctx, x + 2, sy + 21, w - 4, 3, frame);
+  }
+}
+
+function drawFishtank(ctx: CanvasRenderingContext2D, key: string) {
+  const x = 0.25 * CELL;
+  const y = 6.1 * CELL;
+  const w = 2.3 * CELL;
+  const h = 1.7 * CELL;
+  px(ctx, x + 4, y + h - 6, w - 8, 6, '#5a4632'); // 底座
+  const water = key === 'neon' ? '#2a2f4a' : '#7fd4ff';
+  px(ctx, x, y, w, h - 6, water);
+  px(ctx, x, y, w, 5, key === 'classic' ? '#bfe8f5' : key === 'led' ? '#39c2d7' : '#ff3d81');
+  px(ctx, x + 10, y + 18, 9, 5, '#e8862e'); // 鱼
+  px(ctx, x + 8, y + 19, 3, 3, '#e8862e');
+  px(ctx, x + 40, y + 30, 7, 4, '#d93a2b');
+  px(ctx, x + 16, y + h - 14, 5, 8, '#3f9e4d'); // 水草
+  px(ctx, x + 52, y + h - 12, 4, 6, '#35853f');
+  ctx.strokeStyle = key === 'neon' ? '#ff3d81' : '#2c2519';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, w, h - 6);
+}
+
+function drawRug(ctx: CanvasRenderingContext2D, key: string, accent: string) {
+  const x = 13.2 * CELL;
+  const y = 7.7 * CELL;
+  const w = 5.6 * CELL;
+  const h = 2.1 * CELL;
+  if (key === 'pink-round') {
+    ctx.fillStyle = '#e77fa2';
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#f3c6d8';
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + h / 2, w / 2 - 8, h / 2 - 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  if (key === 'leaf') {
+    px(ctx, x, y, w, h, '#a8bf97');
+    px(ctx, x + 4, y + 4, w - 8, h - 8, '#b9cfa9');
+    px(ctx, x + 10, y + h / 2 - 1, w - 20, 2, '#4e7d4a');
+    for (let i = 0; i < 4; i++) px(ctx, x + 22 + i * 34, y + 12 + (i % 2) * 22, 12, 6, '#4e7d4a');
+    return;
+  }
+  if (key === 'geo') {
+    px(ctx, x, y, w, h, '#e8e3d8');
+    px(ctx, x + 4, y + 4, w - 8, h - 8, '#f4f1ea');
+    for (let i = 0; i < 4; i++) px(ctx, x + 14 + i * 40, y + 14 + (i % 2) * 18, 18, 12, i % 2 ? accent : '#8a97a5');
+    return;
+  }
+  // woven 编织（默认款）
+  px(ctx, x, y, w, h, '#a5713d');
+  px(ctx, x + 4, y + 4, w - 8, h - 8, '#d9b078');
+  for (let i = 0; i < 5; i++) px(ctx, x + 12 + i * 32, y + 8, 16, h - 16, i % 2 ? '#c49a5e' : '#e3cfa6');
+}
+
+function drawPainting(ctx: CanvasRenderingContext2D, key: string, accent: string) {
+  const x = 18.6 * CELL;
+  const y = 0.18 * CELL;
+  const w = 2 * CELL;
+  const h = 1.35 * CELL;
+  px(ctx, x - 3, y - 3, w + 6, h + 6, accent); // 画框（点缀色）
+  px(ctx, x, y, w, h, '#fffdf4');
+  if (key === 'line-art') {
+    ctx.strokeStyle = '#2c2519';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x + 8, y + h - 8);
+    ctx.lineTo(x + w / 2, y + 10);
+    ctx.lineTo(x + w - 10, y + h - 12);
+    ctx.stroke();
+    px(ctx, x + w - 20, y + 8, 9, 9, accent);
+  } else if (key === 'blossom') {
+    px(ctx, x, y, w, h, '#fbe7ef');
+    px(ctx, x + 10, y + 10, 16, 12, '#f2a7c3');
+    px(ctx, x + 34, y + 18, 13, 10, '#eda0bd');
+    px(ctx, x + 22, y + 26, 4, 10, '#7a4a21');
+  } else if (key === 'abstract') {
+    px(ctx, x + 4, y + 4, w / 2 - 6, h / 2 - 6, accent);
+    px(ctx, x + w / 2 + 2, y + 4, w / 2 - 6, h / 2 - 6, '#3a6fd8');
+    px(ctx, x + 4, y + h / 2 + 2, w / 2 - 6, h / 2 - 6, '#d98a16');
+    px(ctx, x + w / 2 + 2, y + h / 2 + 2, w / 2 - 6, h / 2 - 6, '#1f8a70');
+  } else {
+    // landscape 风景（默认款）
+    px(ctx, x, y, w, h * 0.6, '#7fd4ff');
+    px(ctx, x, y + h * 0.6, w, h * 0.4, '#3f9e4d');
+    px(ctx, x + w - 18, y + 6, 10, 10, '#ffe08a');
+    px(ctx, x + 8, y + h * 0.45, 18, 8, '#35853f');
+  }
+}
+
+function drawPoster(ctx: CanvasRenderingContext2D, style: OfficeStyleConfig) {
+  const x = 27.4 * CELL;
+  const y = 0.12 * CELL;
+  const w = 3.8 * CELL;
+  const h = 1.75 * CELL;
+  px(ctx, x - 3, y - 3, w + 6, h + 6, '#2c2519'); // 海报框
+  const fileId = style.poster.imageFileId;
+  const img = fileId ? styleImage(fileId) : null;
+  if (img && imgReady(img)) {
+    drawImageCover(ctx, img, x, y, w, h);
+  } else {
+    px(ctx, x, y, w, h, '#d9c9a8');
+    ctx.fillStyle = '#5a4632';
+    ctx.font = '900 11px sans-serif, "Noto Color Emoji"';
+    ctx.textAlign = 'center';
+    ctx.fillText(fileId ? '海报加载中…' : '海 报', x + w / 2, y + h / 2 + 4);
+    ctx.textAlign = 'left';
+  }
+}
+
+function drawSign(ctx: CanvasRenderingContext2D, style: OfficeStyleConfig, wsName: string) {
+  const cy = 6.5 * CELL;
+  if (style.sign.mode === 'image' && style.sign.imageFileId) {
+    const w = 5 * CELL;
+    const h = 1.1 * CELL;
+    const x = 16 * CELL - w / 2;
+    const y = cy - h / 2;
+    px(ctx, x + 14, y - 8, 3, 8, '#8a5a2b');
+    px(ctx, x + w - 17, y - 8, 3, 8, '#8a5a2b');
+    const img = styleImage(style.sign.imageFileId);
+    if (imgReady(img)) {
+      drawImageCover(ctx, img, x, y, w, h);
+      ctx.strokeStyle = '#2c2519';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x, y, w, h);
+    } else {
+      px(ctx, x, y, w, h, style.palette.accent);
+      ctx.fillStyle = '#fff7e0';
+      ctx.font = '900 11px sans-serif, "Noto Color Emoji"';
+      ctx.textAlign = 'center';
+      ctx.fillText('招牌加载中…', 16 * CELL, cy + 4);
+      ctx.textAlign = 'left';
+    }
+    return;
+  }
+  const text = style.sign.text.trim() || wsName || '干活蜂群';
+  ctx.font = '900 13px sans-serif, "Noto Color Emoji"';
+  const w = Math.min(11 * CELL, Math.max(4 * CELL, ctx.measureText(text).width + 36));
+  const x = 16 * CELL - w / 2;
+  const y = cy - 12;
+  px(ctx, x + 16, y - 8, 3, 8, '#8a5a2b');
+  px(ctx, x + w - 19, y - 8, 3, 8, '#8a5a2b');
+  px(ctx, x, y, w, 24, style.palette.accent);
+  ctx.strokeStyle = '#2c2519';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, w, 24);
+  ctx.fillStyle = '#fff7e0';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 16 * CELL, y + 12.5);
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+}
+
+function drawCoffee(ctx: CanvasRenderingContext2D, key: string) {
+  const x = 20.9 * CELL;
+  const y = 13.25 * CELL;
+  px(ctx, x, y + 12, 1.3 * CELL, 8, '#a5713d'); // 小桌
+  px(ctx, x, y + 12, 1.3 * CELL, 3, '#c08b52');
+  if (key === 'machine') {
+    px(ctx, x + 8, y - 2, 22, 15, '#2b2b33');
+    px(ctx, x + 11, y + 1, 7, 5, '#39c2d7');
+    px(ctx, x + 13, y + 9, 8, 5, '#fffdf4');
+  } else if (key === 'teapot') {
+    px(ctx, x + 10, y + 2, 18, 11, '#b0562f');
+    px(ctx, x + 16, y - 1, 6, 4, '#8a4526');
+    px(ctx, x + 26, y + 5, 6, 3, '#b0562f');
+  } else {
+    // kettle 手冲壶（默认款）
+    px(ctx, x + 12, y + 3, 14, 10, '#5a5f6a');
+    px(ctx, x + 16, y + 0, 6, 4, '#3c4048');
+    px(ctx, x + 6, y + 8, 7, 3, '#5a5f6a');
+    px(ctx, x + 25, y + 6, 5, 5, 'rgba(255,255,255,.35)');
+  }
+}
+
+function drawCat(ctx: CanvasRenderingContext2D, key: string) {
+  const cx = 18.35 * CELL;
+  const cy = 9.35 * CELL;
+  const body = key === 'white' ? '#f2ede2' : key === 'black' ? '#2b2b33' : key === 'gray' ? '#8a8f7a' : '#e8862e';
+  px(ctx, cx - 10, cy + 4, 20, 9, body); // 身
+  px(ctx, cx + 6, cy - 3, 11, 10, body); // 头
+  px(ctx, cx + 7, cy - 7, 4, 5, body); // 耳
+  px(ctx, cx + 13, cy - 7, 4, 5, body);
+  px(ctx, cx - 14, cy + 1, 5, 4, body); // 尾
+  px(ctx, cx - 16, cy - 2, 4, 4, body);
+  if (key === 'orange') {
+    px(ctx, cx - 4, cy + 4, 3, 9, 'rgba(0,0,0,.18)');
+    px(ctx, cx + 2, cy + 4, 3, 9, 'rgba(0,0,0,.18)');
+  }
+  px(ctx, cx + 10, cy + 1, 2, 2, '#26221c');
+}
+
+/**
+ * 家具槽位图（格子坐标，CELL=30；全部避开工位桌/审核座/交付台/成员小人）：
+ * - plantLeft (1,13) / plantRight (30,13)：沿用现画布两盆绿植的原位（左右下角空地）
+ * - painting 后墙 x18.6–20.6, y0.18–1.53（任务墙与审核区之间的墙面）；poster 后墙 x27.4–31.2, y0.12–1.87
+ * - sign 悬挂于中区上方居中（中心 x=16 格, y=6.5 格，交付区上方、任务墙下方空当）
+ * - rug 地板开阔处 x13.2–18.8, y7.7–9.8（桌区之外）；cat 在 rug 右下角 (18.35,9.35)
+ * - fishtank 左墙边 (0.25,6.1) 老板区之下；bookshelf 右墙边 x30.15–31.7, y9.2–11.9
+ * - sofa 右下空地 x25.3–28.8, y13.1–14.35；coffee 沙发左侧茶水角 (20.9,13.25)，与大门 (18.5,14) 不重叠
+ */
+function drawFurniture(ctx: CanvasRenderingContext2D, style: OfficeStyleConfig) {
+  const f = style.furniture ?? {};
+  const has = (slot: string) => Object.prototype.hasOwnProperty.call(f, slot);
+  const key = (slot: string) => resolveStyleKey(slot, f[slot], has(slot));
+  const rug = key('rug');
+  if (rug) drawRug(ctx, rug, style.palette.accent);
+  const pl = key('plantLeft');
+  if (pl) drawPlantVariant(ctx, 1, 13, pl);
+  const pr = key('plantRight');
+  if (pr) drawPlantVariant(ctx, 30, 13, pr);
+  const ft = key('fishtank');
+  if (ft) drawFishtank(ctx, ft);
+  const bs = key('bookshelf');
+  if (bs) drawBookshelf(ctx, bs);
+  const sf = key('sofa');
+  if (sf) drawSofa(ctx, sf);
+  const cf = key('coffee');
+  if (cf) drawCoffee(ctx, cf);
+  const ct = key('cat');
+  if (ct) drawCat(ctx, ct);
+  const pt = key('painting');
+  if (pt) drawPainting(ctx, pt, style.palette.accent);
+}
+
 function drawDoor(ctx: CanvasRenderingContext2D) {
   px(ctx, 18.5 * CELL, 14 * CELL + 22, 2 * CELL, 8, '#8a5a2b');
   ctx.fillStyle = '#5a4632';
@@ -297,7 +648,15 @@ function drawDoor(ctx: CanvasRenderingContext2D) {
 function drawAgent(ctx: CanvasRenderingContext2D, a: AgentView, now: number) {
   const cx = (a.x + 0.5) * CELL;
   const topY = a.y * CELL + 6;
-  const bob = Math.sin(now / 600 + a.x * 1.7 + a.y) * 0.6;
+  /* v1.3.0 轻动画（量只源自真实 statusOf）：执行中 ±1.5px 正弦 bob（相位按成员 id 错开）；
+     待命 ~4 秒一轮的呼吸位移（≤1px）；审核中保持原小幅浮动 */
+  const phase = (hashStr(a.member.id) % 628) / 100;
+  const bob =
+    a.status === '执行中'
+      ? Math.sin(now / 450 + phase) * 1.5
+      : a.status === '待命'
+        ? Math.sin(now / 640 + phase) * 0.8
+        : Math.sin(now / 600 + a.x * 1.7 + a.y) * 0.6;
   const y0 = topY - bob;
   ctx.fillStyle = 'rgba(60,40,10,.22)';
   ctx.beginPath();
@@ -318,9 +677,23 @@ function drawAgent(ctx: CanvasRenderingContext2D, a: AgentView, now: number) {
     px(ctx, cx + 8, y0 + 14, 4, 9, a.shirt);
   }
   px(ctx, cx - 7, y0 + 1, 14, 12, a.skin);
-  px(ctx, cx - 7, y0 + 1, 14, 5, a.hair);
-  px(ctx, cx - 7, y0 + 1, 3, 8, a.hair);
-  px(ctx, cx + 4, y0 + 1, 3, 8, a.hair);
+  /* v1.4.0 I：头发按发型分支（仅此段）——'short' 三笔与原画法逐像素不变；
+     'bald' 不画；'long' 顶带不变、两侧条 3 宽自 y0+1 加长至 17（垂过肩线 y0+13、止于 y0+18，不遮眼：眼在 cx-4 起）；
+     'bun' 顶带收窄为 10 宽（cx-5 起、高 5 不变、无侧条）+ 头顶中央发髻块 6x4（cx-3, y0-3）。 */
+  if (a.hairStyle === 'bald') {
+    /* 光头：不画头发 */
+  } else if (a.hairStyle === 'long') {
+    px(ctx, cx - 7, y0 + 1, 14, 5, a.hair);
+    px(ctx, cx - 7, y0 + 1, 3, 17, a.hair);
+    px(ctx, cx + 4, y0 + 1, 3, 17, a.hair);
+  } else if (a.hairStyle === 'bun') {
+    px(ctx, cx - 3, y0 - 3, 6, 4, a.hair);
+    px(ctx, cx - 5, y0 + 1, 10, 5, a.hair);
+  } else {
+    px(ctx, cx - 7, y0 + 1, 14, 5, a.hair);
+    px(ctx, cx - 7, y0 + 1, 3, 8, a.hair);
+    px(ctx, cx + 4, y0 + 1, 3, 8, a.hair);
+  }
   px(ctx, cx - 4, y0 + 8, 2.4, 2.4, '#26221c');
   px(ctx, cx + 2, y0 + 8, 2.4, 2.4, '#26221c');
   if (a.member.role === '审核') {
@@ -331,12 +704,51 @@ function drawAgent(ctx: CanvasRenderingContext2D, a: AgentView, now: number) {
   }
 }
 
-function drawBubble(ctx: CanvasRenderingContext2D, a: AgentView, camX: number, viewWpx: number) {
+/**
+ * v1.4.0 I：成员编辑器实时预览——构造一个最小 AgentView（格子 (0,0)、status '待命'、now=0、
+ * member id 空串使 hash 相位为 0、bob 恒 0），复用 drawAgent 同一绘制口径（身体/头/发型/审核眼镜），
+ * 按 canvas 尺寸等比缩放并居中（纵向预留 42 世界单位：小人占 y0+1..y0+32.5、束发发髻上探至 y0-3）。
+ * 调用方负责 canvas 的 width/height 与背景（本函数先清透明）。
+ */
+export function drawMemberPreview(
+  canvas: HTMLCanvasElement,
+  opts: { skin: string; shirt: string; hairColor: string; hairStyle: HairStyle; role: string },
+): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const s = Math.min(canvas.width / CELL, canvas.height / 42);
+  const ox = (canvas.width - CELL * s) / 2;
+  const oy = (canvas.height - 42 * s) / 2;
+  ctx.setTransform(s, 0, 0, s, ox, oy);
+  const view: AgentView = {
+    member: { id: '', role: opts.role } as unknown as Member,
+    x: 0,
+    y: 0,
+    deskX: -1,
+    deskY: -1,
+    shirt: opts.shirt,
+    skin: opts.skin,
+    hair: opts.hairColor,
+    hairStyle: opts.hairStyle,
+    status: '待命',
+    bubble: '',
+  };
+  drawAgent(ctx, view, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+function drawBubble(ctx: CanvasRenderingContext2D, a: AgentView, camX: number, viewWpx: number, now: number) {
   const cx = (a.x + 0.5) * CELL;
   ctx.font = '800 10px sans-serif, "Noto Color Emoji"';
   const label = a.member.name + '·' + a.member.role;
   const nw = ctx.measureText(label).width + 10;
-  const ny = a.y * CELL - 16;
+  /* v1.3.0：气泡框 ±1px 浮动（幅度/节奏随真实状态：执行中 ±1px、其余更轻） */
+  const phase = (hashStr(a.member.id) % 628) / 100;
+  const floatY =
+    a.status === '执行中' ? Math.sin(now / 500 + phase) * 1 : Math.sin(now / 640 + phase) * 0.6;
+  const ny = a.y * CELL - 16 + floatY;
   px(ctx, cx - nw / 2, ny, nw, 14, 'rgba(44,37,25,.88)');
   ctx.fillStyle = '#fff7e0';
   ctx.textAlign = 'center';
@@ -359,8 +771,28 @@ function drawBubble(ctx: CanvasRenderingContext2D, a: AgentView, camX: number, v
 
 /* ---------- 组件 ---------- */
 
+/** context 风格 → 画布用完整配置（缺键补本地默认，默认值与现画布硬编码一致） */
+function effectiveStyle(s: OfficeStyleConfig | null): OfficeStyleConfig {
+  if (!s) return DEFAULT_OFFICE_STYLE;
+  return {
+    palette: { ...DEFAULT_OFFICE_STYLE.palette, ...(s.palette ?? {}) },
+    floorPattern: s.floorPattern || DEFAULT_OFFICE_STYLE.floorPattern,
+    furniture: s.furniture ?? {},
+    poster: { imageFileId: s.poster?.imageFileId ?? null },
+    sign: {
+      mode: s.sign?.mode === 'image' ? 'image' : 'text',
+      text: s.sign?.text ?? '',
+      imageFileId: s.sign?.imageFileId ?? null,
+    },
+  };
+}
+
 export default function PixelOffice({ onEdit }: { onEdit: (memberId: string) => void }) {
-  const { S, apiName } = useApp();
+  const { S, apiName, officeStyle, currentWorkspace } = useApp();
+  const styleRef = useRef<OfficeStyleConfig>(DEFAULT_OFFICE_STYLE);
+  styleRef.current = effectiveStyle(officeStyle);
+  const wsNameRef = useRef('');
+  wsNameRef.current = currentWorkspace?.name ?? '';
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mmRef = useRef<HTMLCanvasElement | null>(null);
   const camRef = useRef({ x: 0, y: 0, zoom: 0.75 });
@@ -470,10 +902,26 @@ export default function PixelOffice({ onEdit }: { onEdit: (memberId: string) => 
       ctx.fillRect(0, 0, VIEW_W, VIEW_H);
       if (st) {
         const rows = worldRows(st.teams.length);
+        const style = styleRef.current;
         ctx.setTransform(cam.zoom, 0, 0, cam.zoom, -cam.x * cam.zoom, -cam.y * cam.zoom);
+        /* 地板：palette.floor 打底 + floorPattern 纹样（checker 暗格 = floor 程序加深，默认恰为现 #e3cfa6） */
+        const floorBase = style.palette.floor;
         for (let y = 0; y < rows; y++) {
           for (let x = 0; x < COLS; x++) {
-            px(ctx, x * CELL, y * CELL, CELL, CELL, (x + y) % 2 === 0 ? '#ead9b8' : '#e3cfa6');
+            if (style.floorPattern === 'checker') {
+              px(ctx, x * CELL, y * CELL, CELL, CELL, (x + y) % 2 === 0 ? floorBase : shade(floorBase, -7, -10, -18));
+            } else {
+              px(ctx, x * CELL, y * CELL, CELL, CELL, floorBase);
+              if (style.floorPattern === 'wood') {
+                const line = shade(floorBase, -25, -22, -18);
+                px(ctx, x * CELL, (y + 1) * CELL - 2, CELL, 2, line);
+                px(ctx, x * CELL + (y % 2 === 0 ? 20 : 10), y * CELL, 2, CELL, line);
+              } else if (style.floorPattern === 'tile') {
+                const line = shade(floorBase, -20, -20, -20);
+                px(ctx, (x + 1) * CELL - 2, y * CELL, 2, CELL, line);
+                px(ctx, x * CELL, (y + 1) * CELL - 2, CELL, 2, line);
+              }
+            }
           }
         }
         ctx.strokeStyle = '#8a5a2b';
@@ -495,8 +943,9 @@ export default function PixelOffice({ onEdit }: { onEdit: (memberId: string) => 
         ctx.fillStyle = 'rgba(90,70,40,.75)';
         ctx.fillText('交 付 区', 7.3 * CELL, 10.7 * CELL);
 
-        drawBossOffice(ctx);
+        drawBossOffice(ctx, style.palette.wall, style.palette.accent);
         drawTaskWall(ctx, st);
+        drawPoster(ctx, style);
         const list = agentsRef.current;
         for (const a of list) {
           if (a.deskX >= 0) drawDeskAt(ctx, a.deskX, a.deskY, a.shirt);
@@ -506,13 +955,13 @@ export default function PixelOffice({ onEdit }: { onEdit: (memberId: string) => 
           .filter((s) => s.trim()).length;
         drawReviewDesk(ctx, stdCount);
         drawDeliveryCounter(ctx, st.tasks.filter((t) => t.status === '已完成').length);
-        drawPlant(ctx, 1, 13);
-        drawPlant(ctx, 30, 13);
         drawPlant(ctx, 19, 1);
+        drawFurniture(ctx, style);
+        drawSign(ctx, style, wsNameRef.current);
         drawDoor(ctx);
         const sorted = list.slice().sort((a, b) => a.y - b.y);
         for (const a of sorted) drawAgent(ctx, a, now);
-        for (const a of sorted) drawBubble(ctx, a, cam.x, VIEW_W / cam.zoom);
+        for (const a of sorted) drawBubble(ctx, a, cam.x, VIEW_W / cam.zoom, now);
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         drawMinimap();
       }
@@ -626,9 +1075,9 @@ export default function PixelOffice({ onEdit }: { onEdit: (memberId: string) => 
         />
         <canvas ref={mmRef} className="minimap-canvas" width={192} height={120} title="小地图：点任意位置跳过去" onClick={onMinimapClick} />
         <div className="zoomctl">
-          <button type="button" className="mini-btn" onClick={() => zoomBy(1.2)}>＋</button>
-          <button type="button" className="mini-btn" onClick={() => zoomBy(0.8)}>－</button>
-          <button type="button" className="mini-btn" onClick={() => fitRef.current()}>全景</button>
+          <Tooltip content="放大"><Button variant="mini" onClick={() => zoomBy(1.2)}>＋</Button></Tooltip>
+          <Tooltip content="缩小"><Button variant="mini" onClick={() => zoomBy(0.8)}>－</Button></Tooltip>
+          <Tooltip content="回到全景"><Button variant="mini" onClick={() => fitRef.current()}>全景</Button></Tooltip>
         </div>
       </div>
       <div className="legend-row">

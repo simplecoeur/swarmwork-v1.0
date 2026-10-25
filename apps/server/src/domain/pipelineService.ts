@@ -2,6 +2,7 @@ import { nowIso, uid } from '../util';
 import type { Repos, SkillRow } from '../store/repositories';
 import { createTaskFromSkill, mergeSkillParams } from './skillService';
 import { DomainError } from './taskService';
+import { patchTaskStep, recordTaskStep } from './taskSteps';
 
 /**
  * 成套流水线（方案 §11.1）：流水线 = 预置项目模板 + 一组 skill 的编排，不是新引擎。
@@ -62,6 +63,40 @@ export function findSkillBySlugForWorkspace(
     .find((s) => s.slug === slug);
 }
 
+/**
+ * 流水线发单前全量校验（runPipeline 与 G-10 定时计划建改共用同一套校验函数）：
+ * 小组存在 + 每环节 skill 可用 + 各 skill 必填参数（mergeSkillParams）+ 公共参数必填，
+ * 缺什么在建项目之前一次性报清。返回各环节 skill 行（顺序与 template.steps 对齐）。
+ */
+export function validatePipelineRun(
+  repos: Repos,
+  workspaceId: string,
+  template: PipelineTemplate,
+  teamId: string,
+  params: Record<string, unknown>,
+): SkillRow[] {
+  const team = repos.getTeam(teamId, workspaceId);
+  if (!team) throw new DomainError('VALIDATION', '小组不存在');
+  const skills: SkillRow[] = [];
+  for (const step of template.steps) {
+    const skill = findSkillBySlugForWorkspace(repos, workspaceId, step.skillSlug);
+    if (!skill) {
+      throw new DomainError(
+        'VALIDATION',
+        `流水线环节「${step.title}」需要的 skill「${step.skillSlug}」在本空间不可用（先从平台库安装或选行业包开公司）`,
+      );
+    }
+    skills.push(skill);
+  }
+  for (const skill of skills) mergeSkillParams(skill, params);
+  for (const cp of template.commonParams) {
+    if (cp.required && (params[cp.key] === undefined || params[cp.key] === '')) {
+      throw new DomainError('VALIDATION', `公共参数「${cp.label}」必填`);
+    }
+  }
+  return skills;
+}
+
 export function runPipeline(
   repos: Repos,
   input: {
@@ -74,26 +109,7 @@ export function runPipeline(
   },
 ): { projectId: string; taskIds: string[] } {
   const { template, workspaceId } = input;
-  const team = repos.getTeam(input.teamId, workspaceId);
-  if (!team) throw new DomainError('VALIDATION', '小组不存在');
-  // 先全量校验：缺哪个环节的 skill、缺哪个必填参数，在建项目之前一次性报清
-  const skills: SkillRow[] = [];
-  for (const step of template.steps) {
-    const skill = findSkillBySlugForWorkspace(repos, workspaceId, step.skillSlug);
-    if (!skill) {
-      throw new DomainError(
-        'VALIDATION',
-        `流水线环节「${step.title}」需要的 skill「${step.skillSlug}」在本空间不可用（先从平台库安装或选行业包开公司）`,
-      );
-    }
-    skills.push(skill);
-  }
-  for (const skill of skills) mergeSkillParams(skill, input.params);
-  for (const cp of template.commonParams) {
-    if (cp.required && (input.params[cp.key] === undefined || input.params[cp.key] === '')) {
-      throw new DomainError('VALIDATION', `公共参数「${cp.label}」必填`);
-    }
-  }
+  const skills = validatePipelineRun(repos, workspaceId, template, input.teamId, input.params);
 
   const projectId = uid('proj');
   const dramaName = typeof input.params.drama_name === 'string' ? input.params.drama_name : '';
@@ -108,6 +124,7 @@ export function runPipeline(
     workspace_id: workspaceId,
   });
   const taskIds: string[] = [];
+  const stepPlan = template.steps.map((s, i) => ({ index: i + 1, title: s.title, type: skills[i].name }));
   template.steps.forEach((step, i) => {
     const task = createTaskFromSkill(repos, {
       skill: skills[i],
@@ -123,6 +140,19 @@ export function runPipeline(
       .prepare('UPDATE tasks SET seq = ? WHERE id = ?')
       .run(i + 1, task.id);
     taskIds.push(task.id);
+    // G-04：流水线子任务落 split 副本步（模板编排即计划来源，cost=0）并补全 plan 步细节（计划卡同源）
+    recordTaskStep(repos, {
+      taskId: task.id,
+      workspaceId,
+      kind: 'split',
+      summary: `流水线「${template.name}」共 ${template.steps.length} 个环节，本单为第 ${i + 1} 个`,
+      detail: { projectId, templateId: template.id, templateName: template.name, subtasks: stepPlan },
+      callKey: `split:${projectId}`,
+    });
+    patchTaskStep(repos, task.id, `plan:${task.id}`, {
+      summary: `计划第 ${i + 1} 步：《${step.title}》（流水线环节）`,
+      detail: { projectId, index: i + 1, title: step.title, skillSlug: step.skillSlug },
+    });
   });
   return { projectId, taskIds };
 }

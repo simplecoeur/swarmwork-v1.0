@@ -1,5 +1,6 @@
 import { useApp } from '../context';
 import { yuan } from '../utils';
+import { Button, Dialog } from './ui';
 
 export interface ReportData {
   doneCount: number;
@@ -64,9 +65,7 @@ export function buildReport(S: NonNullable<ReturnType<typeof useApp>['S']>): Rep
 
 export default function ReportModal({ report, onClose }: { report: ReportData; onClose: () => void }) {
   return (
-    <div className="modal show">
-      <div className="box">
-        <h3 style={{ marginTop: 0 }}>总经理汇报</h3>
+    <Dialog open onClose={onClose} title="总经理汇报">
         <div style={{ fontSize: 13, lineHeight: 1.8 }}>
           <p>老板，本期汇报如下：</p>
           <p>
@@ -82,9 +81,8 @@ export default function ReportModal({ report, onClose }: { report: ReportData; o
           <p className="hint">说明：以上为系统按账本实时汇总；续航天数为估算，实际取决于后续任务量。</p>
         </div>
         <div style={{ textAlign: 'right', marginTop: 12 }}>
-          <button className="btn gray" onClick={onClose}>关闭</button>
+          <Button variant="gray" onClick={onClose}>关闭</Button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }

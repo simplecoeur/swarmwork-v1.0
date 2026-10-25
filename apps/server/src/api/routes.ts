@@ -8,6 +8,7 @@ import {
   yuanToMilli,
   type ApiDto,
   type AuthUserDto,
+  type ImpersonationDto,
   type IndustryPackDto,
   type KbEntryDto,
   type LedgerEntryDto,
@@ -21,6 +22,7 @@ import {
   type WorkspaceDto,
 } from '@swarm/shared';
 import * as fs from 'fs';
+import * as path from 'path';
 import {
   clearCookieHeader,
   generateTempPassword,
@@ -37,17 +39,32 @@ import {
   sessionCookieHeader,
   verifyPassword,
 } from '../auth/auth';
-import { balanceMilli, buildReport, trialBalanceMilli } from '../domain/costService';
+import { testApiConnection } from '../domain/apiTest';
+import {
+  AGENT_SYNC_SOURCES_KEY,
+  getAgentSyncSources,
+  saveAgentSyncSources,
+  syncAgentSource,
+} from '../domain/agentSyncService';
+import { BASE_ROLES } from '../domain/parseAgencyAgent';
+import { saveDailySettings } from '../domain/dailySettings';
+import type { ForgeSummary } from '../domain/teamForge';
+import { balanceMilli, buildReport, checkLowBalance, trialBalanceMilli } from '../domain/costService';
+import { notifyOwner } from '../domain/notify';
 import { createProject } from '../domain/projectService';
 import { cancelTask, deleteTask, refreshProjectStatus, retryTask, transitionTask } from '../domain/taskService';
-import { createProvider, LlmGateway } from '../llm/gateway';
+import { recordTaskStep } from '../domain/taskSteps';
+import { LlmGateway } from '../llm/gateway';
 import type { Logger } from '../logger';
 import { decryptKey, encryptKey, maskKey } from '../store/crypto';
 import { provisionWorkspace } from '../store/bootstrap';
 import { parseManifest, registerPackExtensions } from '../store/industry';
 import { makeMemberRows, ROLE_PERSONAS } from '../store/seed';
 import {
+  memberAppearanceOf,
   PLATFORM_WORKSPACE_ID,
+  sanitizeAppearance,
+  type AgentTemplateRow,
   type ApiRow,
   type IndustryPackRow,
   type KbRow,
@@ -60,10 +77,26 @@ import {
 } from '../store/repositories';
 import { nowIso, uid } from '../util';
 import { attachAssetRefs } from '../domain/assetService';
+import { registerDailyRoutes } from './daily';
 import { registerM7Routes } from './m7';
 import { registerM8Routes } from './m8';
 import {
+  maskedQuestionnaireAnswers,
+  registerQuestionnaireRoutes,
+  reminderPatchFromQuestionnaire,
+  storeQuestionnaire,
+  type QuestionnaireInput,
+} from './questionnaire';
+import { registerV120Routes } from './v120';
+import { registerV130Routes } from './v130';
+import { registerV130StyleRoutes } from './v130style';
+import {
   adjudicateSchema,
+  agentSourcesSaveSchema,
+  agentSyncSchema,
+  agentTemplateApproveSchema,
+  agentTemplateRecruitSchema,
+  agentTemplateRejectSchema,
   apiDeleteSchema,
   apiSaveSchema,
   apiTestSchema,
@@ -94,9 +127,6 @@ import {
   workspaceCreateSchema,
 } from './schemas';
 
-/** API 测试连接的探活超时（M5）：比正式调用的 120s 短，快速回失败原因 */
-const API_TEST_TIMEOUT_MS = 15_000;
-
 /** 体验额度专用停工文案（§8.1，与 engine 口径一致） */
 export const TRIAL_EXHAUSTED_REASON = '体验额度已用完，请到设置后台填自己的 API Key';
 
@@ -115,10 +145,33 @@ function fail(code: string, message: string, status = 400): never {
   throw Object.assign(new Error(message), { code, statusCode: status });
 }
 
+/** G-14：session.impersonation JSON 的内部形态（迁移 014） */
+interface ImpersonationState {
+  adminUserId: string;
+  workspaceId: string;
+  startedAt: string;
+}
+
+function parseImpersonation(raw: string | null | undefined): ImpersonationState | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as Partial<ImpersonationState>;
+    if (typeof v.adminUserId === 'string' && typeof v.workspaceId === 'string' && typeof v.startedAt === 'string') {
+      return { adminUserId: v.adminUserId, workspaceId: v.workspaceId, startedAt: v.startedAt };
+    }
+  } catch {
+    /* 损坏的 JSON 视作未代入 */
+  }
+  return null;
+}
+
 interface AuthCtx {
   user: UserRow;
   session: SessionRow;
   workspaceId: string | null;
+  /** G-14 代入态（仅平台管理员会话可持有）；非空时全站写接口被只读守卫拦截。
+   *  可选是为与 m7.ts 的 RouteCtx 最小契约保持结构兼容（helpers 注入）。 */
+  impersonation?: ImpersonationState | null;
 }
 
 type AuthedRequest = FastifyRequest & { authCtx?: AuthCtx };
@@ -149,6 +202,8 @@ function userDto(u: UserRow): AuthUserDto {
     status: u.status,
     isPlatformAdmin: u.is_platform_admin === 1,
     mustChangePassword: u.must_change_password === 1,
+    avatarUrl: u.avatar_file ? `/api/users/${u.id}/avatar` : null,
+    deletionAt: u.deletion_at ?? null,
   };
 }
 
@@ -252,8 +307,46 @@ function buildState(repos: Repos, workspaceId: string): StateDto {
     amountYuan: milliToYuan(p.amount_milli),
     type: p.type ?? 'purchase',
   }));
+  // G-02 能力摘要段：成员能力卡（名/工种/skill_tags/人设首行，工种名取注册表）+
+  // 官方 skill 推荐位（平台库 published 前 6，含是否已安装）——全部来自现有表，state 聚合处拼装。
+  // 衔接口径（G-02 设计 + §12.5）：不选包开局零行业词不变——无行业包的空间推荐位只出已装项，
+  // 不把行业官方 skill 的名称/说明推给通用空间（装过即已在本空间出现，不算新增行业词注入）。
+  const packId = ws?.industry_pack_id ?? null;
+  const roleNameById = new Map(
+    repos.listRolesVisible(workspaceId, packId).map((r) => [r.role_id, r.name] as const),
+  );
+  const memberRows = repos.listMembers(workspaceId);
+  const capabilities = {
+    members: memberRows.map((m) => ({
+      memberId: m.id,
+      name: m.name,
+      role: m.role,
+      roleName: roleNameById.get(m.role) ?? m.role,
+      skillTags: parseIdList(m.skill_tags),
+      personaFirstLine: (m.persona || '').split('\n')[0] ?? '',
+      teamId: m.team_id,
+      apiId: m.api_id ?? null,
+    })),
+    recommendedSkills: repos
+      .listLibrarySkills()
+      .filter((s) => s.owner_type === 'platform')
+      .filter((s) => packId !== null || !!repos.findInstalledCopy(workspaceId, s.id))
+      .slice(0, 6)
+      .map((s) => {
+        const copy = repos.findInstalledCopy(workspaceId, s.id);
+        return {
+          skillId: s.id,
+          name: s.name,
+          description: s.description,
+          role: s.role,
+          installed: !!copy,
+          installedCopyId: copy?.id ?? null,
+        };
+      }),
+  };
   return {
     workspace: ws ? { id: ws.id, name: ws.name } : undefined,
+    capabilities,
     apis: repos.listApis(workspaceId).map((a) => apiDto(repos, a, workspaceId)),
     defaultApiId: repos.getSetting<string | null>('defaultApiId', null, workspaceId),
     teams: repos
@@ -265,6 +358,8 @@ function buildState(repos: Repos, workspaceId: string): StateDto {
       role: m.role as MemberDto['role'],
       name: m.name,
       prompt: m.prompt,
+      apiId: m.api_id ?? null,
+      appearance: memberAppearanceOf(m),
     })),
     reviewStandards: repos.getSetting('reviewStandards', { points: '', clientNeeds: '' }, workspaceId),
     params: repos.getSetting('params', { concurrency: 4, taskBudgetTokens: 0 }, workspaceId),
@@ -291,7 +386,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       fail(ErrorCode.UNAUTHORIZED, '会话已过期，请重新登录', 401);
     }
     const user = repos.getUser(session!.user_id);
-    if (!user || user!.status === 'disabled') {
+    if (!user || user!.status === 'disabled' || user!.status === 'deleted') {
       repos.deleteSessionsByUser(session!.user_id);
       fail(ErrorCode.UNAUTHORIZED, '账号不可用，请重新登录', 401);
     }
@@ -299,6 +394,17 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     let sess = session!;
     if (new Date(sess.expires_at).getTime() - nowMs < SESSION_RENEW_BELOW_MS) {
       sess = { ...sess, expires_at: new Date(nowMs + SESSION_TTL_MS).toISOString(), last_seen_at: nowIso() };
+      repos.updateSession(sess);
+    }
+    // G-14：代入态下当前空间 = 被代入空间（管理员通常不是其成员），跳过成员回落；
+    // 代入目标空间已不存在/停用时，代入随之失效并清列回落默认空间。
+    const imp = parseImpersonation(sess.impersonation);
+    if (imp) {
+      const target = repos.getWorkspace(imp.workspaceId);
+      if (target && target.status === 'active' && imp.adminUserId === user!.id) {
+        return { user: user!, session: sess, workspaceId: imp.workspaceId, impersonation: imp };
+      }
+      sess = { ...sess, impersonation: null };
       repos.updateSession(sess);
     }
     // 当前空间必须仍是本人 active membership；失效则回落到第一个空间
@@ -315,18 +421,54 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
         repos.updateSession(sess);
       }
     }
-    return { user: user!, session: sess, workspaceId };
+    return { user: user!, session: sess, workspaceId, impersonation: null };
   };
 
   const PUBLIC_PATHS = new Set(['/api/health', '/api/auth/login', '/api/auth/register']);
   const MUST_CHANGE_EXEMPT = new Set(['/api/auth/me', '/api/auth/logout', '/api/auth/change-password']);
+  /** G-11 冷静期：pending_deletion 账号登录后只能到达「注销待生效」页——仅放行撤销/登出/me */
+  const PENDING_DELETION_EXEMPT = new Set([
+    '/api/auth/me',
+    '/api/auth/logout',
+    '/api/account/delete-cancel',
+  ]);
   app.addHook('onRequest', async (req) => {
     const url = (req.url || '').split('?')[0];
     if (!url.startsWith('/api/') || PUBLIC_PATHS.has(url)) return;
+    // G-07 开放面：/api/open/* 走独立 Token 守卫（v120 路由内的 preHandler 语义，逐路由解析），不走会话
+    if (url.startsWith('/api/open/')) return;
     const ctx = resolveAuth(req);
     (req as AuthedRequest).authCtx = ctx;
+    if (ctx.user.status === 'pending_deletion' && !PENDING_DELETION_EXEMPT.has(url)) {
+      fail(
+        ErrorCode.FORBIDDEN,
+        '账号处于注销冷静期：只能撤销注销或退出登录，冷静期结束账号将被注销',
+        403,
+      );
+    }
     if (ctx.user.must_change_password === 1 && !MUST_CHANGE_EXEMPT.has(url)) {
       fail(ErrorCode.FORBIDDEN, '请先修改初始密码后再继续使用', 403);
+    }
+    // G-14 只读守卫（单点）：代入态除白名单外一切写操作 403 IMPERSONATION_READ_ONLY。
+    // 白名单逐项核对：全部 GET/HEAD 读取、退出代入、登出、通知标已读。
+    // POST /api/admin/impersonate/:id 在代入态由路由自身回 VALIDATION（设计断言④），故放行到路由。
+    if (ctx.impersonation) {
+      const method = (req.method || 'GET').toUpperCase();
+      const isRead = method === 'GET' || method === 'HEAD';
+      const whitelisted =
+        isRead ||
+        url === '/api/admin/impersonate/stop' ||
+        url.startsWith('/api/admin/impersonate/') ||
+        url === '/api/auth/logout' ||
+        url === '/api/notifications/read-all' ||
+        /^\/api\/notifications\/[^/]+\/read$/.test(url);
+      if (!whitelisted) {
+        fail(
+          ErrorCode.IMPERSONATION_READ_ONLY,
+          '平台管理员代入查看中（只读）：写操作已禁用，退出代入后恢复',
+          403,
+        );
+      }
     }
   });
 
@@ -481,10 +623,15 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       if (locked) fail(ErrorCode.ACCOUNT_LOCKED, '登录失败次数过多，账号已锁定 15 分钟', 403);
       fail(ErrorCode.UNAUTHORIZED, '邮箱或密码不正确', 401);
     }
+    if (u.status === 'deleted') {
+      repos.insertLoginLog({ user_id: u.id, email: u.email, success: 0, ip, reason: '账号已注销' });
+      fail(ErrorCode.UNAUTHORIZED, '邮箱或密码不正确', 401);
+    }
     if (u.status === 'pending') {
       repos.insertLoginLog({ user_id: u.id, email: u.email, success: 0, ip, reason: '账号待审核' });
       fail(ErrorCode.FORBIDDEN, '账号待管理员审核开通', 403);
     }
+    // G-11：pending_deletion（注销冷静期）允许登录——会话只达「注销待生效」页（onRequest 守卫收口）
     if (u.status === 'disabled') {
       repos.insertLoginLog({ user_id: u.id, email: u.email, success: 0, ip, reason: '账号已停用' });
       fail(ErrorCode.FORBIDDEN, '账号已停用', 403);
@@ -512,6 +659,22 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     return { ok: true };
   });
 
+  /** G-14：代入态 DTO（me 顶层字段，前端红色横幅与管理台据此呈现） */
+  const impersonationDto = (ctx: AuthCtx): ImpersonationDto | null => {
+    if (!ctx.impersonation) return null;
+    const ws = repos.getWorkspace(ctx.impersonation.workspaceId);
+    const owner = ws ? repos.getUser(ws.owner_user_id) : undefined;
+    return {
+      adminUserId: ctx.impersonation.adminUserId,
+      adminEmail: ctx.user.email,
+      workspaceId: ctx.impersonation.workspaceId,
+      workspaceName: ws?.name ?? '',
+      ownerUserId: ws?.owner_user_id ?? '',
+      ownerEmail: owner?.email ?? '',
+      startedAt: ctx.impersonation.startedAt,
+    };
+  };
+
   app.get('/api/auth/me', async (req) => {
     const ctx = auth(req);
     const workspaces = repos
@@ -525,6 +688,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       user: userDto(ctx.user),
       workspace: current ? workspaceDto(ctx.user, current) : null,
       workspaces,
+      impersonation: impersonationDto(ctx),
     };
   });
 
@@ -571,15 +735,82 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
   app.post('/api/workspaces', async (req) => {
     const ctx = auth(req);
     const body = workspaceCreateSchema.parse(req.body ?? {});
+    const q = body.questionnaire;
     let ws: WorkspaceRow;
+    const forgeBox: {
+      info: { summary: ForgeSummary | null; fellBack: boolean; error?: string } | null;
+    } = { info: null };
     try {
-      ws = provisionWorkspace(repos, ctx.user.id, body.name, body.industryPackId ?? null);
+      ws = provisionWorkspace(
+        repos,
+        ctx.user.id,
+        body.name,
+        body.industryPackId ?? null,
+        q
+          ? {
+              questionnaire: {
+                industry: q.industry,
+                job: q.job,
+                uses: q.uses,
+                problems: q.problems,
+              },
+              onForge: (info) => {
+                forgeBox.info = info;
+              },
+            }
+          : undefined,
+      );
     } catch (e) {
       fail(ErrorCode.VALIDATION, e instanceof Error ? e.message : String(e));
     }
     // 建空间后自动切换到新空间
     repos.updateSession({ ...ctx.session, current_workspace_id: ws!.id, last_seen_at: nowIso() });
+    // onRequest 钩子已把 authCtx 缓存在 req 上（仍是旧空间）：同步刷新，否则本请求内
+    // 后续走 wsAuth 的共用写路径（如 C2 的 saveApi）会落到旧空间
+    (req as AuthedRequest).authCtx = {
+      ...ctx,
+      workspaceId: ws!.id,
+      session: { ...ctx.session, current_workspace_id: ws!.id },
+    };
     audit(req, { ...ctx, workspaceId: ws!.id }, 'create_workspace', 'workspace', ws!.id, body.name);
+    if (q) {
+      // C2 问卷后续（团队已在 provision 内由 teamForge 锻造/降级）：建 API 并设默认 → 存档（脱敏）→ 提醒写 dailySettings
+      const qq = q as QuestionnaireInput;
+      let apiId: string | null = null;
+      let apiNote = '';
+      if (qq.api && qq.api.apiKey) {
+        try {
+          const saved = await saveApi(req, {
+            api: {
+              name: `${qq.api.provider}（问卷接入）`,
+              provider: qq.api.provider,
+              baseUrl: qq.api.baseUrl,
+              model: qq.api.model,
+              pricePerM: 0,
+              apiKey: qq.api.apiKey,
+            },
+          });
+          apiId = saved.id;
+          // 问卷接入的 API 明确设为空间默认（saveApi 的无默认才设口径之外再钉一次）
+          repos.setSetting('defaultApiId', apiId, ws!.id);
+        } catch (e) {
+          apiNote = `；API 创建失败：${e instanceof Error ? e.message : String(e)}`;
+        }
+      }
+      storeQuestionnaire(repos, ctx.user.id, ws!.id, maskedQuestionnaireAnswers(qq, apiId));
+      const patch = reminderPatchFromQuestionnaire(qq);
+      if (Object.keys(patch).length) saveDailySettings(repos, ws!.id, patch);
+      audit(
+        req,
+        { ...ctx, workspaceId: ws!.id },
+        'create_workspace_with_questionnaire',
+        'workspace',
+        ws!.id,
+        forgeBox.info?.fellBack
+          ? `团队锻造失败已降级默认种子：${forgeBox.info.error ?? ''}${apiNote}`
+          : `团队锻造 ${forgeBox.info?.summary?.teams ?? 0} 组/${forgeBox.info?.summary?.members ?? 0} 人${apiNote}`,
+      );
+    }
     return { ok: true, workspace: workspaceDto(ctx.user, ws!) };
   });
 
@@ -879,6 +1110,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const { id } = apiDeleteSchema.parse(req.body ?? {});
     if (!repos.getApi(id, ctx.workspaceId)) fail(ErrorCode.NOT_FOUND, 'API 不存在', 404);
     repos.deleteApi(id);
+    // v1.4.0 H：与 defaultApiId 改指同口径——引用该 API 的小组/成员绑定一并置空，回退靠清绑定不靠悬空
+    repos.clearApiBindings(id, ctx.workspaceId);
     if (repos.getSetting<string | null>('defaultApiId', null, ctx.workspaceId) === id) {
       repos.setSetting('defaultApiId', repos.listApis(ctx.workspaceId)[0]?.id ?? null, ctx.workspaceId);
     }
@@ -902,43 +1135,22 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const provider = body.api?.provider ?? stored!.provider;
     const baseUrl = body.api?.baseUrl ?? stored!.base_url;
     const model = body.api?.model ?? stored!.model;
-    const done = (ok: boolean, latencyMs: number, message: string) => ({
-      ok: true,
-      test: { ok, latencyMs, message },
-    });
-    if (!apiKey) return done(false, 0, '未填写 API Key（先填 Key 再测连接）');
-    if (!baseUrl) return done(false, 0, '未填写 Base URL');
-    if (!model) return done(false, 0, '未填写模型名');
-    const probeRow: ApiRow = {
-      id: stored?.id ?? 'api_test_probe',
-      name: stored?.name ?? 'test',
-      provider,
-      base_url: baseUrl,
-      api_key_enc: encryptKey(apiKey),
-      model,
-      price_per_m_milli: 0,
-      created_at: stored?.created_at ?? nowIso(),
-      workspace_id: ctx.workspaceId,
-    };
-    const t0 = Date.now();
-    try {
-      await createProvider(probeRow).chat({
-        model,
-        system: '',
-        messages: [{ role: 'user', content: 'ping' }],
-        temperature: 0,
-        maxTokens: 1,
-        timeoutMs: API_TEST_TIMEOUT_MS,
-      });
-      const latencyMs = Date.now() - t0;
-      logger.info('api', `API 测试连接成功 ${provider}/${model} ${latencyMs}ms`, { apiId: probeRow.id });
-      return done(true, latencyMs, `连接成功，模型「${model}」已响应`);
-    } catch (e) {
-      const latencyMs = Date.now() - t0;
-      const message = e instanceof Error ? e.message : String(e);
-      logger.warn('api', `API 测试连接失败：${message}`, { apiId: probeRow.id });
-      return done(false, latencyMs, message);
+    // 探活本体与 C2 的 /api/apis/test-connection 共用 domain/apiTest（不许写第二套）
+    const test = await testApiConnection(
+      { provider, baseUrl, model, apiKey },
+      {
+        workspaceId: ctx.workspaceId,
+        apiId: stored?.id,
+        name: stored?.name,
+        createdAt: stored?.created_at,
+      },
+    );
+    if (test.ok) {
+      logger.info('api', `API 测试连接成功 ${provider}/${model} ${test.latencyMs}ms`, { apiId: stored?.id ?? 'api_test_probe' });
+    } else {
+      logger.warn('api', `API 测试连接失败：${test.message}`, { apiId: stored?.id ?? 'api_test_probe' });
     }
+    return { ok: true, test };
   });
   app.post('/api/settings/default-api', async (req) => {
     const ctx = wsAuth(req);
@@ -1019,6 +1231,10 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const rolePersona = roleRow?.persona_template ?? ROLE_PERSONAS.find((r) => r.role === b.role)?.persona ?? '';
     const cur = b.id ? repos.getMember(b.id, ctx.workspaceId) : undefined;
     if (b.id && !cur) fail(ErrorCode.NOT_FOUND, '成员不存在', 404);
+    // v1.4.0 H：成员级绑定 API 必须是本空间的行（平台体验 API 不可绑）
+    if (b.apiId && !repos.getApi(b.apiId, ctx.workspaceId)) {
+      fail(ErrorCode.VALIDATION, '绑定的 API 不存在');
+    }
     if (!cur) {
       const row: MemberRow = {
         id: uid('member'),
@@ -1030,6 +1246,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
         skill_tags: '[]',
         color: '',
         workspace_id: ctx.workspaceId,
+        api_id: b.apiId ?? null,
+        appearance: b.appearance ? JSON.stringify(sanitizeAppearance(b.appearance)) : '',
       };
       repos.insertMember(row);
       logger.info('api', '新建成员', { memberId: row.id });
@@ -1044,6 +1262,14 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       // 工种变更时人设跟随新工种默认（人设无独立编辑入口，始终与工种口径一致）
       persona: b.role !== cur!.role ? rolePersona : cur!.persona,
       prompt: b.prompt,
+      // v1.4.0 H/I：undefined = 不改、null = 清除、给值 = 换绑/覆盖
+      api_id: b.apiId === undefined ? (cur!.api_id ?? null) : b.apiId,
+      appearance:
+        b.appearance === undefined
+          ? (cur!.appearance ?? '')
+          : b.appearance === null
+            ? ''
+            : JSON.stringify(sanitizeAppearance(b.appearance)),
     };
     repos.updateMember(next);
     audit(req, ctx, 'update_member', 'member', next.id, next.name);
@@ -1087,6 +1313,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       skillId?: string | null;
       skillVersion?: number | null;
       assetRefs?: Array<{ assetId: string; sections?: string[] }>;
+      /** 来源标记（G-07）：'api' = 开放 API 发单、'schedule' = 定时发单，缺省页面发单 'web'；落 task_events note 与 plan 步 detail */
+      source?: string;
     },
   ): { id: string; duplicated?: boolean } => {
     const team = repos.getTeam(body.teamId, ctx.workspaceId) ?? repos.listTeams(ctx.workspaceId)[0];
@@ -1151,9 +1379,22 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       actor_id: ctx.user.id,
       from_status: null,
       to_status: TaskStatus.PENDING,
-      note: '发单',
+      note: body.source === 'api' ? '发单（开放 API）' : body.source === 'schedule' ? '发单（定时任务）' : '发单',
     });
     if (body.assetRefs?.length) attachAssetRefs(repos, id, ctx.workspaceId, body.assetRefs);
+    // G-04：发单落 plan 步（时间线起点，旁路失败不影响发单结果）
+    recordTaskStep(
+      repos,
+      {
+        taskId: id,
+        workspaceId: ctx.workspaceId,
+        kind: 'plan',
+        summary: `任务已创建：《${body.title}》（${body.type}）`,
+        detail: { title: body.title, type: body.type, teamId: team.id, source: body.source ?? 'web' },
+        callKey: `plan:${id}`,
+      },
+      logger,
+    );
     return { id };
   };
 
@@ -1176,6 +1417,7 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
         type: body.type,
         brief,
         references: body.references,
+        assetRefs: body.assetRefs,
         teamId: body.teamId,
         projectId: body.projectId ?? null,
       });
@@ -1192,6 +1434,54 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const task = repos.getTask(id, ctx.workspaceId);
     if (!task) fail(ErrorCode.NOT_FOUND, '任务不存在', 404);
     return { ok: true, task: taskDto(task!) };
+  });
+
+  /**
+   * 任务过程时间线（G-04）：steps（步骤流，含注入名单/用量/成本）为主、
+   * task_events 状态流水为辅，各自按时间升序返回，前端合并呈现。
+   * 权限走现有任务可见性：按 session 空间查任务，跨空间一律 404。
+   * 执行中与已完成走同一接口同一数据——已完成任务打开即完整回放。
+   */
+  app.get('/api/tasks/:id/timeline', async (req) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    const task = repos.getTask(id, ctx.workspaceId);
+    if (!task) fail(ErrorCode.NOT_FOUND, '任务不存在', 404);
+    const steps = repos.listTaskSteps(id).map((s) => {
+      let detail: Record<string, unknown> = {};
+      try {
+        const v = JSON.parse(s.detail || '{}') as unknown;
+        detail = v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+      } catch {
+        detail = {};
+      }
+      return {
+        id: s.id,
+        taskId: s.task_id,
+        seq: s.seq,
+        kind: s.kind,
+        actorMemberId: s.actor_member_id,
+        summary: s.summary,
+        detail,
+        callKey: s.call_key,
+        durationMs: s.duration_ms,
+        promptTokens: s.prompt_tokens,
+        completionTokens: s.completion_tokens,
+        costMilli: s.cost_milli,
+        costYuan: milliToYuan(s.cost_milli),
+        createdAt: s.created_at,
+      };
+    });
+    const events = repos.listTaskEvents(id).map((e) => ({
+      id: Number(e.id),
+      fromStatus: (e.from_status as string | null) ?? null,
+      toStatus: String(e.to_status),
+      actorType: String(e.actor_type),
+      actorId: (e.actor_id as string | null) ?? null,
+      note: String(e.note ?? ''),
+      createdAt: String(e.created_at),
+    }));
+    return { ok: true, steps, events };
   });
 
   const adjudicate = async (req: FastifyRequest, taskId: string) => {
@@ -1292,6 +1582,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const api = repos.getApi(apiId, ctx.workspaceId);
     if (!api) fail(ErrorCode.NOT_FOUND, 'API 不存在', 404);
     repos.insertPurchase(apiId, yuanToMilli(amountYuan), ctx.workspaceId, 'purchase');
+    // G-08 旁路：采购后检查低余额预警（余额回阈值上清标记，失败吞掉记日志）
+    checkLowBalance(repos, ctx.workspaceId, logger);
     audit(req, ctx, 'purchase', 'api', apiId, `充值 ${amountYuan} 元`);
     return { ok: true, balanceYuan: milliToYuan(balanceMilli(repos, apiId, ctx.workspaceId)) };
   };
@@ -1378,6 +1670,94 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     });
     return { ok: true, workspaces };
   });
+
+  /* ----- G-14 管理员代入查看（只读）：强制留痕 + 所有者即时知情（技术设计 §8） ----- */
+  app.post('/api/admin/impersonate/:workspaceId', async (req) => {
+    const ctx = requireAdmin(req);
+    if (ctx.impersonation) {
+      fail(ErrorCode.VALIDATION, '当前已处于代入查看中，请先退出代入再切换空间');
+    }
+    const { workspaceId } = req.params as { workspaceId: string };
+    const ws = repos.getWorkspace(workspaceId);
+    if (!ws || ws.status !== 'active') fail(ErrorCode.NOT_FOUND, '空间不存在或已停用', 404);
+    const owner = repos.getUser(ws!.owner_user_id);
+    const state: ImpersonationState = {
+      adminUserId: ctx.user.id,
+      workspaceId: ws!.id,
+      startedAt: nowIso(),
+    };
+    repos.updateSession({
+      ...ctx.session,
+      current_workspace_id: ws!.id,
+      impersonation: JSON.stringify(state),
+      last_seen_at: nowIso(),
+    });
+    // 审计落在目标空间（所有者台账 ledger-view 按空间合并 audit 流，可见起止两条）
+    repos.insertAudit({
+      workspace_id: ws!.id,
+      user_id: ctx.user.id,
+      action: 'impersonate_start',
+      target_type: 'workspace',
+      target_id: ws!.id,
+      detail: `平台管理员 ${ctx.user.email} 开始代入查看空间「${ws!.name}」（所有者 ${owner?.email ?? ws!.owner_user_id}）`,
+      ip: req.ip ?? '',
+    });
+    // 所有者即时知情（G-03 通知通道，type=impersonation 已注册）
+    notifyOwner(
+      repos,
+      ws!.id,
+      'impersonation',
+      '平台管理员正在查看你的空间',
+      `平台管理员 ${ctx.user.email} 已开始代入查看空间「${ws!.name}」（只读）。代入期间你的任务仍会照常运行。`,
+      null,
+    );
+    logger.info('admin', `代入查看开始：${ctx.user.email} → ${ws!.id}`, {});
+    return {
+      ok: true,
+      impersonation: {
+        adminUserId: ctx.user.id,
+        adminEmail: ctx.user.email,
+        workspaceId: ws!.id,
+        workspaceName: ws!.name,
+        ownerUserId: ws!.owner_user_id,
+        ownerEmail: owner?.email ?? '',
+        startedAt: state.startedAt,
+      } satisfies ImpersonationDto,
+    };
+  });
+
+  app.post('/api/admin/impersonate/stop', async (req) => {
+    const ctx = requireAdmin(req);
+    if (!ctx.impersonation) {
+      fail(ErrorCode.VALIDATION, '当前未处于代入查看中');
+    }
+    const imp = ctx.impersonation;
+    const ws = repos.getWorkspace(imp.workspaceId);
+    const durationSec = Math.max(
+      0,
+      Math.round((Date.now() - new Date(imp.startedAt).getTime()) / 1000),
+    );
+    const first = repos.listMembershipsByUser(ctx.user.id)[0];
+    const backTo = first ? first.workspace_id : null;
+    repos.updateSession({
+      ...ctx.session,
+      current_workspace_id: backTo,
+      impersonation: null,
+      last_seen_at: nowIso(),
+    });
+    repos.insertAudit({
+      workspace_id: imp.workspaceId,
+      user_id: ctx.user.id,
+      action: 'impersonate_stop',
+      target_type: 'workspace',
+      target_id: imp.workspaceId,
+      detail: `平台管理员 ${ctx.user.email} 结束代入查看空间「${ws?.name ?? imp.workspaceId}」，时长 ${durationSec} 秒`,
+      ip: req.ip ?? '',
+    });
+    logger.info('admin', `代入查看结束：${ctx.user.email} → ${imp.workspaceId}（${durationSec}s）`, {});
+    return { ok: true, durationSec };
+  });
+
   app.post('/api/admin/trial-grants', async (req) => {
     const ctx = requireAdmin(req);
     const body = trialGrantSchema.parse(req.body ?? {});
@@ -1398,6 +1778,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       );
     }
     repos.insertPurchase(trial!.id, yuanToMilli(body.amountYuan), body.workspaceId, 'trial_grant');
+    // G-08 旁路：体验额度发放后同步预警标记（余额回到阈值上清标记）
+    checkLowBalance(repos, body.workspaceId, logger);
     audit(req, ctx, 'trial_grant', 'workspace', body.workspaceId, `发放体验额度 ${body.amountYuan} 元`);
     return {
       ok: true,
@@ -1503,9 +1885,215 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     return { ok: true, id: row.id };
   });
 
+  /* ================= v1.4.0 J 智能体人才库（GitHub 同步 → 管理员审核 → 用户招募） =================
+   * 同步只写 draft_*（服务层语义）；本组路由负责审核态流转与招募落成员，
+   * 成员生成只调 insertMember，不动 members 既有逻辑。 */
+  const agentTemplateAdminDto = (t: AgentTemplateRow) => ({
+    id: t.id,
+    sourceRepo: t.source_repo,
+    sourcePath: t.source_path,
+    division: t.division,
+    draftName: t.draft_name,
+    draftSpecialty: t.draft_specialty,
+    draftPersona: t.draft_persona,
+    draftRole: t.draft_role,
+    pubName: t.pub_name,
+    pubSpecialty: t.pub_specialty,
+    pubPersona: t.pub_persona,
+    pubRole: t.pub_role,
+    language: t.language,
+    sourceAuthor: t.source_author,
+    license: t.license,
+    status: t.status,
+    hasPendingUpdate: t.has_pending_update === 1,
+    rejectReason: t.reject_reason,
+    recruitCount: t.recruit_count,
+    createdAt: t.created_at,
+    updatedAt: t.updated_at,
+  });
+  const getAgentTemplateOr404 = (id: string): AgentTemplateRow => {
+    const t = repos.getAgentTemplate(id);
+    if (!t) fail(ErrorCode.NOT_FOUND, '智能体模板不存在', 404);
+    return t!;
+  };
+
+  app.get('/api/admin/agent-sources', async (req) => {
+    requireAdmin(req);
+    return { ok: true, sources: getAgentSyncSources(repos) };
+  });
+  app.post('/api/admin/agent-sources', async (req) => {
+    const ctx = requireAdmin(req);
+    const body = agentSourcesSaveSchema.parse(req.body ?? {});
+    const sources = saveAgentSyncSources(repos, body.sources);
+    audit(req, ctx, 'save_agent_sync_sources', 'settings', AGENT_SYNC_SOURCES_KEY, `${sources.length} 个源`);
+    return { ok: true, sources };
+  });
+  app.post('/api/admin/agent-sync', async (req, reply) => {
+    const ctx = requireAdmin(req);
+    const body = agentSyncSchema.parse(req.body ?? {});
+    const source = getAgentSyncSources(repos).find((s) => s.id === body.sourceId);
+    if (!source) fail(ErrorCode.NOT_FOUND, '同步源不存在', 404);
+    let result;
+    try {
+      result = await syncAgentSource(repos, source!);
+    } catch (e) {
+      // 整源拉取失败：502 + 上游原文，不编造计数
+      audit(req, ctx, 'agent_sync_failed', 'agent_source', source!.id, e instanceof Error ? e.message : String(e));
+      reply.code(502);
+      return { ok: false, error: { code: 'UPSTREAM', message: `同步失败：${e instanceof Error ? e.message : String(e)}` } };
+    }
+    audit(
+      req, ctx, 'agent_sync', 'agent_source', source!.id,
+      `fetched=${result.fetched} created=${result.created} updated=${result.updated} unchanged=${result.unchanged} failed=${result.failed}`,
+    );
+    logger.info('api', '智能体同步完成', { sourceId: source!.id, ...result });
+    return { ok: true, ...result };
+  });
+  app.get('/api/admin/agent-templates', async (req) => {
+    requireAdmin(req);
+    return { ok: true, templates: repos.listAgentTemplates().map(agentTemplateAdminDto) };
+  });
+  app.post('/api/admin/agent-templates/:id/approve', async (req) => {
+    const ctx = requireAdmin(req);
+    const { id } = req.params as { id: string };
+    const body = agentTemplateApproveSchema.parse(req.body ?? {});
+    const t = getAgentTemplateOr404(id);
+    if (body.suggestedRole !== undefined && !(BASE_ROLES as readonly string[]).includes(body.suggestedRole)) {
+      fail(ErrorCode.VALIDATION, `工种必须是基础工种之一：${BASE_ROLES.join('/')}`);
+    }
+    // pub = draft 快照（工种可覆盖）；清待复审标记与驳回原因
+    const next: AgentTemplateRow = {
+      ...t,
+      pub_name: t.draft_name,
+      pub_specialty: t.draft_specialty,
+      pub_persona: t.draft_persona,
+      pub_role: body.suggestedRole ?? t.draft_role,
+      status: 'public',
+      has_pending_update: 0,
+      reject_reason: '',
+      updated_at: nowIso(),
+    };
+    repos.updateAgentTemplate(next);
+    audit(req, ctx, 'approve_agent_template', 'agent_template', id, `${next.pub_name}（${next.pub_role}）`);
+    return { ok: true, template: agentTemplateAdminDto(next) };
+  });
+  app.post('/api/admin/agent-templates/:id/reject', async (req) => {
+    const ctx = requireAdmin(req);
+    const { id } = req.params as { id: string };
+    const body = agentTemplateRejectSchema.parse(req.body ?? {});
+    const t = getAgentTemplateOr404(id);
+    let next: AgentTemplateRow;
+    if (t.status === 'public') {
+      // 复审更新被驳：draft 回滚为 pub 内容、清待复审标记、保留 public（哈希随内容回滚，避免下轮同步误判未变）
+      next = {
+        ...t,
+        draft_name: t.pub_name ?? t.draft_name,
+        draft_specialty: t.pub_specialty ?? t.draft_specialty,
+        draft_persona: t.pub_persona ?? t.draft_persona,
+        draft_role: t.pub_role ?? t.draft_role,
+        content_hash: '',
+        has_pending_update: 0,
+        reject_reason: body.reason,
+        updated_at: nowIso(),
+      };
+    } else {
+      next = { ...t, status: 'rejected', reject_reason: body.reason, updated_at: nowIso() };
+    }
+    repos.updateAgentTemplate(next);
+    audit(req, ctx, 'reject_agent_template', 'agent_template', id, body.reason);
+    return { ok: true, template: agentTemplateAdminDto(next) };
+  });
+
+  /* ----- 用户侧人才库：只出已上架 pub 快照 ----- */
+  app.get('/api/agent-templates', async (req) => {
+    wsAuth(req);
+    const templates = repos.listPublicAgentTemplates().map((t) => ({
+      id: t.id,
+      name: t.pub_name ?? '',
+      specialty: t.pub_specialty ?? '',
+      persona: t.pub_persona ?? '',
+      role: t.pub_role ?? '',
+      division: t.division,
+      language: t.language,
+      sourceRepo: t.source_repo,
+      sourceAuthor: t.source_author,
+      license: t.license,
+      recruitCount: t.recruit_count,
+    }));
+    return { ok: true, templates };
+  });
+  app.post('/api/agent-templates/:id/recruit', async (req) => {
+    const ctx = wsAuth(req);
+    const { id } = req.params as { id: string };
+    const body = agentTemplateRecruitSchema.parse(req.body ?? {});
+    const t = repos.getAgentTemplate(id);
+    if (!t || t.status !== 'public' || t.pub_name === null) {
+      fail(ErrorCode.NOT_FOUND, '智能体模板不存在或未上架', 404);
+    }
+    const team = repos.getTeam(body.teamId, ctx.workspaceId);
+    if (!team) fail(ErrorCode.VALIDATION, '小组不存在或不属于本空间');
+    // 工种以本空间注册表可见集为准，不可见回退文案
+    const wsRow = repos.getWorkspace(ctx.workspaceId);
+    const visibleRoleIds = repos
+      .listRolesVisible(ctx.workspaceId, wsRow?.industry_pack_id ?? null)
+      .map((r) => r.role_id);
+    const role = t!.pub_role && visibleRoleIds.includes(t!.pub_role) ? t!.pub_role : '文案';
+    const row: MemberRow = {
+      id: uid('member'),
+      team_id: body.teamId,
+      name: t!.pub_name,
+      role,
+      persona: t!.pub_persona ?? '',
+      prompt: '',
+      skill_tags: '[]',
+      color: '',
+      workspace_id: ctx.workspaceId,
+      api_id: null,
+      appearance: '',
+    };
+    repos.insertMember(row);
+    repos.incrementAgentTemplateRecruit(id);
+    logger.info('api', '从人才库招募成员', { templateId: id, memberId: row.id });
+    audit(req, ctx, 'recruit_agent_template', 'agent_template', id, `${row.name} → ${team!.name}`);
+    return { ok: true, memberId: row.id };
+  });
+
   /* ================= M7 路由组（skill 系统 / 交付闭环 / 渠道适配器） ================= */
   registerM7Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit });
 
   /* ================= M8 路由组（资产库 / 飞轮 / 成果库 / 台账 / 流水线 / 提醒） ================= */
   registerM8Routes(app, { repos, logger }, { auth, wsAuth, requireAdmin, audit });
+
+  /* ================= v1.2.0 路由组（批次一 G-05/G-08 + 批次二 G-07 开放 API/Webhook、G-09 全局搜索） =================
+   * G-07 开放面发单复用本闭包的 createOneTask 共用路径（经 helpers.createTask 注入），不另开后门。
+   * dataDir 由 dbPath 推导（G-11 头像落盘 / 注销到期删头像用）。 */
+  registerV120Routes(
+    app,
+    { repos, logger, dataDir: path.dirname(deps.dbPath) },
+    { auth, wsAuth, requireAdmin, audit, createTask: createOneTask },
+  );
+
+  /* ================= v1.3.0 路由组（A3 任务模板 / B 精选与公示 / F 办公室风格） ================= */
+  registerV130Routes(
+    app,
+    { repos, logger, dataDir: path.dirname(deps.dbPath) },
+    { auth, wsAuth, requireAdmin, audit },
+  );
+  registerV130StyleRoutes(
+    app,
+    { repos, logger, dataDir: path.dirname(deps.dbPath) },
+    { auth, wsAuth, requireAdmin, audit },
+  );
+
+  /* ================= v1.3.0 路由组（G 晨报/签到 + C2 问卷/裸配置测试连接） ================= */
+  registerDailyRoutes(
+    app,
+    { repos, logger, dataDir: path.dirname(deps.dbPath) },
+    { auth, wsAuth, requireAdmin, audit },
+  );
+  registerQuestionnaireRoutes(
+    app,
+    { repos, logger, dataDir: path.dirname(deps.dbPath) },
+    { auth, wsAuth, requireAdmin, audit },
+  );
 }

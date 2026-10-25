@@ -1,4 +1,4 @@
-import { nowIso } from '../util';
+import { nowIso, uid } from '../util';
 import type { AssetRow, Repos } from '../store/repositories';
 import { DomainError } from './taskService';
 
@@ -89,6 +89,30 @@ export function resolveAssetSections(
     out.push({ id: `${ref.asset_id}@${ref.asset_version}`, text });
   }
   return out;
+}
+
+/**
+ * 资产创建的统一落库口径（手建 POST /api/assets 与 G-06 文件导入 confirm 共用）：
+ * version=1 起版，repos.insertAsset 内部同步写 v1 版本快照，历史任务可按版追溯。
+ */
+export function createAsset(
+  repos: Repos,
+  input: { workspaceId: string; typeId: string; name: string; content: AssetContent; createdBy: string },
+): AssetRow {
+  const ts = nowIso();
+  const row: AssetRow = {
+    id: uid('asset'),
+    workspace_id: input.workspaceId,
+    type_id: input.typeId,
+    name: input.name,
+    version: 1,
+    content: JSON.stringify(input.content),
+    created_by: input.createdBy,
+    created_at: ts,
+    updated_at: ts,
+  };
+  repos.insertAsset(row);
+  return row;
 }
 
 export function assetDtoOf(row: AssetRow): {

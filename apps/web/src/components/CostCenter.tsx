@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { fetchLedgerView } from '../api';
+import { fetchCostSettings, fetchLedgerView, requestRaw } from '../api';
 import { yuan } from '../utils';
 import ReportModal, { buildReport } from './ReportModal';
 import type { ReportData } from './ReportModal';
-import type { LedgerViewItem } from '../types';
+import { Badge, Button, Input, Select, Spinner } from './ui';
+import type { CostSummary, LedgerViewItem } from '../types';
 
 export default function CostCenter() {
   const { S, post, refresh, toast, apiName, teamName, memberName } = useApp();
@@ -38,6 +39,7 @@ export default function CostCenter() {
 
   return (
     <>
+      <CostSummaryCard />
       <div className="card">
         <h2>成本总览</h2>
         <div className="kv">
@@ -49,13 +51,14 @@ export default function CostCenter() {
         </div>
         <p className="hint">口径：每次调用大模型都实时记账（任务 / 执行人所在组 / 所用 API / 阶段），成本 = 总 token ÷ 1,000,000 × 该 API 采购单价，并从该 API 余额中扣除。</p>
         <div style={{ marginTop: 8 }}>
-          <button className="btn green" onClick={() => setReport(buildReport(S))}>让总经理汇报</button>
+          <Button variant="green" onClick={() => setReport(buildReport(S))}>让总经理汇报</Button>
         </div>
       </div>
 
       <div className="card">
         <h2>按 API 拆账</h2>
-        <table>
+        <div className="table-wrap">
+          <table>
           <thead>
             <tr><th>API</th><th>调用次数</th><th>token</th><th>成本</th><th>余额</th><th>状态</th></tr>
           </thead>
@@ -84,13 +87,15 @@ export default function CostCenter() {
               );
             })}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       <div className="row" style={{ alignItems: 'flex-start' }}>
         <div className="card">
           <h2>小组排行</h2>
-          <table>
+          <div className="table-wrap">
+            <table>
             <thead>
               <tr><th>小组</th><th>token</th><th>成本</th><th>已完成</th></tr>
             </thead>
@@ -107,18 +112,19 @@ export default function CostCenter() {
                 );
               })}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
         <div className="card">
           <h2>采购充值</h2>
           <label>充到哪条 API</label>
-          <select value={buyApi} onChange={(e) => setBuyApi(e.target.value)}>
-            {S.apis.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}（余额 {yuan(a.balanceYuan)}）</option>
-            ))}
-          </select>
+          <Select
+            value={buyApi}
+            onValueChange={setBuyApi}
+            options={S.apis.map((a) => ({ value: a.id, label: `${a.name}（余额 ${yuan(a.balanceYuan)}）` }))}
+          />
           <label>金额（元）</label>
-          <input
+          <Input
             type="number"
             min="0"
             step="0.01"
@@ -127,7 +133,7 @@ export default function CostCenter() {
             onChange={(e) => setBuyAmount(e.target.value)}
           />
           <div style={{ marginTop: 10 }}>
-            <button className="btn" onClick={purchase}>采购充值</button>
+            <Button onClick={purchase}>采购充值</Button>
           </div>
           {S.purchases.length ? (
             <div className="hint" style={{ marginTop: 10 }}>
@@ -145,7 +151,8 @@ export default function CostCenter() {
       <div className="card">
         <h2>任务账本 <span className="tag">每单从接单到交付的全程消耗</span></h2>
         {S.tasks.length ? (
-          <table>
+          <div className="table-wrap">
+            <table>
             <thead>
               <tr><th>任务</th><th>小组</th><th>负责人</th><th>全程 token</th><th>成本</th><th>状态</th></tr>
             </thead>
@@ -161,7 +168,8 @@ export default function CostCenter() {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         ) : (
           <p className="hint">暂无任务。</p>
         )}
@@ -171,6 +179,86 @@ export default function CostCenter() {
 
       {report && <ReportModal report={report} onClose={() => setReport(null)} />}
     </>
+  );
+}
+
+/**
+ * 人话用量摘要卡（G-08）：数据来自 GET /api/cost/settings 的 summary 段（服务端由 purchases/ledger 推导）。
+ * 当前余额（自有/体验分开）、约还能跑 N 单、按近 30 天速度约够 M 天 + 低余额阈值设置入口。
+ */
+function CostSummaryCard() {
+  const { S, toast, refresh } = useApp();
+  const [summary, setSummary] = useState<CostSummary | null>(null);
+  const [threshold, setThreshold] = useState('');
+  const [effective, setEffective] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetchCostSettings();
+      setSummary(r.summary);
+      setEffective(r.effectiveThresholdYuan);
+      setThreshold(r.lowBalanceThresholdYuan === null ? '' : String(r.lowBalanceThresholdYuan));
+    } catch {
+      /* 拉取失败保持旧值 */
+    }
+  }, []);
+
+  // 任务/采购变化（state 轮询刷新）时同步摘要
+  useEffect(() => {
+    load();
+  }, [load, S?.tasks.length, S?.purchases.length, S?.ledger.length]);
+
+  async function saveThreshold() {
+    const v = threshold.trim();
+    const num = v === '' ? null : Number(v);
+    if (num !== null && !(num >= 0)) return toast('阈值要 ≥ 0，或留空恢复默认');
+    try {
+      await requestRaw('PUT', '/api/cost/settings', { lowBalanceThresholdYuan: num });
+      toast(num === null ? '已恢复默认预警线（最近一笔采购额的 20%）' : '预警线已保存');
+      load();
+      refresh();
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  if (!summary) return null;
+  return (
+    <div className="card">
+      <h2>用量摘要 <span className="tag">人话版：还剩多少、还能跑多久</span></h2>
+      <div className="kv">
+        <div>
+          <b>{yuan(summary.balanceYuan)}</b>
+          <span>自有余额（体验额度另有 {yuan(summary.trialBalanceYuan)}）</span>
+        </div>
+        <div>
+          <b>{summary.approxTasksRemaining === null ? '—' : `约 ${summary.approxTasksRemaining} 单`}</b>
+          <span>按近 30 天单均成本 {yuan(summary.avgCostPerTaskYuan)} 估算</span>
+        </div>
+        <div>
+          <b>{summary.approxDaysRemaining === null ? '—' : `约 ${summary.approxDaysRemaining} 天`}</b>
+          <span>按日均燃烧 {yuan(summary.burnPerDayYuan)}/天估算</span>
+        </div>
+      </div>
+      <div className="row" style={{ alignItems: 'flex-end', marginTop: 8 }}>
+        <div style={{ flex: '0 1 260px' }}>
+          <label>低余额预警线（元，余额跌破时站内提醒一次；留空 = 默认最近一笔采购额的 20%）</label>
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            value={threshold}
+            onChange={(e) => setThreshold(e.target.value)}
+            placeholder={effective === null ? '当前未启用预警' : `当前生效 ${effective}`}
+          />
+        </div>
+        <div>
+          <Button variant="blue" onClick={saveThreshold}>
+            保存预警线
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -209,17 +297,17 @@ function LedgerViewCard() {
           <a className="btn small blue" href={`/api/ledger-view/export?month=${month}`} download>
             导出该月台账 CSV
           </a>{' '}
-          <button className="btn small gray" onClick={load}>刷新时间线</button>
+          <Button size="small" variant="gray" onClick={load}>刷新时间线</Button>
         </div>
       </div>
-      {!loaded && <p className="hint">加载中…</p>}
+      {!loaded && <p><Spinner label="加载中…" /></p>}
       {loaded && items.length === 0 && <p className="hint">暂无台账记录。</p>}
       {items.slice(0, 50).map((it, i) => (
         <div className="subtask" key={`${it.ts}-${i}`} style={{ cursor: 'default' }}>
           <span className="meta">{it.ts.slice(0, 16).replace('T', ' ')}</span>{' '}
-          <span className={`chip ${it.kind === 'audit' ? 'rev' : 'run'}`}>
+          <Badge variant={it.kind === 'audit' ? 'rev' : 'run'}>
             {it.kind === 'audit' ? '操作审计' : '任务事件'}
-          </span>{' '}
+          </Badge>{' '}
           <span>{it.text}</span>
         </div>
       ))}

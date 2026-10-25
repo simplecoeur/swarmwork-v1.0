@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { fetchRegistry, fetchSkills } from '../api';
+import { fetchRegistry, fetchSkillActivity, fetchSkills } from '../api';
 import AssetRefPicker from './AssetRefPicker';
-import type { AssetRef, RegistryRole, SkillInputField, SkillListItem } from '../types';
+import EstimateLine from './EstimateLine';
+import ResultView from './ResultView';
+import { SkillParamFields } from './SkillParamFields';
+import { Badge, Button, Checkbox, Dialog, EmptyState, Input, Select, Spinner, Textarea } from './ui';
+import type { AssetRef, RegistryRole, SkillActivityItem, SkillInputField, SkillListItem } from '../types';
 
 const STATUS_LABEL: Record<string, string> = { draft: '草稿', published: '已发布', archived: '已归档' };
 const VIS_LABEL: Record<string, string> = {
@@ -21,6 +25,33 @@ const KB_SCOPE_LABEL: Record<string, string> = {
 };
 
 type ParamValue = string | number | boolean;
+
+/* ---------------- v1.3.0 生态：最新动态 / 署名 ----------------
+ * 数据走 api.ts 的 fetchSkillActivity() 与 types 的 SkillActivityItem（外壳子任务契约，开工后已落地）。 */
+
+/** 用户贡献署名行：字段齐全时「由 {空间} · {贡献者} 贡献」，任一为空回退「平台用户贡献」 */
+export function contributorLine(s: {
+  contributorName?: string | null;
+  contributorWorkspaceName?: string | null;
+}): string {
+  const ws = s.contributorWorkspaceName?.trim();
+  const name = s.contributorName?.trim();
+  if (ws && name) return `由 ${ws} · ${name} 贡献`;
+  if (ws || name) return `由 ${ws || name} 贡献`;
+  return '平台用户贡献';
+}
+
+/** 相对时间（动态区用）：刚刚 / N 分钟前 / N 小时前 / N 天前，超过 30 天回日期 */
+export function relTime(iso: string): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return iso ? iso.slice(0, 10) : '';
+  const diff = Date.now() - t;
+  if (diff < 60_000) return '刚刚';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  if (diff < 30 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`;
+  return iso.slice(0, 10);
+}
 
 /* ---------------- 参数表编辑行 ---------------- */
 interface ParamRow {
@@ -136,8 +167,9 @@ function defaultParams(s: SkillListItem): Record<string, ParamValue> {
  * 列表走 GET /api/skills（本空间 + 平台库合并返回，前端按 workspaceId 分段）。
  */
 export default function Skills() {
-  const { S, post, send, toast, refresh, setTab, currentWorkspace, user } = useApp();
+  const { S, post, send, toast, refresh, currentWorkspace, user, openSchedules, openDialog } = useApp();
   const [skills, setSkills] = useState<SkillListItem[]>([]);
+  const [activity, setActivity] = useState<SkillActivityItem[]>([]);
   const [roles, setRoles] = useState<RegistryRole[]>([]);
   const [loaded, setLoaded] = useState(false);
   // 编辑器：editing=null 且 editorOpen=false 时关闭；editing 为空表示新建
@@ -165,6 +197,7 @@ export default function Skills() {
   useEffect(() => {
     load();
     fetchRegistry().then((r) => setRoles(r.roles)).catch(() => setRoles([]));
+    fetchSkillActivity().then(setActivity).catch(() => setActivity([]));
   }, [load]);
 
   useEffect(() => {
@@ -311,7 +344,28 @@ export default function Skills() {
     } catch { return; }
     setDispatchSkill(null);
     refresh();
-    setTab('office');
+    openDialog('tasks', { section: 'taskwall' });
+  }
+
+  /* G-10 快捷钮：把当前发单参数带到定时任务页预填新建表单（不直接建计划，周期在那边定） */
+  function makeSchedule() {
+    if (!dispatchSkill) return;
+    if (!teamId) return toast('先选小组');
+    const clean: Record<string, unknown> = {};
+    for (const f of dispatchSkill.inputSchema ?? []) {
+      const v = params[f.key];
+      if (f.required && (v === '' || v === undefined)) return toast(`参数「${f.label}」必填`);
+      if (v !== '' && v !== undefined) clean[f.key] = f.type === 'number' ? Number(v) : v;
+    }
+    openSchedules({
+      kind: 'skill',
+      skillId: dispatchSkill.id,
+      teamId,
+      params: clean,
+      assetRefs: assetRefs.length ? assetRefs : undefined,
+    });
+    setDispatchSkill(null);
+    toast('已带参数跳到定时任务页，选好周期保存即可');
   }
 
   const canEdit = (s: SkillListItem) =>
@@ -323,19 +377,33 @@ export default function Skills() {
     return (
       <div className="task" key={s.id}>
         <span className="tt">{s.name}</span>
-        <span className="chip">{s.role}</span>
-        <span className="chip">v{s.version}</span>
-        <span className={`chip ${s.status === 'published' ? 'done' : s.status === 'archived' ? 'can' : 'adj'}`}>
+        <Badge>{s.role}</Badge>
+        <Badge>v{s.version}</Badge>
+        <Badge variant={s.status === 'published' ? 'done' : s.status === 'archived' ? 'can' : 'adj'}>
           {STATUS_LABEL[s.status] ?? s.status}
-        </span>
-        <span className="chip">{VIS_LABEL[s.visibility] ?? s.visibility}</span>
-        <span className="chip">安装 {s.installCount}</span>
-        {s.sourceSkillId && <span className="chip">安装副本</span>}
-        {mine && s.hasNewerSource && <span className="chip rej">来源有新版</span>}
+        </Badge>
+        <Badge>{VIS_LABEL[s.visibility] ?? s.visibility}</Badge>
+        <Badge>安装 {s.installCount}</Badge>
+        {s.ownerType === 'platform' && <Badge variant="done">官方</Badge>}
+        {s.featured && <Badge variant="adj">官方精选</Badge>}
+        {s.sourceSkillId && <Badge>安装副本</Badge>}
+        {mine && s.hasNewerSource && <Badge variant="rej">来源有新版</Badge>}
         <div className="meta">
           {s.description || '（无说明）'}
           <br />
           slug：{s.slug} · 更新于 {s.updatedAt.slice(0, 16).replace('T', ' ')}
+          {!mine && s.ownerType === 'workspace' && (
+            <>
+              <br />
+              {contributorLine(s)} · 已被安装 {s.installCount} 次
+            </>
+          )}
+          {mine && s.visibility === 'public' && (
+            <>
+              <br />
+              已上架 · 被安装 {s.installCount} 次
+            </>
+          )}
           {s.verifiedNotes ? (
             <>
               <br />
@@ -347,35 +415,35 @@ export default function Skills() {
           {mine ? (
             <>
               {canEdit(s) && (
-                <button className="btn small gray" onClick={() => startEdit(s)}>编辑</button>
+                <Button size="small" variant="gray" onClick={() => startEdit(s)}>编辑</Button>
               )}{' '}
               {s.status === 'draft' && (
-                <button className="btn small green" onClick={() => act(s.id, 'publish', '已发布')}>发布</button>
+                <Button size="small" variant="green" onClick={() => act(s.id, 'publish', '已发布')}>发布</Button>
               )}{' '}
               {s.status !== 'archived' && (
-                <button className="btn small gray" onClick={() => act(s.id, 'archive', '已归档')}>归档</button>
+                <Button size="small" variant="gray" onClick={() => act(s.id, 'archive', '已归档')}>归档</Button>
               )}{' '}
               {s.sourceSkillId && s.hasNewerSource && source && (
-                <button className="btn small green" onClick={() => install(source, true)}>升级到新版</button>
+                <Button size="small" variant="green" onClick={() => install(source, true)}>升级到新版</Button>
               )}{' '}
               {s.status === 'published' && s.visibility !== 'public' && s.visibility !== 'pending_review' && (
-                <button className="btn small blue" onClick={() => act(s.id, 'submit-review', '已提交上架审核，等平台管理员通过')}>
+                <Button size="small" variant="blue" onClick={() => act(s.id, 'submit-review', '已提交上架审核，等平台管理员通过')}>
                   提交上架
-                </button>
+                </Button>
               )}{' '}
-              <button className="btn small gray" onClick={() => openDispatch(s, 'test')}>试运行</button>{' '}
-              <button className="btn small" onClick={() => openDispatch(s, 'dispatch')}>发单</button>
+              <Button size="small" variant="gray" onClick={() => openDispatch(s, 'test')}>试运行</Button>{' '}
+              <Button size="small" onClick={() => openDispatch(s, 'dispatch')}>发单</Button>
             </>
           ) : (
             <>
               {!installed && (
-                <button className="btn small blue" onClick={() => install(s, false)}>安装</button>
+                <Button size="small" variant="blue" onClick={() => install(s, false)}>安装</Button>
               )}{' '}
               {installed && s.hasNewerSource && (
-                <button className="btn small green" onClick={() => install(s, true)}>有新版 · 升级</button>
+                <Button size="small" variant="green" onClick={() => install(s, true)}>有新版 · 升级</Button>
               )}{' '}
               {installed && (
-                <button className="btn small" onClick={() => openDispatch(s, 'dispatch')}>发单</button>
+                <Button size="small" onClick={() => openDispatch(s, 'dispatch')}>发单</Button>
               )}
             </>
           )}
@@ -384,20 +452,54 @@ export default function Skills() {
     );
   }
 
+  const featuredLib = library.filter((s) => s.featured);
+  const restLib = library.filter((s) => !s.featured);
+
   return (
     <>
+      {activity.length > 0 && (
+        <div className="card">
+          <h2>最新动态 <span className="tag">平台库的上架与官方精选动态</span></h2>
+          {activity.map((a, i) => (
+            <div className="task" key={`${a.skillId}-${a.kind}-${a.at}-${i}`}>
+              <span className="tt">{a.name}</span>
+              {a.kind === 'featured' ? (
+                <Badge variant="adj">官方精选</Badge>
+              ) : (
+                <Badge variant="done">新上架</Badge>
+              )}
+              <div className="meta">
+                {a.kind === 'featured' ? '晋升官方精选' : '上架平台库'} · {relTime(a.at)}
+                {(a.contributorWorkspaceName || a.contributorName) && (
+                  <> · {contributorLine(a)}</>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="card">
         <h2>
           本空间技能{' '}
           <span className="tag">自己建的（含草稿）与安装的副本；内容变更要写 changelog 才会升版本</span>
         </h2>
         <div style={{ marginBottom: 10 }}>
-          <button className="btn" onClick={startCreate}>＋ 新建技能</button>{' '}
-          <button className="btn gray" onClick={load}>刷新</button>
+          <Button onClick={startCreate}>＋ 新建技能</Button>{' '}
+          <Button variant="gray" onClick={load}>刷新</Button>
         </div>
-        {!loaded && <p className="hint">加载中…</p>}
+        {!loaded && <p><Spinner label="加载中…" /></p>}
         {loaded && own.length === 0 && (
-          <p className="hint">本空间还没有自建技能。点「新建技能」写一个，或到下方平台库安装官方技能。</p>
+          <EmptyState
+            example={<>示例技能：爆款标题生成 · 文案 · 参数表（剧名/题材/关键剧情）→ 编号标题列表</>}
+            action={
+              <Button size="small" onClick={startCreate}>
+                ＋ 新建技能
+              </Button>
+            }
+          >
+            本空间还没有自建技能。把你反复用的提示词存成技能，团队发单时一键套用；也可以到下方平台库安装官方技能。
+          </EmptyState>
         )}
         {own.map((s) => skillCard(s, true))}
       </div>
@@ -411,22 +513,35 @@ export default function Skills() {
       <div className="card">
         <h2>平台库 <span className="tag">官方技能 + 已上架公开技能；安装后在本空间生成副本，来源出新版可一键升级</span></h2>
         {loaded && library.length === 0 && <p className="hint">平台库暂无可安装的技能。</p>}
-        {library.map((s) => skillCard(s, false))}
+        {featuredLib.length > 0 && (
+          <>
+            <h3 style={{ margin: '4px 0 8px', fontSize: 14 }}>⭐ 官方精选</h3>
+            {featuredLib.map((s) => skillCard(s, false))}
+          </>
+        )}
+        {library.length > 0 && (
+          <>
+            <h3 style={{ margin: '14px 0 8px', fontSize: 14 }}>全部上架</h3>
+            {restLib.length > 0 ? (
+              restLib.map((s) => skillCard(s, false))
+            ) : (
+              <p className="hint">除官方精选外，暂无其他上架技能。</p>
+            )}
+          </>
+        )}
       </div>
 
       {/* ---------- 新建 / 编辑 ---------- */}
       {editorOpen && (
-        <div className="modal show">
-          <div className="box" style={{ maxWidth: 780 }}>
-            <h2 style={{ marginTop: 0 }}>{editing ? `编辑技能 · ${editing.name}` : '新建技能'}</h2>
+        <Dialog open onClose={() => { setEditorOpen(false); setEditing(null); }} title={editing ? `编辑技能 · ${editing.name}` : '新建技能'} wide={780}>
             <div className="row">
               <div>
                 <label>名称</label>
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如：爆款标题生成" />
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="如：爆款标题生成" />
               </div>
               <div>
                 <label>适用工种（可从注册表选，也可直接输入）</label>
-                <input
+                <Input
                   list="skill-role-list"
                   value={form.role}
                   onChange={(e) => setForm({ ...form, role: e.target.value })}
@@ -440,19 +555,20 @@ export default function Skills() {
               </div>
               <div>
                 <label>可见性</label>
-                <select
+                <Select
                   value={form.visibility}
-                  onChange={(e) => setForm({ ...form, visibility: e.target.value as SkillForm['visibility'] })}
-                >
-                  <option value="private">私有（仅自己）</option>
-                  <option value="workspace">本空间可见</option>
-                </select>
+                  onValueChange={(v) => setForm({ ...form, visibility: v as SkillForm['visibility'] })}
+                  options={[
+                    { value: 'private', label: '私有（仅自己）' },
+                    { value: 'workspace', label: '本空间可见' },
+                  ]}
+                />
               </div>
             </div>
             <label>说明</label>
-            <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="这个技能干什么、适合什么场景" />
+            <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="这个技能干什么、适合什么场景" />
             <label>提示词模板（用 {'{{参数key}}'} 占位，发单时按参数表替换）</label>
-            <textarea
+            <Textarea
               rows={6}
               value={form.promptTemplate}
               onChange={(e) => setForm({ ...form, promptTemplate: e.target.value })}
@@ -463,190 +579,162 @@ export default function Skills() {
             {form.rows.map((r, i) => (
               <div className="row" key={i} style={{ alignItems: 'flex-end', marginBottom: 4 }}>
                 <div>
-                  <input placeholder="key（如 title）" value={r.key} onChange={(e) => {
+                  <Input placeholder="key（如 title）" value={r.key} onChange={(e) => {
                     const rows = [...form.rows];
                     rows[i] = { ...r, key: e.target.value };
                     setForm({ ...form, rows });
                   }} />
                 </div>
                 <div>
-                  <input placeholder="显示名" value={r.label} onChange={(e) => {
+                  <Input placeholder="显示名" value={r.label} onChange={(e) => {
                     const rows = [...form.rows];
                     rows[i] = { ...r, label: e.target.value };
                     setForm({ ...form, rows });
                   }} />
                 </div>
                 <div>
-                  <select value={r.type} onChange={(e) => {
-                    const rows = [...form.rows];
-                    rows[i] = { ...r, type: e.target.value as SkillInputField['type'] };
-                    setForm({ ...form, rows });
-                  }}>
-                    {FIELD_TYPES.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
+                  <Select
+                    value={r.type}
+                    onValueChange={(v) => {
+                      const rows = [...form.rows];
+                      rows[i] = { ...r, type: v as SkillInputField['type'] };
+                      setForm({ ...form, rows });
+                    }}
+                    options={FIELD_TYPES.map((t) => ({ value: t, label: t }))}
+                  />
                 </div>
                 <div>
-                  <input placeholder="默认值" value={r.defaultText} onChange={(e) => {
+                  <Input placeholder="默认值" value={r.defaultText} onChange={(e) => {
                     const rows = [...form.rows];
                     rows[i] = { ...r, defaultText: e.target.value };
                     setForm({ ...form, rows });
                   }} />
                 </div>
                 <div>
-                  <input placeholder="选项（仅 select，逗号分隔）" value={r.optionsText} onChange={(e) => {
+                  <Input placeholder="选项（仅 select，逗号分隔）" value={r.optionsText} onChange={(e) => {
                     const rows = [...form.rows];
                     rows[i] = { ...r, optionsText: e.target.value };
                     setForm({ ...form, rows });
                   }} />
                 </div>
                 <div style={{ flex: '0 0 92px' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
-                    <input
-                      type="checkbox"
-                      className="chk"
-                      checked={r.required}
-                      onChange={(e) => {
-                        const rows = [...form.rows];
-                        rows[i] = { ...r, required: e.target.checked };
-                        setForm({ ...form, rows });
-                      }}
-                    />
-                    必填
-                  </label>
+                  <Checkbox
+                    checked={r.required}
+                    onCheckedChange={(on) => {
+                      const rows = [...form.rows];
+                      rows[i] = { ...r, required: on };
+                      setForm({ ...form, rows });
+                    }}
+                    label="必填"
+                  />
                 </div>
                 <div style={{ flex: '0 0 64px' }}>
-                  <button
-                    className="btn small gray"
+                  <Button
+                    size="small"
+                    variant="gray"
                     onClick={() => setForm({ ...form, rows: form.rows.filter((_, x) => x !== i) })}
                   >
                     删除
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}
-            <button className="btn small gray" onClick={() => setForm({ ...form, rows: [...form.rows, { ...EMPTY_ROW }] })}>
+            <Button size="small" variant="gray" onClick={() => setForm({ ...form, rows: [...form.rows, { ...EMPTY_ROW }] })}>
               ＋ 加一行参数
-            </button>
+            </Button>
 
             <label>知识库绑定 · 范围（多选）</label>
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
               {KB_SCOPES.map((sc) => (
-                <label key={sc} style={{ display: 'flex', alignItems: 'center', gap: 4, margin: 0 }}>
-                  <input
-                    type="checkbox"
-                    className="chk"
-                    checked={form.kbScopes.includes(sc)}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        kbScopes: e.target.checked
-                          ? [...form.kbScopes, sc]
-                          : form.kbScopes.filter((x) => x !== sc),
-                      })
-                    }
-                  />
-                  {KB_SCOPE_LABEL[sc]}（{sc}）
-                </label>
+                <Checkbox
+                  key={sc}
+                  checked={form.kbScopes.includes(sc)}
+                  onCheckedChange={(on) =>
+                    setForm({
+                      ...form,
+                      kbScopes: on
+                        ? [...form.kbScopes, sc]
+                        : form.kbScopes.filter((x) => x !== sc),
+                    })
+                  }
+                  label={`${KB_SCOPE_LABEL[sc]}（${sc}）`}
+                />
               ))}
             </div>
             <label>知识库绑定 · 标签（逗号分隔，按标签命中注入）</label>
-            <input value={form.kbTags} onChange={(e) => setForm({ ...form, kbTags: e.target.value })} placeholder="如：短剧, 钩子" />
+            <Input value={form.kbTags} onChange={(e) => setForm({ ...form, kbTags: e.target.value })} placeholder="如：短剧, 钩子" />
             <label>输出规格</label>
-            <textarea rows={2} value={form.outputSpec} onChange={(e) => setForm({ ...form, outputSpec: e.target.value })} placeholder="产出长什么样：结构、条数、格式要求……" />
+            <Textarea rows={2} value={form.outputSpec} onChange={(e) => setForm({ ...form, outputSpec: e.target.value })} placeholder="产出长什么样：结构、条数、格式要求……" />
             <div className="row">
               <div>
                 <label>示例参数（JSON，试运行时直接用它发单）</label>
-                <textarea rows={3} value={form.exampleInputText} onChange={(e) => setForm({ ...form, exampleInputText: e.target.value })} placeholder='{"title":"龙王归来"}' />
+                <Textarea rows={3} value={form.exampleInputText} onChange={(e) => setForm({ ...form, exampleInputText: e.target.value })} placeholder='{"title":"龙王归来"}' />
               </div>
               <div>
                 <label>示例产出</label>
-                <textarea rows={3} value={form.exampleOutput} onChange={(e) => setForm({ ...form, exampleOutput: e.target.value })} placeholder="一份理想产出的样子" />
+                <Textarea rows={3} value={form.exampleOutput} onChange={(e) => setForm({ ...form, exampleOutput: e.target.value })} placeholder="一份理想产出的样子" />
               </div>
             </div>
+            {form.exampleOutput.trim() ? (
+              <div>
+                <label>示例产出预览（结构化渲染，G-12）</label>
+                <ResultView result={form.exampleOutput} structured />
+              </div>
+            ) : null}
             <label>{editing ? '本次变更说明 changelog（必填，后端会据此升版本）' : '变更说明 changelog（可空，默认「初始版本」）'}</label>
-            <input value={form.changelog} onChange={(e) => setForm({ ...form, changelog: e.target.value })} placeholder="如：标题公式加入反问式钩子" />
+            <Input value={form.changelog} onChange={(e) => setForm({ ...form, changelog: e.target.value })} placeholder="如：标题公式加入反问式钩子" />
             <div style={{ marginTop: 12 }}>
-              <button className="btn blue" onClick={() => saveSkill(false)}>
+              <Button variant="blue" onClick={() => saveSkill(false)}>
                 {editing ? '保存' : '保存草稿'}
-              </button>{' '}
-              <button className="btn" onClick={() => saveSkill(true)}>保存并发布</button>{' '}
-              <button className="btn gray" onClick={() => { setEditorOpen(false); setEditing(null); }}>取消</button>
+              </Button>{' '}
+              <Button onClick={() => saveSkill(true)}>保存并发布</Button>{' '}
+              <Button variant="gray" onClick={() => { setEditorOpen(false); setEditing(null); }}>取消</Button>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
 
       {/* ---------- 发单 / 试运行 ---------- */}
       {dispatchSkill && (
-        <div className="modal show">
-          <div className="box" style={{ maxWidth: 640 }}>
-            <h2 style={{ marginTop: 0 }}>
-              {dispatchMode === 'test' ? '试运行' : '发单'} · {dispatchSkill.name}
-              <span className="tag" style={{ marginLeft: 8 }}>v{dispatchSkill.version}</span>
-            </h2>
-            {(dispatchSkill.inputSchema ?? []).map((f) => (
-              <div key={f.key}>
-                <label>
-                  {f.label}
-                  {f.required ? ' *' : ''}
-                </label>
-                {f.type === 'textarea' ? (
-                  <textarea
-                    rows={3}
-                    placeholder={f.placeholder}
-                    value={String(params[f.key] ?? '')}
-                    onChange={(e) => setParams({ ...params, [f.key]: e.target.value })}
-                  />
-                ) : f.type === 'select' ? (
-                  <select
-                    value={String(params[f.key] ?? '')}
-                    onChange={(e) => setParams({ ...params, [f.key]: e.target.value })}
-                  >
-                    <option value="">请选择</option>
-                    {(f.options ?? []).map((o) => (
-                      <option key={o} value={o}>{o}</option>
-                    ))}
-                  </select>
-                ) : f.type === 'checkbox' ? (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
-                    <input
-                      type="checkbox"
-                      className="chk"
-                      checked={!!params[f.key]}
-                      onChange={(e) => setParams({ ...params, [f.key]: e.target.checked })}
-                    />
-                    是
-                  </label>
-                ) : (
-                  <input
-                    type={f.type === 'number' ? 'number' : 'text'}
-                    placeholder={f.placeholder}
-                    value={String(params[f.key] ?? '')}
-                    onChange={(e) => setParams({ ...params, [f.key]: e.target.value })}
-                  />
-                )}
-              </div>
-            ))}
+        <Dialog
+          open
+          onClose={() => setDispatchSkill(null)}
+          title={<>{dispatchMode === 'test' ? '试运行' : '发单'} · {dispatchSkill.name}<Badge>v{dispatchSkill.version}</Badge></>}
+        >
+            {dispatchSkill.ownerType === 'platform' && (
+              <p className="hint">
+                <Badge variant="done">官方</Badge> 平台官方技能
+              </p>
+            )}
+            {dispatchSkill.ownerType === 'workspace' && (
+              <p className="hint">
+                {dispatchSkill.featured && <Badge variant="adj">官方精选</Badge>}{' '}
+                {contributorLine(dispatchSkill)} · 已被安装 {dispatchSkill.installCount} 次
+              </p>
+            )}
+            {/* 参数表单渲染与定时任务表单共用 SkillParamFields（G-10 复用点） */}
+            <SkillParamFields
+              fields={dispatchSkill.inputSchema ?? []}
+              values={params}
+              onChange={setParams}
+            />
             <div className="row">
               <div>
                 <label>交给哪个小组</label>
-                <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-                  {S.teams.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
+                <Select
+                  value={teamId}
+                  onValueChange={setTeamId}
+                  options={S.teams.map((t) => ({ value: t.id, label: t.name }))}
+                />
               </div>
               {dispatchMode === 'dispatch' && (
                 <div>
                   <label>挂到项目（可选）</label>
-                  <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                    <option value="">不挂项目</option>
-                    {S.projects.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
+                  <Select
+                    value={projectId}
+                    onValueChange={setProjectId}
+                    emptyLabel="不挂项目"
+                    options={S.projects.map((p) => ({ value: p.id, label: p.name }))}
+                  />
                 </div>
               )}
             </div>
@@ -656,14 +744,19 @@ export default function Skills() {
                 <AssetRefPicker value={assetRefs} onChange={setAssetRefs} />
               </>
             )}
+            <EstimateLine skillId={dispatchSkill.id} />
             <div style={{ marginTop: 12 }}>
-              <button className="btn" onClick={submitDispatch}>
+              <Button onClick={submitDispatch}>
                 {dispatchMode === 'test' ? '开始试运行' : '发单'}
-              </button>{' '}
-              <button className="btn gray" onClick={() => setDispatchSkill(null)}>取消</button>
+              </Button>{' '}
+              {dispatchMode === 'dispatch' && (
+                <>
+                  <Button variant="gray" onClick={makeSchedule}>设为定时</Button>{' '}
+                </>
+              )}
+              <Button variant="gray" onClick={() => setDispatchSkill(null)}>取消</Button>
             </div>
-          </div>
-        </div>
+        </Dialog>
       )}
     </>
   );

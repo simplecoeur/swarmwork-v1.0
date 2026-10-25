@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { fetchPipelineTemplates } from '../api';
+import { fetchPipelineTemplates, fetchTaskTimeline } from '../api';
 import { yuan } from '../utils';
+import TaskTimeline from './TaskTimeline';
+import { Badge, Button, EmptyState, Input, Select, type BadgeVariant } from './ui';
 import type { PipelineTemplate } from '../types';
 
-const projChipCls: Record<string, string> = {
+const projChipCls: Record<string, BadgeVariant> = {
   '已交付': 'done',
   '待裁决': 'adj',
   '进行中': 'run',
 };
 
-const taskChipCls: Record<string, string> = {
+const taskChipCls: Record<string, BadgeVariant> = {
   '已完成': 'done',
   '执行中': 'run',
   '待审核': 'rev',
@@ -49,7 +51,7 @@ export default function Projects() {
  * 模板步骤的 available 由服务端按本空间可见 skill 标注，缺 skill 的步骤标红提示（先去技能页安装）。
  */
 function PipelineCard() {
-  const { S, post, toast, refresh } = useApp();
+  const { S, post, toast, refresh, openSchedules } = useApp();
   const [templates, setTemplates] = useState<PipelineTemplate[]>([]);
   const [templateId, setTemplateId] = useState('');
   const [teamId, setTeamId] = useState('');
@@ -109,32 +111,29 @@ function PipelineCard() {
           <div className="row">
             <div>
               <label>流水线模板</label>
-              <select
+              <Select
                 value={templateId}
-                onChange={(e) => {
-                  setTemplateId(e.target.value);
+                onValueChange={(v) => {
+                  setTemplateId(v);
                   setParams({});
                 }}
-              >
-                {templates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                    {t.industry ? `（${t.industry}）` : ''}
-                  </option>
-                ))}
-              </select>
+                options={templates.map((t) => ({
+                  value: t.id,
+                  label: `${t.name}${t.industry ? `（${t.industry}）` : ''}`,
+                }))}
+              />
             </div>
             <div>
               <label>交给哪个小组</label>
-              <select value={teamId} onChange={(e) => setTeamId(e.target.value)}>
-                {S.teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
+              <Select
+                value={teamId}
+                onValueChange={setTeamId}
+                options={S.teams.map((t) => ({ value: t.id, label: t.name }))}
+              />
             </div>
             <div>
               <label>项目名（可空，默认用模板名）</label>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tpl ? tpl.name : ''} />
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={tpl ? tpl.name : ''} />
             </div>
           </div>
           {tpl && (
@@ -146,11 +145,11 @@ function PipelineCard() {
                     <span style={{ fontWeight: 700 }}>
                       {i + 1}. {s.title}
                     </span>
-                    <span className="chip">{s.skillSlug}</span>
+                    <Badge>{s.skillSlug}</Badge>
                     {s.available ? (
-                      <span className="chip done">skill 就绪</span>
+                      <Badge variant="done">skill 就绪</Badge>
                     ) : (
-                      <span className="chip rej">缺 skill · 先去技能页安装</span>
+                      <Badge variant="rej">缺 skill · 先去技能页安装</Badge>
                     )}
                   </div>
                 ))}
@@ -161,7 +160,7 @@ function PipelineCard() {
                     {p.label}
                     {p.required ? ' *' : ''}
                   </label>
-                  <input
+                  <Input
                     value={params[p.key] ?? ''}
                     onChange={(e) => setParams({ ...params, [p.key]: e.target.value })}
                     placeholder={p.key}
@@ -169,7 +168,24 @@ function PipelineCard() {
                 </div>
               ))}
               <div style={{ marginTop: 10 }}>
-                <button className="btn" onClick={run}>启动流水线</button>
+                <Button onClick={run}>启动流水线</Button>{' '}
+                <Button
+                  variant="gray"
+                  onClick={() => {
+                    if (!tpl) return toast('先选流水线模板');
+                    if (!teamId) return toast('先选小组');
+                    // G-10 快捷钮：带当前模板/小组/公共参数跳定时任务页预填（周期在那边定）
+                    openSchedules({
+                      kind: 'pipeline',
+                      pipelineTemplateId: tpl.id,
+                      teamId,
+                      params: { ...params },
+                    });
+                    toast('已带参数跳到定时任务页，选好周期保存即可');
+                  }}
+                >
+                  设为定时
+                </Button>
               </div>
             </>
           )}
@@ -179,10 +195,71 @@ function PipelineCard() {
   );
 }
 
+/**
+ * 计划卡（G-04）：项目头区呈现 split 步摘要——拆了 N 步、顺序与每步类型，
+ * 数据取自首个子任务时间线的 split 步（与子任务时间线同源同数据）。
+ */
+function ProjectPlanCard({ firstChildId }: { firstChildId: string | null }) {
+  const [split, setSplit] = useState<{ summary: string; subtasks: Array<{ index?: number; title?: string; type?: string }> } | null>(null);
+  useEffect(() => {
+    if (!firstChildId) return;
+    let stop = false;
+    fetchTaskTimeline(firstChildId)
+      .then((d) => {
+        if (stop) return;
+        const s = d.steps.find((x) => x.kind === 'split');
+        if (s) {
+          const subs = Array.isArray(s.detail.subtasks)
+            ? (s.detail.subtasks as Array<{ index?: number; title?: string; type?: string }>)
+            : [];
+          setSplit({ summary: s.summary, subtasks: subs });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stop = true;
+    };
+  }, [firstChildId]);
+  if (!split) return null;
+  return (
+    <div className="plan-card">
+      <div className="plan-card-title">🧩 执行计划 · {split.summary}</div>
+      {split.subtasks.map((s, i) => (
+        <div className="plan-card-row" key={i}>
+          {s.index ?? i + 1}. 《{s.title ?? ''}》{s.type ? `（${s.type}）` : ''}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ProjectList() {
-  const { S, teamName } = useApp();
+  const { S, teamName, memberName, openDialog } = useApp();
   const [openId, setOpenId] = useState<string | null>(null);
-  if (!S || !S.projects.length) return null;
+  // G-04：子任务行展开各自时间线（按任务 id，同一时刻只展开一条）
+  const [openTlId, setOpenTlId] = useState<string | null>(null);
+  if (!S) return null;
+  // G-02 空态三件套：无项目时渲染带示例与 CTA 的空态卡（原口径为整段不渲染）
+  if (!S.projects.length) {
+    return (
+      <div className="card">
+        <h2>项目 <span className="tag">方案下发 · 组长拆单 · 进度与总账按子任务聚合</span></h2>
+        <EmptyState
+          example={<>示例项目：《新剧上线包》· 子任务进度 3/5 完成 · 组长已按计划拆成 5 步</>}
+          action={
+            <Button
+              size="small"
+              onClick={() => openDialog('publish')}
+            >
+              去下发第一个方案
+            </Button>
+          }
+        >
+          还没有项目。把一整套活写成方案下发，组长会自动拆成子任务排队执行；或用上方流水线一键生成整套项目。
+        </EmptyState>
+      </div>
+    );
+  }
 
   return (
     <div className="card">
@@ -197,7 +274,7 @@ function ProjectList() {
           return (
             <div className="task" key={p.id}>
               <span className="tt">{p.name}</span>
-              <span className={`chip ${projChipCls[p.status] || ''}`}>{p.status}</span>
+              <Badge variant={projChipCls[p.status] ?? 'default'}>{p.status}</Badge>
               <div className="meta">
                 {teamName(p.teamId)}
                 {p.clientName ? ` · 甲方：${p.clientName}` : ''}
@@ -208,24 +285,42 @@ function ProjectList() {
               </div>
               <div className="pbar"><div style={{ width: `${pct}%` }} /></div>
               <div style={{ marginTop: 6 }}>
-                <button className="btn small gray" onClick={() => setOpenId(open ? null : p.id)}>
+                <Button size="small" variant="gray" onClick={() => setOpenId(open ? null : p.id)}>
                   {open ? '收起子任务' : `展开子任务（${children.length}）`}
-                </button>
+                </Button>
               </div>
               {open && (
                 <div style={{ marginTop: 4 }}>
+                  <ProjectPlanCard firstChildId={children[0]?.id ?? null} />
                   {children.length ? (
                     children.map((t) => (
-                      <div
-                        className="subtask"
-                        key={t.id}
-                        onClick={() => jumpToTask(t.id)}
-                        title="点击定位到任务墙卡片"
-                      >
-                        <span style={{ fontWeight: 700 }}>{t.title}</span>
-                        <span className={`chip ${taskChipCls[t.status] || ''}`}>{t.status}</span>
-                        <span className="chip">{t.type}</span>
-                        <span className="meta">{` · ${t.totalTokens || 0} token / ${yuan(t.totalCost)}`}</span>
+                      <div key={t.id}>
+                        <div
+                          className="subtask"
+                          onClick={() => jumpToTask(t.id)}
+                          title="点击定位到任务墙卡片"
+                        >
+                          <span style={{ fontWeight: 700 }}>{t.title}</span>
+                          <Badge variant={taskChipCls[t.status] ?? 'default'}>{t.status}</Badge>
+                          <Badge>{t.type}</Badge>
+                          <span className="meta">{` · ${t.totalTokens || 0} token / ${yuan(t.totalCost)} · 负责人：${memberName(t.assigneeId)}`}</span>
+                          <Button
+                            size="small"
+                            variant="gray"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenTlId((cur) => (cur === t.id ? null : t.id));
+                            }}
+                          >
+                            {openTlId === t.id ? '收起时间线' : '时间线'}
+                          </Button>
+                        </div>
+                        {openTlId === t.id ? (
+                          <TaskTimeline
+                            taskId={t.id}
+                            live={t.status !== '已完成' && t.status !== '已取消'}
+                          />
+                        ) : null}
                       </div>
                     ))
                   ) : (

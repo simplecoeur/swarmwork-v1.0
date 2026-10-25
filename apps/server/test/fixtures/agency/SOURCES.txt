@@ -1,0 +1,4 @@
+Fixture 来源（2026-10-25 自 GitHub raw 拉取，仓库 msitarzewski/agency-agents，MIT License，署名 AgentLand Contributors）：
+- marketing-content-creator.md        ← marketing/marketing-content-creator.md
+- engineering-software-architect.md   ← engineering/engineering-software-architect.md
+仅供 v140-j 离线解析/幂等测试使用，不随服务运行。

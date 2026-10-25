@@ -1,9 +1,33 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { AppState, AuthUser, Presets, TabKey, Workspace } from './types';
-import { fetchMe, fetchPresets, fetchState, requestRaw } from './api';
+import type { AppState, AssetRef, AuthUser, Impersonation, OfficeStyleConfig, Presets, TabKey, Workspace } from './types';
+
+/** G-10「设为定时」快捷入口的预填（skill 发单弹窗 / 流水线入口 → 定时任务页新建表单） */
+export interface SchedulePrefill {
+  kind: 'skill' | 'pipeline' | 'task';
+  skillId?: string;
+  pipelineTemplateId?: string;
+  teamId?: string;
+  params?: Record<string, unknown>;
+  assetRefs?: AssetRef[];
+}
+import { fetchMe, fetchOfficeStyle, fetchPresets, fetchState, requestRaw } from './api';
 
 export type AuthStatus = 'loading' | 'anon' | 'authed';
+
+/* ----- v1.3.0 E 外壳：功能弹窗契约（办公室为唯一主场景，其余功能以弹窗打开） ----- */
+export interface ActiveDialog {
+  name: 'publish' | 'tasks' | 'skills' | 'assets' | 'kb' | 'cost' | 'schedules' | 'settings' | 'member' | 'style' | 'talents';
+  memberId?: string;
+  section?: 'projects' | 'taskwall' | 'results';
+}
+
+/** 快速发单条 / 模板等外部入口 → 发单弹窗的预填（PublishForm 打开时消费一次并清空） */
+export interface PublishPrefill {
+  title?: string;
+  typeId?: string;
+  brief?: string;
+}
 
 interface AppContextValue {
   S: AppState | null;
@@ -24,6 +48,8 @@ interface AppContextValue {
   user: AuthUser | null;
   workspaces: Workspace[];
   currentWorkspace: Workspace | null;
+  /** G-14 代入态（平台管理员代入查看中时非空，全站红色横幅据此呈现） */
+  impersonation: Impersonation | null;
   /** 重新拉 /api/auth/me 刷新登录态（登录/注册/改密/开公司后调用） */
   refreshAuth: () => Promise<void>;
   /** 登录：失败抛错（message 为后端原文），由登录页红字展示，不走 toast */
@@ -31,6 +57,22 @@ interface AppContextValue {
   logout: () => Promise<void>;
   /** 切换当前空间：服务端切换 session 后整页数据 refresh */
   switchWorkspace: (workspaceId: string) => Promise<void>;
+  /* ----- G-10 定时任务预填 ----- */
+  schedulePrefill: SchedulePrefill | null;
+  /** 打开定时任务弹窗并预填新建表单（消费后由页面 clearSchedulePrefill） */
+  openSchedules: (prefill: SchedulePrefill) => void;
+  clearSchedulePrefill: () => void;
+  /* ----- v1.3.0 E 外壳弹窗 ----- */
+  dialog: ActiveDialog | null;
+  openDialog: (name: ActiveDialog['name'], opts?: { memberId?: string; section?: ActiveDialog['section'] }) => void;
+  closeDialog: () => void;
+  publishPrefill: PublishPrefill | null;
+  setPublishPrefill: (p: PublishPrefill | null) => void;
+  /* ----- v1.3.0 F 办公室风格（PixelOffice 画布与装修面板共用） ----- */
+  officeStyle: OfficeStyleConfig | null;
+  /** 直接写入本地风格（装修面板即时预览用；不落库，保存走 PUT、取消靠 refreshOfficeStyle 回滚） */
+  setOfficeStyle: (s: OfficeStyleConfig | null) => void;
+  refreshOfficeStyle: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -55,6 +97,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
+  const [impersonation, setImpersonation] = useState<Impersonation | null>(null);
 
   const toast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -67,6 +110,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setS(await fetchState());
     } catch {
       /* 服务重启瞬间忽略，与原生版一致 */
+    }
+  }, []);
+
+  /* ----- F 办公室风格 ----- */
+  const [officeStyle, setOfficeStyle] = useState<OfficeStyleConfig | null>(null);
+  const refreshOfficeStyle = useCallback(async () => {
+    try {
+      setOfficeStyle(await fetchOfficeStyle());
+    } catch {
+      /* 接口未就绪/服务重启瞬间忽略，画布用本地默认观感 */
     }
   }, []);
 
@@ -100,11 +153,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setUser(me.user);
       setWorkspaces(me.workspaces);
       setCurrentWorkspace(me.workspace);
+      setImpersonation(me.impersonation);
       setAuthStatus('authed');
     } catch {
       setUser(null);
       setWorkspaces([]);
       setCurrentWorkspace(null);
+      setImpersonation(null);
       setAuthStatus('anon');
     }
   }, []);
@@ -127,7 +182,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setWorkspaces([]);
     setCurrentWorkspace(null);
+    setImpersonation(null);
     setTab('office');
+    setDialog(null);
+    setPublishPrefill(null);
+    setOfficeStyle(null);
     setAuthStatus('anon');
   }, []);
 
@@ -135,11 +194,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (workspaceId: string) => {
       await requestRaw('POST', '/api/auth/switch-workspace', { workspaceId });
       setS(null);
+      setOfficeStyle(null);
       await refreshAuth();
       await refresh();
+      await refreshOfficeStyle();
     },
-    [refreshAuth, refresh],
+    [refreshAuth, refresh, refreshOfficeStyle],
   );
+
+  const [schedulePrefill, setSchedulePrefill] = useState<SchedulePrefill | null>(null);
+  /* ----- v1.3.0 E 外壳弹窗状态 ----- */
+  const [dialog, setDialog] = useState<ActiveDialog | null>(null);
+  const [publishPrefill, setPublishPrefill] = useState<PublishPrefill | null>(null);
+  const dialogRef = useRef<ActiveDialog | null>(null);
+  dialogRef.current = dialog;
+  const openDialog = useCallback(
+    (name: ActiveDialog['name'], opts?: { memberId?: string; section?: ActiveDialog['section'] }) => {
+      setDialog({ name, memberId: opts?.memberId, section: opts?.section });
+    },
+    [],
+  );
+  const closeDialog = useCallback(() => setDialog(null), []);
+  const openSchedules = useCallback(
+    (prefill: SchedulePrefill) => {
+      setSchedulePrefill(prefill);
+      setDialog({ name: 'schedules' });
+    },
+    [],
+  );
+  const clearSchedulePrefill = useCallback(() => setSchedulePrefill(null), []);
 
   // 启动先探登录态；未登录不拉 /api/state、不启动轮询
   useEffect(() => {
@@ -150,12 +233,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (authStatus !== 'authed') return;
     fetchPresets().then(setPresets).catch(() => {});
     refresh();
-    // 每 2 秒轮询；在设置后台时不刷新，避免冲掉正在编辑的表单（与原生版一致）
+    refreshOfficeStyle();
+    // 每 2 秒轮询；在设置后台（v1.3.0 起为设置弹窗）时不刷新，避免冲掉正在编辑的表单（与原生版一致）
     const iv = window.setInterval(() => {
-      if (tabRef.current !== 'settings') refresh();
+      if (tabRef.current !== 'settings' && dialogRef.current?.name !== 'settings') refresh();
     }, 2000);
     return () => window.clearInterval(iv);
-  }, [authStatus, refresh]);
+  }, [authStatus, refresh, refreshOfficeStyle]);
 
   const apiName = useCallback(
     (id: string | null | undefined) => S?.apis.find((a) => a.id === id)?.name || '（已删除）',
@@ -174,7 +258,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider
       value={{
         S, presets, tab, setTab, toast, refresh, post, send, apiName, teamName, memberName,
-        authStatus, user, workspaces, currentWorkspace, refreshAuth, login, logout, switchWorkspace,
+        authStatus, user, workspaces, currentWorkspace, impersonation, refreshAuth, login, logout, switchWorkspace,
+        schedulePrefill, openSchedules, clearSchedulePrefill,
+        dialog, openDialog, closeDialog, publishPrefill, setPublishPrefill,
+        officeStyle, setOfficeStyle, refreshOfficeStyle,
       }}
     >
       {children}

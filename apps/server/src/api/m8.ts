@@ -435,7 +435,16 @@ return { ok: true, projectId, taskIds};
 /* ================= 站内提醒（§9 M8） ================= */
 app.get('/api/notifications', async (req) => {
 const ctx = wsAuth(req);
-const notifications: NotificationDto[] = repos.listNotifications(ctx.workspaceId).map((n) => ({
+// G-03：分页（?page=&pageSize=）+ 按 type 过滤（?type=）；无参数时保持旧口径（第一页 20 条）
+const q = (req.query?? {}) as { type?: string; page?: string; pageSize?: string};
+const page = Math.max(1, Number(q.page?? 1) || 1);
+const pageSize = Math.min(100, Math.max(1, Number(q.pageSize?? 20) || 20));
+const { rows, total} = repos.listNotificationsPaged(ctx.workspaceId, {
+type: q.type? String(q.type): undefined,
+page,
+pageSize,
+});
+const notifications: NotificationDto[] = rows.map((n) => ({
 id: n.id,
 type: n.type,
 title: n.title,
@@ -444,7 +453,7 @@ taskId: n.task_id,
 readAt: n.read_at,
 createdAt: n.created_at,
 }));
-return { ok: true, notifications, unread: repos.countUnreadNotifications(ctx.workspaceId)};
+return { ok: true, notifications, unread: repos.countUnreadNotifications(ctx.workspaceId), total, page, pageSize};
 });
 
 app.post('/api/notifications/:id/read', async (req) => {

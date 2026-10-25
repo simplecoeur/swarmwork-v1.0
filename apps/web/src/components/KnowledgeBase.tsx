@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { fetchKb } from '../api';
-import type { KbEntry } from '../types';
+import { confirmKbImport, fetchKb, previewKbImport } from '../api';
+import { Badge, Button, Checkbox, Dialog, EmptyState, Input, Select, Switch, Textarea, useConfirm } from './ui';
+import type { KbEntry, KbImportDraft } from '../types';
 import type { KbScope } from '@swarm/shared';
 
 const SCOPE_LABEL: Record<KbScope, string> = { company: '公司', team: '小组', member: '成员' };
@@ -35,10 +36,19 @@ function toForm(e: KbEntry): FormState {
  */
 export default function KnowledgeBase() {
   const { S, post, send, toast, teamName, memberName } = useApp();
+  const { ask, confirmNode } = useConfirm();
   const [entries, setEntries] = useState<KbEntry[]>([]);
   const [filter, setFilter] = useState<'all' | KbScope>('all');
   const [editingId, setEditingId] = useState<string | null>(null); // null=未编辑；''=新建
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  /* G-06 文件导入（两段式 Dialog：选范围+文件 → 预览勾选/改 title → 确认落库） */
+  const [importOpen, setImportOpen] = useState(false);
+  const [impScope, setImpScope] = useState<KbScope>('company');
+  const [impScopeId, setImpScopeId] = useState('');
+  const [impFile, setImpFile] = useState<File | null>(null);
+  const [impFilename, setImpFilename] = useState('');
+  const [impDrafts, setImpDrafts] = useState<Array<KbImportDraft & { include: boolean }>>([]);
+  const [impBusy, setImpBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -95,14 +105,59 @@ export default function KnowledgeBase() {
     load();
   }
 
-  async function remove(e: KbEntry) {
-    if (!window.confirm(`删除知识条目「${e.title}」？`)) return;
+  async function runKbPreview() {
+    if (!impFile) return toast('先选择文件');
+    if (impScope !== 'company' && !impScopeId) return toast('先选择范围归属');
+    setImpBusy(true);
     try {
-      await send('DELETE', `/api/kb/${e.id}`);
-    } catch { return; }
-    toast('已删除');
-    if (editingId === e.id) setEditingId(null);
-    load();
+      const pv = await previewKbImport(impFile, impScope, impScope === 'company' ? null : impScopeId || null);
+      setImpFilename(pv.filename);
+      setImpDrafts(pv.drafts.map((d) => ({ ...d, include: true })));
+      if (!pv.drafts.length) toast('没有解析出条目');
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setImpBusy(false);
+    }
+  }
+
+  async function runKbConfirm() {
+    const picked = impDrafts.filter((d) => d.include);
+    if (!picked.length) return toast('至少勾选一条');
+    setImpBusy(true);
+    try {
+      const res = await confirmKbImport({
+        filename: impFilename,
+        scope: impScope,
+        scopeId: impScope === 'company' ? null : impScopeId || null,
+        drafts: picked.map((d) => ({ title: d.title, body: d.body, tags: d.tags })),
+      });
+      toast(`导入完成：成功 ${res.created} 条${res.failed ? `，失败 ${res.failed} 条` : ''}`);
+      setImportOpen(false);
+      setImpDrafts([]);
+      setImpFile(null);
+      load();
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setImpBusy(false);
+    }
+  }
+
+  function remove(e: KbEntry) {
+    ask({
+      title: '删除知识条目',
+      message: `删除知识条目「${e.title}」？`,
+      confirmLabel: '删除',
+      onConfirm: async () => {
+        try {
+          await send('DELETE', `/api/kb/${e.id}`);
+        } catch { return; }
+        toast('已删除');
+        if (editingId === e.id) setEditingId(null);
+        load();
+      },
+    });
   }
 
   const visible = entries.filter((e) => filter === 'all' || e.scope === filter);
@@ -114,74 +169,75 @@ export default function KnowledgeBase() {
       <div className="row" style={{ alignItems: 'flex-end', marginBottom: 10 }}>
         <div style={{ flex: '0 0 220px' }}>
           <label>按范围筛选</label>
-          <select value={filter} onChange={(ev) => setFilter(ev.target.value as 'all' | KbScope)}>
-            <option value="all">全部范围</option>
-            {SCOPE_ORDER.map((s) => (
-              <option key={s} value={s}>{SCOPE_LABEL[s]}</option>
-            ))}
-          </select>
+          <Select
+            value={filter}
+            onValueChange={(v) => setFilter(v as 'all' | KbScope)}
+            options={[
+              { value: 'all', label: '全部范围' },
+              ...SCOPE_ORDER.map((s) => ({ value: s, label: SCOPE_LABEL[s] })),
+            ]}
+          />
         </div>
         <div>
-          <button className="btn" onClick={startCreate}>新建条目</button>{' '}
-          <button className="btn gray" onClick={load}>刷新</button>
+          <Button onClick={startCreate}>新建条目</Button>{' '}
+          <Button variant="gray" onClick={() => setImportOpen(true)}>文件导入</Button>{' '}
+          <Button variant="gray" onClick={load}>刷新</Button>
         </div>
       </div>
 
       {editingId !== null && (
         <div className="apicard">
           <label>标题</label>
-          <input value={form.title} onChange={(ev) => setForm({ ...form, title: ev.target.value })} placeholder="如：短剧标题公式" />
+          <Input value={form.title} onChange={(ev) => setForm({ ...form, title: ev.target.value })} placeholder="如：短剧标题公式" />
           <div className="row">
             <div>
               <label>范围</label>
-              <select
+              <Select
                 value={form.scope}
-                onChange={(ev) => setForm({ ...form, scope: ev.target.value as KbScope, scopeId: '' })}
-              >
-                {SCOPE_ORDER.map((s) => (
-                  <option key={s} value={s}>{SCOPE_LABEL[s]}</option>
-                ))}
-              </select>
+                onValueChange={(v) => setForm({ ...form, scope: v as KbScope, scopeId: '' })}
+                options={SCOPE_ORDER.map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
+              />
             </div>
             {form.scope === 'team' && (
               <div>
                 <label>所属小组</label>
-                <select value={form.scopeId} onChange={(ev) => setForm({ ...form, scopeId: ev.target.value })}>
-                  <option value="">请选择小组</option>
-                  {S.teams.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
+                <Select
+                  value={form.scopeId}
+                  onValueChange={(v) => setForm({ ...form, scopeId: v })}
+                  placeholder="请选择小组"
+                  options={S.teams.map((t) => ({ value: t.id, label: t.name }))}
+                />
               </div>
             )}
             {form.scope === 'member' && (
               <div>
                 <label>所属成员</label>
-                <select value={form.scopeId} onChange={(ev) => setForm({ ...form, scopeId: ev.target.value })}>
-                  <option value="">请选择成员</option>
-                  {S.members.map((m) => (
-                    <option key={m.id} value={m.id}>{teamName(m.teamId)} · {m.name}（{m.role}）</option>
-                  ))}
-                </select>
+                <Select
+                  value={form.scopeId}
+                  onValueChange={(v) => setForm({ ...form, scopeId: v })}
+                  placeholder="请选择成员"
+                  options={S.members.map((m) => ({
+                    value: m.id,
+                    label: `${teamName(m.teamId)} · ${m.name}（${m.role}）`,
+                  }))}
+                />
               </div>
             )}
           </div>
           <label>标签（逗号分隔，参与关键词检索）</label>
-          <input value={form.tags} onChange={(ev) => setForm({ ...form, tags: ev.target.value })} placeholder="如：短剧, 钩子, 标题" />
+          <Input value={form.tags} onChange={(ev) => setForm({ ...form, tags: ev.target.value })} placeholder="如：短剧, 钩子, 标题" />
           <label>正文</label>
-          <textarea rows={6} value={form.body} onChange={(ev) => setForm({ ...form, body: ev.target.value })} placeholder="这条知识的完整内容，干活时会被拼进成员的指令里" />
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input
-              type="checkbox"
-              className="chk"
-              checked={form.enabled}
-              onChange={(ev) => setForm({ ...form, enabled: ev.target.checked })}
-            />
-            启用（停用后不再注入）
-          </label>
+          <Textarea rows={6} value={form.body} onChange={(ev) => setForm({ ...form, body: ev.target.value })} placeholder="这条知识的完整内容，干活时会被拼进成员的指令里" />
           <div style={{ marginTop: 8 }}>
-            <button className="btn small blue" onClick={save}>保存</button>{' '}
-            <button className="btn small gray" onClick={() => setEditingId(null)}>取消</button>
+            <Checkbox
+              checked={form.enabled}
+              onCheckedChange={(on) => setForm({ ...form, enabled: on })}
+              label="启用（停用后不再注入）"
+            />
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <Button size="small" variant="blue" onClick={save}>保存</Button>{' '}
+            <Button size="small" variant="gray" onClick={() => setEditingId(null)}>取消</Button>
           </div>
         </div>
       )}
@@ -195,22 +251,129 @@ export default function KnowledgeBase() {
             {group.map((e) => (
               <div className={`task${e.enabled ? '' : ' kb-off'}`} key={e.id}>
                 <span className="tt">{e.title}</span>
-                <span className="chip">{scopeName(e)}</span>
-                <span className={`chip ${e.enabled ? 'done' : 'rej'}`}>{e.enabled ? '启用' : '停用'}</span>
+                <Badge>{scopeName(e)}</Badge>
+                <Badge variant={e.enabled ? 'done' : 'rej'}>{e.enabled ? '启用' : '停用'}</Badge>
                 <div className="meta">
                   {e.tags.length ? <>标签：{e.tags.join('、')} · </> : null}
                   更新于 {new Date(e.updatedAt).toLocaleString()}
                 </div>
                 <pre className="result" style={{ maxHeight: 160 }}>{e.body}</pre>
-                <button className="btn small gray" onClick={() => startEdit(e)}>编辑</button>{' '}
-                <button className="btn small gray" onClick={() => toggleEnabled(e)}>{e.enabled ? '停用' : '启用'}</button>{' '}
-                <button className="btn small gray" onClick={() => remove(e)}>删除</button>
+                <Button size="small" variant="gray" onClick={() => startEdit(e)}>编辑</Button>{' '}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8, verticalAlign: 'middle' }}>
+                  <Switch checked={e.enabled} onCheckedChange={() => toggleEnabled(e)} ariaLabel={`启用/停用「${e.title}」`} />
+                  <span className="hint">{e.enabled ? '启用中' : '已停用'}</span>
+                </span>{' '}
+                <Button size="small" variant="gray" onClick={() => remove(e)}>删除</Button>
               </div>
             ))}
           </div>
         );
       })}
-      {!visible.length && <p className="hint">暂无知识条目。点「新建条目」添加公司标准、小组资料，或在成果列表把已完成成果一键存入。</p>}
+      {!visible.length && (
+        <EmptyState
+          example={<>示例条目：《频道标题公式》公司级 · 标签：标题，钩子 · 正文写清可复用的公式与禁忌</>}
+          action={
+            <Button size="small" onClick={startCreate}>
+              ＋ 新建条目
+            </Button>
+          }
+        >
+          暂无知识条目。添加公司标准、小组资料后，成员干活时会自动参考命中的条目；也可以在成果库把已完成成果一键存入。
+        </EmptyState>
+      )}
+
+      {importOpen && (
+        <Dialog open onClose={() => setImportOpen(false)} title="文件导入知识库" wide={720}>
+          <p className="hint">
+            支持 .md / .txt / .csv / .docx，单文件 ≤5MB、单次 ≤500 条。md 按标题切分、txt 按空行分段、
+            csv 需 title,body,tags 表头、docx 自动提纯文本。先预览，确认后才落库。
+          </p>
+          <div className="row">
+            <div>
+              <label>范围</label>
+              <Select
+                value={impScope}
+                onValueChange={(v) => { setImpScope(v as KbScope); setImpScopeId(''); }}
+                options={SCOPE_ORDER.map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
+              />
+            </div>
+            {impScope === 'team' && (
+              <div>
+                <label>所属小组</label>
+                <Select
+                  value={impScopeId}
+                  onValueChange={setImpScopeId}
+                  placeholder="请选择小组"
+                  options={S.teams.map((t) => ({ value: t.id, label: t.name }))}
+                />
+              </div>
+            )}
+            {impScope === 'member' && (
+              <div>
+                <label>所属成员</label>
+                <Select
+                  value={impScopeId}
+                  onValueChange={setImpScopeId}
+                  placeholder="请选择成员"
+                  options={S.members.map((m) => ({
+                    value: m.id,
+                    label: `${teamName(m.teamId)} · ${m.name}（${m.role}）`,
+                  }))}
+                />
+              </div>
+            )}
+          </div>
+          <label>选择文件</label>
+          <Input
+            type="file"
+            accept=".md,.markdown,.txt,.csv,.docx"
+            onChange={(e) => { setImpFile(e.target.files?.[0] ?? null); setImpDrafts([]); }}
+          />
+          <div style={{ marginTop: 10 }}>
+            <Button size="small" variant="blue" onClick={runKbPreview} disabled={impBusy || !impFile}>
+              {impBusy ? '解析中…' : '解析预览'}
+            </Button>
+          </div>
+          {impDrafts.length > 0 && (
+            <>
+              <div className="hint" style={{ margin: '10px 0 6px', fontWeight: 600 }}>
+                预览共 {impDrafts.length} 条，已勾选 {impDrafts.filter((d) => d.include).length} 条（可逐条改标题）
+              </div>
+              {impDrafts.map((d, i) => (
+                <div className="apicard" key={i}>
+                  <Checkbox
+                    checked={d.include}
+                    onCheckedChange={(on) => {
+                      const next = [...impDrafts];
+                      next[i] = { ...d, include: on };
+                      setImpDrafts(next);
+                    }}
+                    label={`第 ${i + 1} 条`}
+                  />
+                  <Input
+                    value={d.title}
+                    onChange={(e) => {
+                      const next = [...impDrafts];
+                      next[i] = { ...d, title: e.target.value };
+                      setImpDrafts(next);
+                    }}
+                    placeholder="条目标题"
+                  />
+                  <div className="meta">
+                    {d.tags.length ? <>标签：{d.tags.join('、')} · </> : null}
+                    {d.body.slice(0, 140)}
+                  </div>
+                </div>
+              ))}
+              <div style={{ marginTop: 10 }}>
+                <Button onClick={runKbConfirm} disabled={impBusy}>确认导入</Button>{' '}
+                <Button variant="gray" onClick={() => setImportOpen(false)}>取消</Button>
+              </div>
+            </>
+          )}
+        </Dialog>
+      )}
+      {confirmNode}
     </div>
   );
 }

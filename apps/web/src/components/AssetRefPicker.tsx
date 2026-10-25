@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchAssets } from '../api';
+import { Checkbox, Input } from './ui';
 import type { Asset, AssetRef } from '../types';
 
 /**
@@ -55,17 +56,13 @@ export default function AssetRefPicker({
     <div>
       {assets.map((a) => (
         <div key={a.id} style={{ marginBottom: 4 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0 }}>
-            <input
-              type="checkbox"
-              className="chk"
-              checked={checked(a.id)}
-              onChange={(e) => toggle(a, e.target.checked)}
-            />
-            {a.name} <span className="hint">（{a.typeId} · v{a.version}）</span>
-          </label>
+          <Checkbox
+            checked={checked(a.id)}
+            onCheckedChange={(on) => toggle(a, on)}
+            label={<>{a.name} <span className="hint">（{a.typeId} · v{a.version}）</span></>}
+          />
           {checked(a.id) && (
-            <input
+            <Input
               style={{ marginTop: 4 }}
               placeholder="只引用这些分段 key（逗号分隔，留空 = 整份）"
               value={sectionText[a.id] ?? (value.find((r) => r.assetId === a.id)?.sections ?? []).join(', ')}

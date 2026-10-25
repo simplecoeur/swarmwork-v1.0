@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context';
+import { Button, Textarea } from './ui';
 
 export default function Standards() {
   const { S, post, refresh, toast } = useApp();
@@ -27,7 +28,7 @@ export default function Standards() {
     <div className="card" style={{ flex: 1 }}>
       <h2>审核标准 <span className="tag">总经理/审核员按此把关，保存即生效</span></h2>
       <label>审核要点（一行一条）</label>
-      <textarea
+      <Textarea
         ref={pointsRef}
         rows={4}
         placeholder={'如：标题必须带数字\n不能出现夸大词\n结尾要有悬念'}
@@ -35,7 +36,7 @@ export default function Standards() {
         onChange={(e) => setPoints(e.target.value)}
       />
       <label>甲方需求</label>
-      <textarea
+      <Textarea
         ref={clientRef}
         rows={3}
         placeholder="甲方偏好、品牌口径、交付格式要求……"
@@ -43,7 +44,7 @@ export default function Standards() {
         onChange={(e) => setClientNeeds(e.target.value)}
       />
       <div style={{ marginTop: 10 }}>
-        <button className="btn blue" onClick={saveStandards}>保存审核标准</button>
+        <Button variant="blue" onClick={saveStandards}>保存审核标准</Button>
       </div>
     </div>
   );

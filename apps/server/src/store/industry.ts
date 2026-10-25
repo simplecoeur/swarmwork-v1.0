@@ -26,7 +26,7 @@ export interface PackManifest {
   };
 }
 
-const DRAMA_PERSONA_SUFFIX = '熟悉短剧行业的节奏与受众口味，产出要短、快、强钩子。';
+export const DRAMA_PERSONA_SUFFIX = '熟悉短剧行业的节奏与受众口味，产出要短、快、强钩子。';
 
 export const SHORT_DRAMA_MANIFEST: PackManifest = {
   teams: [

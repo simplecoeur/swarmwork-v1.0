@@ -18,6 +18,8 @@ export const ErrorCode = {
   FORBIDDEN: 'FORBIDDEN',
   /** 登录失败次数过多，账号临时锁定（M6） */
   ACCOUNT_LOCKED: 'ACCOUNT_LOCKED',
+  /** 管理员代入查看中（只读）：代入态写接口一律拒绝（G-14） */
+  IMPERSONATION_READ_ONLY: 'IMPERSONATION_READ_ONLY',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

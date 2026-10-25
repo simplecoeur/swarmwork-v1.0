@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useApp } from '../context';
-import { fetchKb } from '../api';
+import { createTemplateFromTask, fetchKb } from '../api';
 import { yuan } from '../utils';
+import TaskTimeline from './TaskTimeline';
+import ResultView from './ResultView';
+import { Badge, Button, EmptyState, useConfirm, type BadgeVariant } from './ui';
 
-const chipCls: Record<string, string> = {
+const chipCls: Record<string, BadgeVariant> = {
   '已完成': 'done',
   '执行中': 'run',
   '待审核': 'rev',
@@ -13,7 +16,21 @@ const chipCls: Record<string, string> = {
 };
 
 export default function TaskWall() {
-  const { S, post, refresh, toast, teamName, memberName } = useApp();
+  const { S, post, refresh, toast, teamName, memberName, openDialog } = useApp();
+
+  /* v1.3.0 A3：把这单存为本空间模板（发单弹窗模板行可套用） */
+  async function saveAsTemplate(taskId: string) {
+    try {
+      await createTemplateFromTask(taskId);
+    } catch (e) {
+      toast('出错：' + (e instanceof Error ? e.message : String(e)));
+      return;
+    }
+    toast('已存为模板，可在发单时套用');
+  }
+  const { ask, confirmNode } = useConfirm();
+  // G-04：过程时间线展开态（按任务 id）；执行中随组件内 2s 轮询增量刷新，已完成打开即回放
+  const [openTl, setOpenTl] = useState<Record<string, boolean>>({});
   // 注入审计展示：把任务记录的 injectedKbIds 映射成条目标题（ids 变化时才重拉）
   const [kbTitles, setKbTitles] = useState<Record<string, string>>({});
   const injectedSig = S ? S.tasks.map((t) => t.injectedKbIds.join(',')).join('|') : '';
@@ -34,30 +51,48 @@ export default function TaskWall() {
     refresh();
   }
 
-  /* 后悔药（M5）：取消/重试/删除，全部先 confirm 二次确认，合法性由后端状态机兜底 */
-  async function cancelTask(id: string, title: string) {
-    if (!window.confirm(`取消任务「${title}」？取消后不会再被执行。`)) return;
-    try {
-      await post(`/api/tasks/${id}/cancel`);
-    } catch { return; }
-    toast('任务已取消');
-    refresh();
+  /* 后悔药（M5）：取消/重试/删除，全部先走自有确认弹窗二次确认，合法性由后端状态机兜底 */
+  function cancelTask(id: string, title: string) {
+    ask({
+      title: '取消任务',
+      message: `取消任务「${title}」？取消后不会再被执行。`,
+      confirmLabel: '取消任务',
+      onConfirm: async () => {
+        try {
+          await post(`/api/tasks/${id}/cancel`);
+        } catch { return; }
+        toast('任务已取消');
+        refresh();
+      },
+    });
   }
-  async function retryTask(id: string, title: string) {
-    if (!window.confirm(`重试任务「${title}」？将清除停工原因并重新排队。`)) return;
-    try {
-      await post(`/api/tasks/${id}/retry`);
-    } catch { return; }
-    toast('已清除停工原因，重新排队');
-    refresh();
+  function retryTask(id: string, title: string) {
+    ask({
+      title: '重试任务',
+      message: `重试任务「${title}」？将清除停工原因并重新排队。`,
+      confirmLabel: '重试',
+      onConfirm: async () => {
+        try {
+          await post(`/api/tasks/${id}/retry`);
+        } catch { return; }
+        toast('已清除停工原因，重新排队');
+        refresh();
+      },
+    });
   }
-  async function deleteTask(id: string, title: string) {
-    if (!window.confirm(`删除任务「${title}」的记录？账本流水会保留，不影响对账与余额。`)) return;
-    try {
-      await post(`/api/tasks/${id}/delete`);
-    } catch { return; }
-    toast('任务记录已删除（账本保留）');
-    refresh();
+  function deleteTask(id: string, title: string) {
+    ask({
+      title: '删除任务记录',
+      message: `删除任务「${title}」的记录？账本流水会保留，不影响对账与余额。`,
+      confirmLabel: '删除记录',
+      onConfirm: async () => {
+        try {
+          await post(`/api/tasks/${id}/delete`);
+        } catch { return; }
+        toast('任务记录已删除（账本保留）');
+        refresh();
+      },
+    });
   }
 
   return (
@@ -68,8 +103,8 @@ export default function TaskWall() {
           [...S.tasks].reverse().map((t) => (
             <div className="task" key={t.id} id={`task-${t.id}`}>
               <span className="tt">{t.title}</span>
-              <span className={`chip ${chipCls[t.status] || ''}`}>{t.status}</span>
-              <span className="chip">{t.type}</span>
+              <Badge variant={chipCls[t.status] ?? 'default'}>{t.status}</Badge>
+              <Badge>{t.type}</Badge>
               <div className="meta">
                 {teamName(t.teamId)} · 负责人：{memberName(t.assigneeId)}
                 {' · 全程 '}{t.totalTokens || 0} token / {yuan(t.totalCost)}
@@ -79,8 +114,28 @@ export default function TaskWall() {
                   <><br />本单注入知识：{t.injectedKbIds.map((id) => kbTitles[id] ?? id).join('、')}</>
                 ) : null}
               </div>
+              {t.status === '已完成' && t.result ? (
+                <div style={{ marginTop: 8 }}>
+                  <ResultView result={t.result} taskId={t.id} />
+                </div>
+              ) : null}
               {t.rejectReason ? <div className="reject">打回/裁决原因：{t.rejectReason}</div> : null}
               {t.blockedReason ? <div className="blocked">停工原因：{t.blockedReason}</div> : null}
+              <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <Button
+                  size="small"
+                  variant="gray"
+                  onClick={() => setOpenTl((m) => ({ ...m, [t.id]: !m[t.id] }))}
+                >
+                  {openTl[t.id] ? '收起过程时间线' : '过程时间线'}
+                </Button>
+                <Button size="small" variant="gray" onClick={() => void saveAsTemplate(t.id)}>
+                  存为模板
+                </Button>
+              </div>
+              {openTl[t.id] ? (
+                <TaskTimeline taskId={t.id} live={t.status !== '已完成' && t.status !== '已取消'} />
+              ) : null}
               {(() => {
                 // 后悔药按钮按状态出（M5）：口径与后端 domain 一致，前端只做显隐、后端兜底校验
                 const canCancel =
@@ -93,16 +148,16 @@ export default function TaskWall() {
                 return (
                   <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {t.status === '待裁决' ? (
-                      <button className="btn small green" onClick={() => adjudicate(t.id)}>裁决通过</button>
+                      <Button size="small" variant="green" onClick={() => adjudicate(t.id)}>裁决通过</Button>
                     ) : null}
                     {canRetry ? (
-                      <button className="btn small blue" onClick={() => retryTask(t.id, t.title)}>重试</button>
+                      <Button size="small" variant="blue" onClick={() => retryTask(t.id, t.title)}>重试</Button>
                     ) : null}
                     {canCancel ? (
-                      <button className="btn small gray" onClick={() => cancelTask(t.id, t.title)}>取消任务</button>
+                      <Button size="small" variant="gray" onClick={() => cancelTask(t.id, t.title)}>取消任务</Button>
                     ) : null}
                     {canDelete ? (
-                      <button className="btn small gray" onClick={() => deleteTask(t.id, t.title)}>删除记录</button>
+                      <Button size="small" variant="gray" onClick={() => deleteTask(t.id, t.title)}>删除记录</Button>
                     ) : null}
                   </div>
                 );
@@ -110,9 +165,19 @@ export default function TaskWall() {
             </div>
           ))
         ) : (
-          <p className="hint">还没有任务，去上面发布第一单真活。</p>
+          <EmptyState
+            example={<>示例：《新剧第 1 集》英文标题 · 文案 · 已完成 · 全程 12,300 token / ¥0.025</>}
+            action={
+              <Button size="small" onClick={() => openDialog('publish')}>
+                去发布第一单
+              </Button>
+            }
+          >
+            还没有任务。发布一单真活，团队就会自动领取、执行、审核并交付到这里。
+          </EmptyState>
         )}
       </div>
+      {confirmNode}
     </div>
   );
 }
