@@ -392,6 +392,12 @@ export interface SkillDto {
   createdBy: string | null;
   createdAt: string;
   updatedAt: string;
+  /** v1.5.0 K：本空间副本是否由管理台推送下发装入（skill_pushes 反查） */
+  platformPushed?: boolean;
+  /** v1.5.0 K：GitHub 导入来源（仅导入的平台行有值） */
+  sourceRepo?: string | null;
+  sourceAuthor?: string | null;
+  sourceLicense?: string | null;
 }
 
 /** v1.3.0 任务模板（A3）：官方/行业模板 workspaceId 为 null；个人模板仅本空间可见 */

@@ -23,6 +23,10 @@ export const NOTIFICATION_TYPE_LABELS: Record<string, string> = {
   skill_unfeatured: '取消精选',
   checkin_reminder: '签到提醒',
   daily_briefing: '总经理晨报',
+  announcement: '平台公告',
+  skill_pushed: '技能下发',
+  admin_message: '平台消息',
+  agent_sync_alert: '同步告警',
 };
 
 export function notificationTypeLabel(type: string): string {

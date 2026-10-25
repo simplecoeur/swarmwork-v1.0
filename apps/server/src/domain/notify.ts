@@ -26,7 +26,11 @@ export type NotificationType =
   | 'skill_featured'
   | 'skill_unfeatured'
   | 'checkin_reminder'
-  | 'daily_briefing';
+  | 'daily_briefing'
+  | 'announcement'
+  | 'skill_pushed'
+  | 'admin_message'
+  | 'agent_sync_alert';
 
 export const NOTIFICATION_TYPES: NotificationType[] = [
   'adjudication',
@@ -42,6 +46,10 @@ export const NOTIFICATION_TYPES: NotificationType[] = [
   'skill_unfeatured',
   'checkin_reminder',
   'daily_briefing',
+  'announcement',
+  'skill_pushed',
+  'admin_message',
+  'agent_sync_alert',
 ];
 
 export interface NotifyPrefs {

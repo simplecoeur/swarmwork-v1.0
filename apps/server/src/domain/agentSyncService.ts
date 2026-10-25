@@ -185,6 +185,8 @@ export async function syncAgentSource(
           recruit_count: 0,
           created_at: ts,
           updated_at: ts,
+          risk_flags: '',
+          pub_at: null,
         };
         repos.insertAgentTemplate(row);
         result.created++;

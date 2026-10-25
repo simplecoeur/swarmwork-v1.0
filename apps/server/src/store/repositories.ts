@@ -295,6 +295,10 @@ export interface SkillRow {
   listed_at?: string | null;
   contributor_name?: string | null;
   contributor_workspace_name?: string | null;
+  /** v1.5.0 K（迁移 022）：GitHub 导入来源署名（仅导入的平台行有值） */
+  source_repo?: string | null;
+  source_author?: string | null;
+  source_license?: string | null;
 }
 
 /* ----- v1.3.0 A3 任务模板（迁移 015） ----- */
@@ -369,6 +373,101 @@ export interface AgentTemplateRow {
   recruit_count: number;
   created_at: string;
   updated_at: string;
+  /** v1.5.0 C（迁移 022）：自动预筛风险标记（JSON 数组字符串）与最近一次过审上架时间 */
+  risk_flags: string;
+  pub_at: string | null;
+}
+
+/* ----- v1.5.0 C 同步流水线（迁移 022） ----- */
+export interface AgentSyncRunRow {
+  id: string;
+  source_id: string;
+  source_repo: string;
+  trigger_type: string;
+  status: string;
+  source_commit: string;
+  fetched: number;
+  created: number;
+  updated: number;
+  unchanged: number;
+  failed: number;
+  failed_details: string;
+  error: string;
+  duration_ms: number;
+  created_at: string;
+  finished_at: string;
+}
+export interface AgentRecruitEventRow {
+  id: string;
+  template_id: string;
+  workspace_id: string;
+  member_id: string;
+  created_at: string;
+}
+export interface AgentHeatSnapshotRow {
+  id: string;
+  month: string;
+  template_id: string;
+  score: number;
+  source_stars: number;
+  effective_recruits: number;
+  created_at: string;
+}
+
+/* ----- v1.5.0 K 技能下发（迁移 022） ----- */
+export interface SkillSourceImportRow {
+  id: string;
+  repo_url: string;
+  repo: string;
+  branch: string;
+  license: string;
+  license_ok: number;
+  status: string;
+  detail: string;
+  imported_by: string | null;
+  created_at: string;
+}
+export interface SkillPushRow {
+  id: string;
+  skill_id: string;
+  copy_skill_id: string;
+  workspace_id: string;
+  version: number;
+  pushed_by: string | null;
+  created_at: string;
+}
+
+/* ----- v1.5.0 L 管理端沟通运营（迁移 022） ----- */
+export interface AnnouncementRow {
+  id: string;
+  title: string;
+  body: string;
+  scope: string;
+  workspace_ids: string;
+  status: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+}
+export interface MessageThreadRow {
+  id: string;
+  workspace_id: string;
+  created_at: string;
+  updated_at: string;
+}
+export interface MessageRow {
+  id: string;
+  thread_id: string;
+  workspace_id: string;
+  sender_type: string;
+  sender_user_id: string | null;
+  body: string;
+  team_id: string | null;
+  kind: string;
+  admin_read: number;
+  owner_read: number;
+  created_at: string;
 }
 
 /* ----- v1.3.0 C2 问卷存档（迁移 018） ----- */
@@ -1325,8 +1424,9 @@ export class Repos {
           prompt_template, input_schema, kb_binding, output_spec, example_input, example_output,
           version, changelog, status, visibility, source_skill_id, source_version, install_count,
           verified_notes, created_by, created_at, updated_at,
-          featured, featured_at, listed_at, contributor_name, contributor_workspace_name)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          featured, featured_at, listed_at, contributor_name, contributor_workspace_name,
+          source_repo, source_author, source_license)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id, row.slug, row.owner_type, row.owner_id, row.workspace_id, row.name, row.description,
@@ -1336,6 +1436,7 @@ export class Repos {
         row.created_at, row.updated_at,
         row.featured ?? 0, row.featured_at ?? null, row.listed_at ?? null,
         row.contributor_name ?? null, row.contributor_workspace_name ?? null,
+        row.source_repo ?? null, row.source_author ?? null, row.source_license ?? null,
       );
   }
   updateSkill(row: SkillRow): void {
@@ -1345,7 +1446,8 @@ export class Repos {
           prompt_template=?, input_schema=?, kb_binding=?, output_spec=?, example_input=?, example_output=?,
           version=?, changelog=?, status=?, visibility=?, source_skill_id=?, source_version=?, install_count=?,
           verified_notes=?, updated_at=?,
-          featured=?, featured_at=?, listed_at=?, contributor_name=?, contributor_workspace_name=? WHERE id=?`,
+          featured=?, featured_at=?, listed_at=?, contributor_name=?, contributor_workspace_name=?,
+          source_repo=?, source_author=?, source_license=? WHERE id=?`,
       )
       .run(
         row.slug, row.owner_type, row.owner_id, row.workspace_id, row.name, row.description, row.role,
@@ -1353,7 +1455,8 @@ export class Repos {
         row.example_output, row.version, row.changelog, row.status, row.visibility, row.source_skill_id,
         row.source_version, row.install_count, row.verified_notes, row.updated_at,
         row.featured ?? 0, row.featured_at ?? null, row.listed_at ?? null,
-        row.contributor_name ?? null, row.contributor_workspace_name ?? null, row.id,
+        row.contributor_name ?? null, row.contributor_workspace_name ?? null,
+        row.source_repo ?? null, row.source_author ?? null, row.source_license ?? null, row.id,
       );
   }
   getSkill(id: string): SkillRow | undefined {
@@ -2140,8 +2243,8 @@ export class Repos {
            draft_name, draft_specialty, draft_persona, draft_role,
            pub_name, pub_specialty, pub_persona, pub_role,
            language, source_author, license, content_hash, status, has_pending_update,
-           reject_reason, recruit_count, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           reject_reason, recruit_count, created_at, updated_at, risk_flags, pub_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id, row.source_repo, row.source_path, row.division,
@@ -2149,6 +2252,7 @@ export class Repos {
         row.pub_name, row.pub_specialty, row.pub_persona, row.pub_role,
         row.language, row.source_author, row.license, row.content_hash, row.status,
         row.has_pending_update, row.reject_reason, row.recruit_count, row.created_at, row.updated_at,
+        row.risk_flags ?? '', row.pub_at ?? null,
       );
   }
   getAgentTemplate(id: string): AgentTemplateRow | undefined {
@@ -2183,19 +2287,205 @@ export class Repos {
       .prepare(
         `UPDATE agent_templates SET division=?, draft_name=?, draft_specialty=?, draft_persona=?, draft_role=?,
            pub_name=?, pub_specialty=?, pub_persona=?, pub_role=?, language=?, source_author=?, license=?,
-           content_hash=?, status=?, has_pending_update=?, reject_reason=?, recruit_count=?, updated_at=?
+           content_hash=?, status=?, has_pending_update=?, reject_reason=?, recruit_count=?, updated_at=?,
+           risk_flags=?, pub_at=?
          WHERE id=?`,
       )
       .run(
         row.division, row.draft_name, row.draft_specialty, row.draft_persona, row.draft_role,
         row.pub_name, row.pub_specialty, row.pub_persona, row.pub_role, row.language,
         row.source_author, row.license, row.content_hash, row.status, row.has_pending_update,
-        row.reject_reason, row.recruit_count, row.updated_at, row.id,
+        row.reject_reason, row.recruit_count, row.updated_at, row.risk_flags ?? '', row.pub_at ?? null, row.id,
       );
   }
   incrementAgentTemplateRecruit(id: string): void {
     this.db
       .prepare('UPDATE agent_templates SET recruit_count = recruit_count + 1, updated_at = ? WHERE id = ?')
       .run(now(), id);
+  }
+
+  /* ----- v1.5.0 C 同步 runs / 招募事件 / 热度快照（迁移 022） ----- */
+  insertAgentSyncRun(row: AgentSyncRunRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO agent_sync_runs (id, source_id, source_repo, trigger_type, status, source_commit,
+           fetched, created, updated, unchanged, failed, failed_details, error, duration_ms, created_at, finished_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.id, row.source_id, row.source_repo, row.trigger_type, row.status, row.source_commit,
+        row.fetched, row.created, row.updated, row.unchanged, row.failed, row.failed_details,
+        row.error, row.duration_ms, row.created_at, row.finished_at,
+      );
+  }
+  listAgentSyncRuns(limit = 100): AgentSyncRunRow[] {
+    return this.db
+      .prepare('SELECT * FROM agent_sync_runs ORDER BY created_at DESC, id DESC LIMIT ?')
+      .all(limit) as unknown as AgentSyncRunRow[];
+  }
+  listAgentSyncRunsBySource(sourceId: string, limit = 50): AgentSyncRunRow[] {
+    return this.db
+      .prepare('SELECT * FROM agent_sync_runs WHERE source_id = ? ORDER BY created_at DESC, id DESC LIMIT ?')
+      .all(sourceId, limit) as unknown as AgentSyncRunRow[];
+  }
+  insertAgentRecruitEvent(row: AgentRecruitEventRow): void {
+    this.db
+      .prepare('INSERT INTO agent_recruit_events (id, template_id, workspace_id, member_id, created_at) VALUES (?,?,?,?,?)')
+      .run(row.id, row.template_id, row.workspace_id, row.member_id, row.created_at);
+  }
+  /** 有效招募数：事件满 7 天且成员仍存在；同空间同模板去重（每空间最多计 1） */
+  countEffectiveRecruits(templateId: string, cutoffIso: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(DISTINCT e.workspace_id) AS n FROM agent_recruit_events e
+         JOIN members m ON m.id = e.member_id
+         WHERE e.template_id = ? AND e.created_at <= ?`,
+      )
+      .get(templateId, cutoffIso) as unknown as { n: number };
+    return row?.n ?? 0;
+  }
+  upsertAgentHeatSnapshot(row: AgentHeatSnapshotRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO agent_heat_snapshots (id, month, template_id, score, source_stars, effective_recruits, created_at)
+         VALUES (?,?,?,?,?,?,?)
+         ON CONFLICT(month, template_id) DO UPDATE SET score=excluded.score,
+           source_stars=excluded.source_stars, effective_recruits=excluded.effective_recruits, created_at=excluded.created_at`,
+      )
+      .run(row.id, row.month, row.template_id, row.score, row.source_stars, row.effective_recruits, row.created_at);
+  }
+  listAgentHeatSnapshots(month: string): AgentHeatSnapshotRow[] {
+    return this.db
+      .prepare('SELECT * FROM agent_heat_snapshots WHERE month = ? ORDER BY score DESC')
+      .all(month) as unknown as AgentHeatSnapshotRow[];
+  }
+  getAgentHeatSnapshot(month: string, templateId: string): AgentHeatSnapshotRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM agent_heat_snapshots WHERE month = ? AND template_id = ?')
+      .get(month, templateId) as unknown as AgentHeatSnapshotRow | undefined;
+  }
+
+  /* ----- v1.5.0 K 技能下发（迁移 022） ----- */
+  listPlatformSkills(): SkillRow[] {
+    return this.db
+      .prepare("SELECT * FROM skills WHERE owner_type = 'platform' ORDER BY created_at, id")
+      .all() as unknown as SkillRow[];
+  }
+  insertSkillSourceImport(row: SkillSourceImportRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO skill_source_imports (id, repo_url, repo, branch, license, license_ok, status, detail, imported_by, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(row.id, row.repo_url, row.repo, row.branch, row.license, row.license_ok, row.status, row.detail, row.imported_by, row.created_at);
+  }
+  listSkillSourceImports(limit = 50): SkillSourceImportRow[] {
+    return this.db
+      .prepare('SELECT * FROM skill_source_imports ORDER BY created_at DESC, id DESC LIMIT ?')
+      .all(limit) as unknown as SkillSourceImportRow[];
+  }
+  insertSkillPush(row: SkillPushRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO skill_pushes (id, skill_id, copy_skill_id, workspace_id, version, pushed_by, created_at)
+         VALUES (?,?,?,?,?,?,?) ON CONFLICT(skill_id, workspace_id, version) DO NOTHING`,
+      )
+      .run(row.id, row.skill_id, row.copy_skill_id, row.workspace_id, row.version, row.pushed_by, row.created_at);
+  }
+  getSkillPushByCopyId(copySkillId: string): SkillPushRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM skill_pushes WHERE copy_skill_id = ?')
+      .get(copySkillId) as unknown as SkillPushRow | undefined;
+  }
+  listSkillPushesBySkill(skillId: string): SkillPushRow[] {
+    return this.db
+      .prepare('SELECT * FROM skill_pushes WHERE skill_id = ? ORDER BY created_at DESC')
+      .all(skillId) as unknown as SkillPushRow[];
+  }
+
+  /* ----- v1.5.0 L 公告与消息线程（迁移 022） ----- */
+  insertAnnouncement(row: AnnouncementRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO announcements (id, title, body, scope, workspace_ids, status, created_by, created_at, updated_at, published_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(row.id, row.title, row.body, row.scope, row.workspace_ids, row.status, row.created_by, row.created_at, row.updated_at, row.published_at);
+  }
+  updateAnnouncement(row: AnnouncementRow): void {
+    this.db
+      .prepare(
+        `UPDATE announcements SET title=?, body=?, scope=?, workspace_ids=?, status=?, updated_at=?, published_at=? WHERE id=?`,
+      )
+      .run(row.title, row.body, row.scope, row.workspace_ids, row.status, row.updated_at, row.published_at, row.id);
+  }
+  getAnnouncement(id: string): AnnouncementRow | undefined {
+    return this.db.prepare('SELECT * FROM announcements WHERE id = ?').get(id) as unknown as AnnouncementRow | undefined;
+  }
+  listAnnouncements(): AnnouncementRow[] {
+    return this.db
+      .prepare('SELECT * FROM announcements ORDER BY created_at DESC, id DESC')
+      .all() as unknown as AnnouncementRow[];
+  }
+  getOrCreateThread(workspaceId: string): MessageThreadRow {
+    const existing = this.db
+      .prepare('SELECT * FROM message_threads WHERE workspace_id = ?')
+      .get(workspaceId) as unknown as MessageThreadRow | undefined;
+    if (existing) return existing;
+    const ts = now();
+    const row: MessageThreadRow = { id: `thread_${workspaceId}`, workspace_id: workspaceId, created_at: ts, updated_at: ts };
+    this.db
+      .prepare('INSERT INTO message_threads (id, workspace_id, created_at, updated_at) VALUES (?,?,?,?)')
+      .run(row.id, row.workspace_id, row.created_at, row.updated_at);
+    return row;
+  }
+  getThreadByWorkspace(workspaceId: string): MessageThreadRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM message_threads WHERE workspace_id = ?')
+      .get(workspaceId) as unknown as MessageThreadRow | undefined;
+  }
+  listThreads(): MessageThreadRow[] {
+    return this.db
+      .prepare('SELECT * FROM message_threads ORDER BY updated_at DESC, id')
+      .all() as unknown as MessageThreadRow[];
+  }
+  insertMessage(row: MessageRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO messages (id, thread_id, workspace_id, sender_type, sender_user_id, body, team_id, kind, admin_read, owner_read, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        row.id, row.thread_id, row.workspace_id, row.sender_type, row.sender_user_id, row.body,
+        row.team_id, row.kind, row.admin_read, row.owner_read, row.created_at,
+      );
+    this.db.prepare('UPDATE message_threads SET updated_at = ? WHERE id = ?').run(row.created_at, row.thread_id);
+  }
+  listMessages(threadId: string, limit = 200): MessageRow[] {
+    return this.db
+      .prepare('SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at ASC, id ASC LIMIT ?')
+      .all(threadId, limit) as unknown as MessageRow[];
+  }
+  lastMessage(threadId: string): MessageRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT 1')
+      .get(threadId) as unknown as MessageRow | undefined;
+  }
+  countUnreadMessages(threadId: string, forWhom: 'admin' | 'owner'): number {
+    const row = (forWhom === 'admin'
+      ? this.db
+          .prepare("SELECT COUNT(*) AS n FROM messages WHERE thread_id = ? AND sender_type = 'owner' AND admin_read = 0")
+          .get(threadId)
+      : this.db
+          .prepare("SELECT COUNT(*) AS n FROM messages WHERE thread_id = ? AND sender_type = 'admin' AND owner_read = 0")
+          .get(threadId)) as unknown as { n: number };
+    return row?.n ?? 0;
+  }
+  markThreadRead(threadId: string, whom: 'admin' | 'owner'): void {
+    if (whom === 'admin') {
+      this.db.prepare("UPDATE messages SET admin_read = 1 WHERE thread_id = ? AND sender_type = 'owner'").run(threadId);
+    } else {
+      this.db.prepare("UPDATE messages SET owner_read = 1 WHERE thread_id = ? AND sender_type = 'admin'").run(threadId);
+    }
   }
 }
