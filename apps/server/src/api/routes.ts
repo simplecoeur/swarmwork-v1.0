@@ -88,6 +88,7 @@ import {
   type QuestionnaireInput,
 } from './questionnaire';
 import { registerV120Routes } from './v120';
+import { registerV150Routes } from './v150';
 import { registerV130Routes } from './v130';
 import { registerV130StyleRoutes } from './v130style';
 import {
@@ -2092,6 +2093,13 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     { auth, wsAuth, requireAdmin, audit },
   );
   registerQuestionnaireRoutes(
+    app,
+    { repos, logger, dataDir: path.dirname(deps.dbPath) },
+    { auth, wsAuth, requireAdmin, audit },
+  );
+
+  /* ================= v1.5.0 路由组（三库归一/平台知识/同步自动化/技能下发/沟通运营/AI 运营官） ================= */
+  registerV150Routes(
     app,
     { repos, logger, dataDir: path.dirname(deps.dbPath) },
     { auth, wsAuth, requireAdmin, audit },

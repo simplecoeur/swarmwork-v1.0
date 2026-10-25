@@ -2304,6 +2304,33 @@ export class Repos {
       .run(now(), id);
   }
 
+  /* ----- v1.5.0 A 平台知识（迁移 022 前已就绪的 platform scope 之上的仓储补充） ----- */
+  listPlatformKb(): KbRow[] {
+    return this.db
+      .prepare("SELECT * FROM kb_entries WHERE scope = 'platform' ORDER BY created_at, id")
+      .all() as unknown as KbRow[];
+  }
+  /** 各知识条目被任务实际注入的次数（扫 tasks.injected_kb_ids 聚合；平台条目跨空间统计） */
+  countTaskInjectionsByKb(): Record<string, number> {
+    const rows = this.db
+      .prepare("SELECT injected_kb_ids FROM tasks WHERE injected_kb_ids != '' AND injected_kb_ids IS NOT NULL")
+      .all() as unknown as Array<{ injected_kb_ids: string }>;
+    const out: Record<string, number> = {};
+    for (const r of rows) {
+      let ids: unknown;
+      try {
+        ids = JSON.parse(r.injected_kb_ids);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(ids)) continue;
+      for (const id of ids) {
+        if (typeof id === 'string') out[id] = (out[id] ?? 0) + 1;
+      }
+    }
+    return out;
+  }
+
   /* ----- v1.5.0 C 同步 runs / 招募事件 / 热度快照（迁移 022） ----- */
   insertAgentSyncRun(row: AgentSyncRunRow): void {
     this.db

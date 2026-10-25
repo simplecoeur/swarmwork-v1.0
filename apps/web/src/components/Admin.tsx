@@ -5,6 +5,7 @@ import {
   adminFeatureSkill,
   adminRejectStyleTemplate,
   fetchAdminAgentTemplates,
+  fetchAdminPlatformKb,
   fetchAdminStyleTemplatesPending,
   fetchAgentSyncSources,
   fetchSkills,
@@ -12,6 +13,7 @@ import {
   runAgentSync,
   saveAgentSyncSources,
   type AdminAgentTemplateItem,
+  type AdminPlatformKbItem,
   type AgentSyncSourceItem,
   type StyleTemplateItem,
 } from '../api';
@@ -243,6 +245,9 @@ export default function Admin() {
           </table>
         </div>
       </div>
+
+      {/* ---------- 平台知识维护（v1.5.0 A） ---------- */}
+      <PlatformKbCard />
 
       {/* ---------- skill 上架审核（M7） ---------- */}
       <SkillReviewCard />
@@ -511,6 +516,139 @@ const FEEDBACK_CATEGORY_LABEL: Record<string, string> = {
   question: '疑问',
   other: '其他',
 };
+
+/* ---------------- 平台知识维护（v1.5.0 A） ----------------
+ * platform 条目的增删改走既有 /api/kb（服务端已管理员收口、写审计）；
+ * 列表带「累计被注入次数」（由任务 injected_kb_ids 聚合），让管理员看得见哪条真在被用。 */
+function PlatformKbCard() {
+  const { post, send, toast } = useApp();
+  const { ask, confirmNode } = useConfirm();
+  const [items, setItems] = useState<AdminPlatformKbItem[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({ title: '', body: '', tags: '', enabled: true });
+
+  const load = useCallback(async () => {
+    try {
+      setItems(await fetchAdminPlatformKb());
+    } catch {
+      /* 忽略瞬时错误 */
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function save() {
+    const payload = {
+      title: form.title.trim(),
+      body: form.body,
+      scope: 'platform',
+      scopeId: null,
+      tags: form.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
+      enabled: form.enabled,
+    };
+    if (!payload.title) return toast('标题不能为空');
+    try {
+      if (editingId === '') await post('/api/kb', payload);
+      else await send('PUT', `/api/kb/${editingId}`, payload);
+    } catch { return; }
+    toast('平台知识已保存');
+    setEditingId(null);
+    load();
+  }
+
+  function remove(item: AdminPlatformKbItem) {
+    ask({
+      title: '删除平台知识',
+      message: `删除平台知识「${item.title}」？所有空间立即不再注入这条。`,
+      confirmLabel: '删除',
+      onConfirm: async () => {
+        try {
+          await send('DELETE', `/api/kb/${item.id}`);
+        } catch { return; }
+        toast('已删除');
+        load();
+      },
+    });
+  }
+
+  return (
+    <div className="card">
+      <h2>平台知识 <span className="tag">全平台公共知识：所有空间干活时最高优先级注入；增删改均写审计</span></h2>
+      {!loaded && <p><Spinner label="加载中…" /></p>}
+      {loaded && items.length === 0 && <p className="hint">暂无平台知识条目（服务启动时会自动播种首批）。</p>}
+      {items.map((e) => (
+        <div className={`task${e.enabled ? '' : ' kb-off'}`} key={e.id}>
+          <span className="tt">{e.title}</span>
+          <Badge variant="adj">平台公共</Badge>
+          <Badge variant={e.enabled ? 'done' : 'rej'}>{e.enabled ? '启用' : '停用'}</Badge>
+          <Badge>累计注入 {e.injectedCount} 次</Badge>
+          <div className="meta">
+            {e.tags.length ? <>标签：{e.tags.join('、')} · </> : null}
+            更新于 {fmtTime(e.updatedAt)}
+          </div>
+          <pre className="result" style={{ maxHeight: 140 }}>{e.body}</pre>
+          <Button
+            size="small"
+            variant="gray"
+            onClick={() => {
+              setForm({ title: e.title, body: e.body, tags: e.tags.join(', '), enabled: e.enabled });
+              setEditingId(e.id);
+            }}
+          >
+            编辑
+          </Button>{' '}
+          <Button size="small" variant="gray" onClick={() => remove(e)}>删除</Button>
+        </div>
+      ))}
+      {editingId === null ? (
+        <div style={{ marginTop: 10 }}>
+          <Button
+            size="small"
+            onClick={() => {
+              setForm({ title: '', body: '', tags: '', enabled: true });
+              setEditingId('');
+            }}
+          >
+            ＋ 新增平台知识
+          </Button>
+        </div>
+      ) : (
+        <div className="apicard" style={{ marginTop: 10 }}>
+          <label>标题</label>
+          <Input value={form.title} onChange={(ev) => setForm({ ...form, title: ev.target.value })} />
+          <label>标签（逗号分隔）</label>
+          <Input value={form.tags} onChange={(ev) => setForm({ ...form, tags: ev.target.value })} />
+          <label>正文</label>
+          <textarea
+            rows={6}
+            value={form.body}
+            onChange={(ev) => setForm({ ...form, body: ev.target.value })}
+            style={{ width: '100%' }}
+          />
+          <div style={{ marginTop: 8 }}>
+            <label>
+              <input
+                type="checkbox"
+                checked={form.enabled}
+                onChange={(ev) => setForm({ ...form, enabled: ev.target.checked })}
+              />{' '}
+              启用（停用后不再注入）
+            </label>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <Button size="small" variant="blue" onClick={save}>保存</Button>{' '}
+            <Button size="small" variant="gray" onClick={() => setEditingId(null)}>取消</Button>
+          </div>
+        </div>
+      )}
+      {confirmNode}
+    </div>
+  );
+}
 
 function FeedbackCard() {
   const { post, toast } = useApp();

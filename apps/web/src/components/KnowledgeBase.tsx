@@ -5,8 +5,13 @@ import { Badge, Button, Checkbox, Dialog, EmptyState, Input, Select, Switch, Tex
 import type { KbEntry, KbImportDraft } from '../types';
 import type { KbScope } from '@swarm/shared';
 
-const SCOPE_LABEL: Record<KbScope, string> = { company: '公司', team: '小组', member: '成员' };
-const SCOPE_ORDER: KbScope[] = ['company', 'team', 'member'];
+/* v1.5.0 B 术语归一：四档 平台/公司/小组/成员（与注入优先级同序）；
+ * 后端 personal 条目在用户侧呈现为「成员」档（scopeKey 折算）。 */
+const SCOPE_LABEL: Record<string, string> = { platform: '平台', company: '公司', team: '小组', member: '成员' };
+const SCOPE_ORDER: string[] = ['platform', 'company', 'team', 'member'];
+/** 表单可选范围（平台级仅管理员在管理台维护，普通面板不给入口） */
+const FORM_SCOPES: KbScope[] = ['company', 'team', 'member'];
+const scopeKey = (e: KbEntry): string => (e.scope === 'personal' ? 'member' : e.scope);
 
 interface FormState {
   title: string;
@@ -35,10 +40,10 @@ function toForm(e: KbEntry): FormState {
  * 条目在任务执行时按「公司 > 本组 > 本人 > 他组」优先级 + 关键词命中注入（见后端 §10）。
  */
 export default function KnowledgeBase() {
-  const { S, post, send, toast, teamName, memberName } = useApp();
+  const { S, post, send, toast, teamName, memberName, user, setTab } = useApp();
   const { ask, confirmNode } = useConfirm();
   const [entries, setEntries] = useState<KbEntry[]>([]);
-  const [filter, setFilter] = useState<'all' | KbScope>('all');
+  const [filter, setFilter] = useState<'all' | string>('all');
   const [editingId, setEditingId] = useState<string | null>(null); // null=未编辑；''=新建
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   /* G-06 文件导入（两段式 Dialog：选范围+文件 → 预览勾选/改 title → 确认落库） */
@@ -65,6 +70,7 @@ export default function KnowledgeBase() {
   if (!S) return null;
 
   const scopeName = (e: KbEntry): string => {
+    if (e.scope === 'platform') return '平台公共';
     if (e.scope === 'company') return '全公司';
     if (e.scope === 'team') return teamName(e.scopeId ?? '');
     return memberName(e.scopeId);
@@ -160,18 +166,18 @@ export default function KnowledgeBase() {
     });
   }
 
-  const visible = entries.filter((e) => filter === 'all' || e.scope === filter);
+  const visible = entries.filter((e) => filter === 'all' || scopeKey(e) === filter);
 
   return (
     <div className="card">
-      <h2>知识库 <span className="tag">干活时自动注入参考 · 公司标准全文 + 关键词命中的小组/个人资料</span></h2>
+      <h2>知识库 <span className="tag">干活时自动注入参考 · 平台公共 + 公司标准全文 + 关键词命中的小组/成员资料</span></h2>
 
       <div className="row" style={{ alignItems: 'flex-end', marginBottom: 10 }}>
         <div style={{ flex: '0 0 220px' }}>
           <label>按范围筛选</label>
           <Select
             value={filter}
-            onValueChange={(v) => setFilter(v as 'all' | KbScope)}
+            onValueChange={(v) => setFilter(v as 'all' | string)}
             options={[
               { value: 'all', label: '全部范围' },
               ...SCOPE_ORDER.map((s) => ({ value: s, label: SCOPE_LABEL[s] })),
@@ -182,6 +188,12 @@ export default function KnowledgeBase() {
           <Button onClick={startCreate}>新建条目</Button>{' '}
           <Button variant="gray" onClick={() => setImportOpen(true)}>文件导入</Button>{' '}
           <Button variant="gray" onClick={load}>刷新</Button>
+          {user?.isPlatformAdmin && (
+            <>
+              {' '}
+              <Button variant="gray" onClick={() => setTab('admin')}>去管理台维护平台知识</Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -195,7 +207,7 @@ export default function KnowledgeBase() {
               <Select
                 value={form.scope}
                 onValueChange={(v) => setForm({ ...form, scope: v as KbScope, scopeId: '' })}
-                options={SCOPE_ORDER.map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
+                options={FORM_SCOPES.map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
               />
             </div>
             {form.scope === 'team' && (
@@ -243,8 +255,9 @@ export default function KnowledgeBase() {
       )}
 
       {SCOPE_ORDER.map((scope) => {
-        const group = visible.filter((e) => e.scope === scope);
+        const group = visible.filter((e) => scopeKey(e) === scope);
         if (!group.length) return null;
+        const isPlatform = scope === 'platform';
         return (
           <div key={scope}>
             <div className="hint" style={{ margin: '10px 0 6px', fontWeight: 600 }}>{SCOPE_LABEL[scope]}级</div>
@@ -252,18 +265,26 @@ export default function KnowledgeBase() {
               <div className={`task${e.enabled ? '' : ' kb-off'}`} key={e.id}>
                 <span className="tt">{e.title}</span>
                 <Badge>{scopeName(e)}</Badge>
+                {isPlatform && <Badge variant="adj">平台公共 · 只读</Badge>}
                 <Badge variant={e.enabled ? 'done' : 'rej'}>{e.enabled ? '启用' : '停用'}</Badge>
                 <div className="meta">
                   {e.tags.length ? <>标签：{e.tags.join('、')} · </> : null}
                   更新于 {new Date(e.updatedAt).toLocaleString()}
                 </div>
                 <pre className="result" style={{ maxHeight: 160 }}>{e.body}</pre>
-                <Button size="small" variant="gray" onClick={() => startEdit(e)}>编辑</Button>{' '}
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8, verticalAlign: 'middle' }}>
-                  <Switch checked={e.enabled} onCheckedChange={() => toggleEnabled(e)} ariaLabel={`启用/停用「${e.title}」`} />
-                  <span className="hint">{e.enabled ? '启用中' : '已停用'}</span>
-                </span>{' '}
-                <Button size="small" variant="gray" onClick={() => remove(e)}>删除</Button>
+                {!isPlatform && (
+                  <>
+                    <Button size="small" variant="gray" onClick={() => startEdit(e)}>编辑</Button>{' '}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginLeft: 8, verticalAlign: 'middle' }}>
+                      <Switch checked={e.enabled} onCheckedChange={() => toggleEnabled(e)} ariaLabel={`启用/停用「${e.title}」`} />
+                      <span className="hint">{e.enabled ? '启用中' : '已停用'}</span>
+                    </span>{' '}
+                    <Button size="small" variant="gray" onClick={() => remove(e)}>删除</Button>
+                  </>
+                )}
+                {isPlatform && (
+                  <div className="hint">平台公共知识由平台管理员在管理台统一维护，所有空间干活时按最高优先级参考。</div>
+                )}
               </div>
             ))}
           </div>
@@ -294,7 +315,7 @@ export default function KnowledgeBase() {
               <Select
                 value={impScope}
                 onValueChange={(v) => { setImpScope(v as KbScope); setImpScopeId(''); }}
-                options={SCOPE_ORDER.map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
+                options={FORM_SCOPES.map((s) => ({ value: s, label: SCOPE_LABEL[s] }))}
               />
             </div>
             {impScope === 'team' && (

@@ -625,6 +625,15 @@ export interface AgentTemplateItem {
   recruitCount: number;
 }
 
+/* ---------- v1.5.0 A：管理台平台知识 ---------- */
+export interface AdminPlatformKbItem extends KbEntry {
+  injectedCount: number;
+}
+export async function fetchAdminPlatformKb(): Promise<AdminPlatformKbItem[]> {
+  const j = await requestRaw('GET', '/api/admin/platform-kb');
+  return (j.entries as AdminPlatformKbItem[]) ?? [];
+}
+
 export async function fetchAgentTemplates(): Promise<AgentTemplateItem[]> {
   const j = await requestRaw('GET', '/api/agent-templates');
   return (j.templates as AgentTemplateItem[]) ?? [];
