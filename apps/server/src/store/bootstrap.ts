@@ -8,6 +8,7 @@ import { forgeTeams, type ForgeAnswers, type ForgeSummary } from '../domain/team
 import { ensureShortDramaPack, parseManifest, registerPackExtensions } from './industry';
 import { ensureOfficialSkills } from './officialSkills';
 import { ensurePlatformKb } from './platformKb';
+import { ensureAiOperatorUser } from '../domain/aiOpsService';
 import { ensureOfficialStyleTemplates } from './styleTemplates';
 import { ensureTaskTemplates } from './taskTemplates';
 import {
@@ -38,6 +39,7 @@ export async function ensurePlatform(
   ensureTaskTemplates(repos);
   ensureOfficialStyleTemplates(repos);
   ensurePlatformKb(repos);
+  ensureAiOperatorUser(repos);
 
   if (repos.getUser(ADMIN_USER_ID)) return;
   const email = (process.env.SWARM_ADMIN_EMAIL || 'admin@swarm.local').toLowerCase();

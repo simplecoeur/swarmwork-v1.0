@@ -12,6 +12,7 @@ import {
   fetchAdminThreads,
   fetchAgentSyncRuns,
   fetchAgentSyncSources,
+  fetchAiOpsRuns,
   fetchPlatformSkillsAdmin,
   fetchSkillImports,
   fetchSkills,
@@ -24,6 +25,7 @@ import {
   type AgentSyncBoardItem,
   type AgentSyncRunItem,
   type AgentSyncSourceItem,
+  type AiOpsRunItem,
   type AnnouncementItem,
   type SkillImportItem,
   type StyleTemplateItem,
@@ -266,6 +268,9 @@ export default function Admin() {
 
       {/* ---------- 技能下发（v1.5.0 K） ---------- */}
       <SkillDispatchCard />
+
+      {/* ---------- AI 平台运营官（v1.5.0 M） ---------- */}
+      <AiOpsCard />
 
       {/* ---------- skill 上架审核（M7） ---------- */}
       <SkillReviewCard />
@@ -1160,6 +1165,173 @@ function SkillDispatchCard() {
             )}
           </div>
         ))}
+    </div>
+  );
+}
+
+/* ---------------- AI 平台运营官（v1.5.0 M，一期） ----------------
+ * 一句话指令 → 平台级 API 解析为结构化计划 → 预览（破坏性步骤标红、需一次确认）→ 逐步执行 →
+ * 每步写审计并关联原指令与 run；公告/平台知识/技能下发三类支持按步回滚。未配置平台体验 API 时后端明确报错。 */
+function AiOpsCard() {
+  const { post, toast } = useApp();
+  const { ask, confirmNode } = useConfirm();
+  const [instruction, setInstruction] = useState('');
+  const [current, setCurrent] = useState<AiOpsRunItem | null>(null);
+  const [runs, setRuns] = useState<AiOpsRunItem[]>([]);
+  const [busy, setBusy] = useState('');
+
+  const loadRuns = useCallback(async () => {
+    try {
+      setRuns(await fetchAiOpsRuns());
+    } catch {
+      /* 忽略 */
+    }
+  }, []);
+  useEffect(() => {
+    loadRuns();
+  }, [loadRuns]);
+
+  async function plan() {
+    if (!instruction.trim()) return toast('先输入一句指令');
+    setBusy('plan');
+    try {
+      const j = await post('/api/admin/ai-ops/plan', { instruction: instruction.trim() });
+      setCurrent(j.run as AiOpsRunItem);
+      loadRuns();
+    } catch {
+      /* post 已 toast（未配置平台 API 等明确错误在这里呈现） */
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function execute(confirmDestructive: boolean) {
+    if (!current) return;
+    setBusy('exec');
+    try {
+      const j = await post(`/api/admin/ai-ops/runs/${current.id}/execute`, { confirmDestructive });
+      const run = j.run as AiOpsRunItem;
+      setCurrent(run);
+      if (run.status === 'awaiting_confirm') {
+        toast('计划含破坏性步骤，请核对后点「确认破坏性步骤并执行」');
+      } else {
+        toast(`执行完成：成功 ${run.report?.done ?? 0} 步、失败 ${run.report?.failed ?? 0} 步`);
+      }
+      loadRuns();
+    } catch {
+      /* post 已 toast */
+    } finally {
+      setBusy('');
+    }
+  }
+
+  function rollback(run: AiOpsRunItem, stepIndex: number) {
+    ask({
+      title: '回滚该步',
+      message: `回滚第 ${stepIndex + 1} 步（${run.steps[stepIndex]?.op}）？公告会撤下、平台知识会还原、技能下发会卸载对应空间副本。`,
+      confirmLabel: '回滚',
+      onConfirm: async () => {
+        try {
+          const j = await post(`/api/admin/ai-ops/runs/${run.id}/rollback/${stepIndex}`);
+          toast(String(j.summary ?? '已回滚'));
+          if (j.run) setCurrent(j.run as AiOpsRunItem);
+          loadRuns();
+        } catch {
+          /* post 已 toast */
+        }
+      },
+    });
+  }
+
+  const stepLine = (run: AiOpsRunItem, s: AiOpsRunItem['steps'][number], i: number) => (
+    <div className="task" key={`${run.id}-${i}`}>
+      <span className="tt" style={{ fontSize: 13.5 }}>
+        {i + 1}. {s.op}
+      </span>{' '}
+      {s.destructive && <Badge variant="rej">破坏性</Badge>}{' '}
+      <Badge
+        variant={s.status === 'done' ? 'done' : s.status === 'failed' ? 'rej' : s.status === 'rolled_back' ? 'can' : 'adj'}
+      >
+        {s.status === 'done' ? '已执行' : s.status === 'failed' ? '失败' : s.status === 'rolled_back' ? '已回滚' : '待执行'}
+      </Badge>
+      <div className="meta">
+        参数：{JSON.stringify(s.params)}
+        {s.summary ? <><br />结果：{s.summary}</> : null}
+        {s.error ? <><br />失败：{s.error}</> : null}
+      </div>
+      {s.status === 'done' && s.rollback && (
+        <Button size="small" variant="gray" onClick={() => rollback(run, i)}>回滚这一步</Button>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="card">
+      <h2>
+        AI 运营{' '}
+        <span className="tag">一句话自动维护平台：指令 → 结构化计划 → 执行 → 审计留痕；驱动模型用平台体验 API（未配置会明确提示）</span>
+      </h2>
+      <div className="row" style={{ alignItems: 'flex-end' }}>
+        <div style={{ flex: '1 1 380px' }}>
+          <label>给运营官的指令</label>
+          <Input
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            placeholder="如：给全部空间发一条公告：本周六凌晨维护；或：现在有多少待审积压"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void plan();
+            }}
+          />
+        </div>
+        <div>
+          <Button variant="blue" disabled={busy === 'plan'} onClick={plan}>
+            {busy === 'plan' ? '解析中…' : '生成计划'}
+          </Button>
+        </div>
+      </div>
+
+      {current && (
+        <div style={{ marginTop: 10 }}>
+          <div className="hint" style={{ fontWeight: 600 }}>
+            当前计划（run {current.id}，状态 {current.status}）：{current.instruction}
+          </div>
+          {current.steps.map((s, i) => stepLine(current, s, i))}
+          {current.status === 'planned' && (
+            <Button variant="blue" disabled={busy === 'exec'} onClick={() => execute(false)}>
+              {busy === 'exec' ? '执行中…' : '执行计划'}
+            </Button>
+          )}
+          {current.status === 'awaiting_confirm' && (
+            <Button variant="blue" disabled={busy === 'exec'} onClick={() => execute(true)}>
+              {busy === 'exec' ? '执行中…' : '⚠️ 确认破坏性步骤并执行'}
+            </Button>
+          )}
+          {current.report && (
+            <p className="hint">
+              执行报告：共 {current.report.total} 步，成功 {current.report.done}、失败 {current.report.failed}
+              {current.finishedAt ? `，完成于 ${fmtTime(current.finishedAt)}` : ''}
+            </p>
+          )}
+        </div>
+      )}
+
+      <h3 style={{ marginTop: 16 }}>历史 run（可回看/回滚）</h3>
+      {runs.length === 0 && <p className="hint">暂无运营记录。</p>}
+      {runs.slice(0, 10).map((r) => (
+        <div className="task" key={r.id} style={{ opacity: 0.9 }}>
+          <span className="tt" style={{ fontSize: 13.5 }}>{r.instruction}</span>{' '}
+          <Badge>{r.status}</Badge> <Badge>{fmtTime(r.createdAt)}</Badge>
+          <div className="meta">
+            {r.steps.map((s, i) => (
+              <span key={i}>
+                {i + 1}.{s.op}（{s.status}）{s.summary ? `：${s.summary}` : ''}{s.error ? `：失败 ${s.error}` : ''}；
+              </span>
+            ))}
+          </div>
+          <Button size="small" variant="gray" onClick={() => setCurrent(r)}>回看</Button>
+        </div>
+      ))}
+      {confirmNode}
     </div>
   );
 }

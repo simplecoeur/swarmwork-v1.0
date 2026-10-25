@@ -651,6 +651,31 @@ export async function searchKbTest(
   };
 }
 
+/* ---------- v1.5.0 M：AI 平台运营官 ---------- */
+export interface AiOpsStepItem {
+  op: string;
+  params: Record<string, unknown>;
+  destructive: boolean;
+  status: 'pending' | 'done' | 'failed' | 'skipped' | 'rolled_back';
+  summary?: string;
+  error?: string;
+  rollback?: Record<string, unknown> | null;
+}
+export interface AiOpsRunItem {
+  id: string;
+  instruction: string;
+  status: string;
+  steps: AiOpsStepItem[];
+  report: { total?: number; done?: number; failed?: number; finishedAt?: string } | null;
+  createdBy: string | null;
+  createdAt: string;
+  finishedAt: string;
+}
+export async function fetchAiOpsRuns(): Promise<AiOpsRunItem[]> {
+  const j = await requestRaw('GET', '/api/admin/ai-ops/runs');
+  return (j.runs as AiOpsRunItem[]) ?? [];
+}
+
 /* ---------- v1.5.0 K：技能下发（导入/上架/推送） ---------- */
 export interface SkillImportItem {
   id: string;

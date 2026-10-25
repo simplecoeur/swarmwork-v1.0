@@ -1,7 +1,10 @@
 import type { Repos, SkillRow, SkillSourceImportRow } from '../store/repositories';
 import { nowIso, uid } from '../util';
+import { appendThreadMessage } from './adminComms';
 import { defaultAgentFetcher, type AgentFetcher } from './agentSyncService';
+import { notifyOwner } from './notify';
 import { parseFrontmatter, BASE_ROLES } from './parseAgencyAgent';
+import { copySkillSnapshot } from './skillService';
 import { classifyLicenseText, PERMISSIVE_LICENSES } from './github';
 
 /**
@@ -205,4 +208,84 @@ export async function importSkillsFromGithub(
     .filter(Boolean)
     .join('；');
   return finish({ createdSkillIds });
+}
+
+/* ---------- 推送下发（K 路由与 M 运营官共用同一实现，保证口径一致） ---------- */
+export interface SkillPushOutcome {
+  installed: number;
+  upgraded: number;
+  skipped: number;
+  targets: number;
+  /** 实际装/改的副本（回滚技能下发时按此清单卸载） */
+  copies: Array<{ workspaceId: string; copyId: string; action: 'installed' | 'upgraded' }>;
+}
+
+export function pushSkillToWorkspaces(
+  repos: Repos,
+  skill: SkillRow,
+  workspaceIds: string[],
+  pushedBy: string,
+  note?: string,
+): SkillPushOutcome {
+  const out: SkillPushOutcome = { installed: 0, upgraded: 0, skipped: 0, targets: workspaceIds.length, copies: [] };
+  for (const wsId of workspaceIds) {
+    if (!repos.getWorkspace(wsId)) continue;
+    const existing = repos.findInstalledCopy(wsId, skill.id);
+    let copyId: string;
+    let action: 'installed' | 'upgraded';
+    if (existing && existing.source_version === skill.version) {
+      out.skipped++;
+      continue;
+    } else if (existing) {
+      repos.updateSkill({
+        ...existing,
+        name: skill.name,
+        description: skill.description,
+        role: skill.role,
+        prompt_template: skill.prompt_template,
+        input_schema: skill.input_schema,
+        kb_binding: skill.kb_binding,
+        output_spec: skill.output_spec,
+        example_input: skill.example_input,
+        example_output: skill.example_output,
+        source_version: skill.version,
+        updated_at: nowIso(),
+      });
+      copyId = existing.id;
+      action = 'upgraded';
+      out.upgraded++;
+    } else {
+      const copy = copySkillSnapshot(repos, skill, wsId, pushedBy);
+      copyId = copy.id;
+      action = 'installed';
+      out.installed++;
+    }
+    repos.insertSkillPush({
+      id: uid('skpush'),
+      skill_id: skill.id,
+      workspace_id: wsId,
+      version: skill.version,
+      copy_skill_id: copyId,
+      pushed_by: pushedBy,
+      created_at: nowIso(),
+    });
+    out.copies.push({ workspaceId: wsId, copyId, action });
+    notifyOwner(
+      repos, wsId, 'skill_pushed',
+      `平台下发技能：${skill.name}`,
+      `平台把技能「${skill.name}」v${skill.version} ${action === 'installed' ? '装入' : '更新到'}了本空间，在技能库里带「平台下发」徽标。`,
+      copyId,
+    );
+    appendThreadMessage(repos, wsId, {
+      senderType: 'admin',
+      senderUserId: pushedBy,
+      body:
+        `平台下发了技能「${skill.name}」v${skill.version}` +
+        (skill.source_repo ? `（来源 ${skill.source_repo}·${skill.source_author ?? ''}·${skill.source_license ?? ''}）` : '') +
+        `，已${action === 'installed' ? '装入' : '更新到'}本空间技能库，发单时可直接套用。` +
+        (note ? `\n附言：${note}` : ''),
+      kind: 'skill_push',
+    });
+  }
+  return out;
 }

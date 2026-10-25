@@ -427,6 +427,16 @@ export interface SkillSourceImportRow {
   imported_by: string | null;
   created_at: string;
 }
+export interface AiOpsRunRow {
+  id: string;
+  instruction: string;
+  plan: string;
+  status: string;
+  created_by: string | null;
+  created_at: string;
+  finished_at: string;
+  report: string;
+}
 export interface SkillPushRow {
   id: string;
   skill_id: string;
@@ -1230,6 +1240,14 @@ export class Repos {
     this.db.prepare('DELETE FROM memberships WHERE user_id = ? AND workspace_id = ?').run(userId, workspaceId);
   }
   /** G-15 转让：同步 workspaces.owner_user_id（本表自 003 起即有 owner 列，以它 + memberships role 双写为准） */
+  /** 整行更新空间（v1.5.0 M 运营官封停/恢复空间用） */
+  updateWorkspace(row: WorkspaceRow): void {
+    this.db
+      .prepare(
+        `UPDATE workspaces SET name=?, owner_user_id=?, status=?, industry_pack_id=? WHERE id=?`,
+      )
+      .run(row.name, row.owner_user_id, row.status, row.industry_pack_id, row.id);
+  }
   updateWorkspaceOwner(workspaceId: string, ownerUserId: string): void {
     this.db.prepare('UPDATE workspaces SET owner_user_id = ? WHERE id = ?').run(ownerUserId, workspaceId);
   }
@@ -2329,6 +2347,35 @@ export class Repos {
       }
     }
     return out;
+  }
+
+  /* ----- v1.5.0 M AI 运营官 runs（迁移 023） ----- */
+  insertAiOpsRun(row: AiOpsRunRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO ai_ops_runs (id, instruction, plan, status, created_by, created_at, finished_at, report)
+         VALUES (?,?,?,?,?,?,?,?)`,
+      )
+      .run(row.id, row.instruction, row.plan, row.status, row.created_by, row.created_at, row.finished_at, row.report);
+  }
+  getAiOpsRun(id: string): AiOpsRunRow | undefined {
+    return this.db.prepare('SELECT * FROM ai_ops_runs WHERE id = ?').get(id) as unknown as AiOpsRunRow | undefined;
+  }
+  listAiOpsRuns(limit = 50): AiOpsRunRow[] {
+    return this.db
+      .prepare('SELECT * FROM ai_ops_runs ORDER BY created_at DESC LIMIT ?')
+      .all(limit) as unknown as AiOpsRunRow[];
+  }
+  updateAiOpsRun(row: AiOpsRunRow): void {
+    this.db
+      .prepare(
+        `UPDATE ai_ops_runs SET instruction=?, plan=?, status=?, created_by=?, created_at=?, finished_at=?, report=? WHERE id=?`,
+      )
+      .run(row.instruction, row.plan, row.status, row.created_by, row.created_at, row.finished_at, row.report, row.id);
+  }
+  /** M 回滚·技能下发撤销：删掉某技能某版本的推送记录（副本行另行归档） */
+  deleteSkillPushes(skillId: string, version: number): void {
+    this.db.prepare('DELETE FROM skill_pushes WHERE skill_id = ? AND version = ?').run(skillId, version);
   }
 
   /* ----- v1.5.0 C 同步 runs / 招募事件 / 热度快照（迁移 022） ----- */

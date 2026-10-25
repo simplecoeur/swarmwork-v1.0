@@ -6,17 +6,26 @@ import {
   messageDto,
   notifyAnnouncement,
 } from '../domain/adminComms';
+import {
+  aiOpsCatalogText,
+  createAiOpsRun,
+  executeAiOpsRun,
+  parseAiOpsPlan,
+  parseRunPlan,
+  rollbackAiOpsStep,
+} from '../domain/aiOpsService';
 import { getAgentSyncSources } from '../domain/agentSyncService';
 import { kbCapTokens, kbScopeRank, selectKbForInjection } from '../domain/kbService';
-import { notifyOwner } from '../domain/notify';
-import { copySkillSnapshot } from '../domain/skillService';
-import { importSkillsFromGithub } from '../domain/skillImportService';
+import { importSkillsFromGithub, pushSkillToWorkspaces } from '../domain/skillImportService';
+import { createProvider } from '../llm/gateway';
 import { estimateTokens } from '../llm/parse';
 import type { Logger } from '../logger';
-import type { AnnouncementRow, KbRow, Repos, SkillRow } from '../store/repositories';
+import type { AiOpsRunRow, AnnouncementRow, KbRow, Repos, SkillRow } from '../store/repositories';
 import { nowIso, uid } from '../util';
 import { skillDto, type M7Helpers } from './m7';
 import {
+  aiOpsExecuteSchema,
+  aiOpsPlanSchema,
   announcementCreateSchema,
   announcementUpdateSchema,
   kbSearchTestSchema,
@@ -365,73 +374,101 @@ export function registerV150Routes(
       body.workspaceIds === 'all'
         ? repos.listWorkspaces().map((w) => w.id)
         : [...new Set(body.workspaceIds)];
-    let installed = 0;
-    let upgraded = 0;
-    let skipped = 0;
-    for (const wsId of targets) {
-      if (!repos.getWorkspace(wsId)) continue;
-      const existing = repos.findInstalledCopy(wsId, skill!.id);
-      let copyId: string;
-      let action: 'installed' | 'upgraded';
-      if (existing && existing.source_version === skill!.version) {
-        skipped++;
-        continue;
-      } else if (existing) {
-        repos.updateSkill({
-          ...existing,
-          name: skill!.name,
-          description: skill!.description,
-          role: skill!.role,
-          prompt_template: skill!.prompt_template,
-          input_schema: skill!.input_schema,
-          kb_binding: skill!.kb_binding,
-          output_spec: skill!.output_spec,
-          example_input: skill!.example_input,
-          example_output: skill!.example_output,
-          source_version: skill!.version,
-          updated_at: nowIso(),
-        });
-        copyId = existing.id;
-        action = 'upgraded';
-        upgraded++;
-      } else {
-        const copy = copySkillSnapshot(repos, skill!, wsId, ctx.user.id);
-        copyId = copy.id;
-        action = 'installed';
-        installed++;
-      }
-      repos.insertSkillPush({
-        id: uid('skpush'),
-        skill_id: skill!.id,
-        workspace_id: wsId,
-        version: skill!.version,
-        copy_skill_id: copyId,
-        pushed_by: ctx.user.id,
-        created_at: nowIso(),
-      });
-      notifyOwner(
-        repos, wsId, 'skill_pushed',
-        `平台下发技能：${skill!.name}`,
-        `管理员把技能「${skill!.name}」v${skill!.version} ${action === 'installed' ? '装入' : '更新到'}了本空间，在技能库里带「平台下发」徽标。`,
-        copyId,
-      );
-      // L 衔接：线程里同步落一条下发说明（带 skill 名与版本）
-      appendThreadMessage(repos, wsId, {
-        senderType: 'admin',
-        senderUserId: ctx.user.id,
-        body:
-          `平台下发了技能「${skill!.name}」v${skill!.version}` +
-          (skill!.source_repo ? `（来源 ${skill!.source_repo}·${skill!.source_author ?? ''}·${skill!.source_license ?? ''}）` : '') +
-          `，已${action === 'installed' ? '装入' : '更新到'}本空间技能库，发单时可直接套用。` +
-          (body.note ? `\n管理员附言：${body.note}` : ''),
-        kind: 'skill_push',
-      });
-    }
+    const out = pushSkillToWorkspaces(repos, skill!, targets, ctx.user.id, body.note);
     audit(
       req, ctx, 'skill_push', 'skill', id,
-      `${skill!.name} v${skill!.version} → 目标 ${targets.length} 空间：新装 ${installed}、升级 ${upgraded}、跳过 ${skipped}`,
+      `${skill!.name} v${skill!.version} → 目标 ${targets.length} 空间：新装 ${out.installed}、升级 ${out.upgraded}、跳过 ${out.skipped}`,
     );
-    return { ok: true, installed, upgraded, skipped, targets: targets.length };
+    return { ok: true, installed: out.installed, upgraded: out.upgraded, skipped: out.skipped, targets: targets.length };
+  });
+
+  /* ================= M AI 平台运营官（一期）：计划 → 预览/确认破坏性步骤 → 执行 → 报告/回滚 ================= */
+  const aiOpsRunDto = (run: AiOpsRunRow) => ({
+    id: run.id,
+    instruction: run.instruction,
+    status: run.status,
+    steps: parseRunPlan(run).steps,
+    report: (() => {
+      try {
+        return run.report ? (JSON.parse(run.report) as Record<string, unknown>) : null;
+      } catch {
+        return null;
+      }
+    })(),
+    createdBy: run.created_by,
+    createdAt: run.created_at,
+    finishedAt: run.finished_at,
+  });
+  app.post('/api/admin/ai-ops/plan', async (req) => {
+    const ctx = requireAdmin(req);
+    const body = aiOpsPlanSchema.parse(req.body ?? {});
+    const trial = repos.getTrialApi();
+    if (!trial) {
+      fail(
+        ErrorCode.VALIDATION,
+        '尚未配置平台级 API：请先到管理台「体验额度」配置平台体验 API（AI 运营官用它解析指令），配置前运营官不可用',
+      );
+    }
+    const provider = createProvider(trial!);
+    const system = [
+      '你是蜂群平台的 AI 运营官，负责把管理员的一句话指令拆成结构化执行计划。',
+      '只能从下面的动作目录里选 op，参数必须符合各自的参数说明；空间/用户/技能等对象用管理员在指令里给出的名称或 id 原样填入（执行时会解析）。',
+      '只输出一个 JSON 对象，不要任何解释文字：{"steps":[{"op":"...","params":{...}}]}。',
+      '可用的动作目录：',
+      aiOpsCatalogText(),
+    ].join('\n');
+    let text: string;
+    try {
+      const out = await provider.chat({
+        model: trial!.model,
+        system,
+        messages: [{ role: 'user', content: body.instruction }],
+        temperature: 0,
+        maxTokens: 2000,
+        timeoutMs: 60000,
+      });
+      text = out.text;
+    } catch (e) {
+      fail('UPSTREAM', `运营官模型调用失败：${e instanceof Error ? e.message : String(e)}`, 502);
+    }
+    let plan;
+    try {
+      plan = parseAiOpsPlan(text!);
+    } catch (e) {
+      fail(ErrorCode.VALIDATION, `计划解析失败（未执行任何动作）：${e instanceof Error ? e.message : String(e)}`);
+    }
+    const run = createAiOpsRun(repos, body.instruction, plan!, ctx.user.id);
+    audit(req, ctx, 'ai_ops_plan', 'ai_ops_run', run.id, `指令：${body.instruction}｜共 ${plan!.steps.length} 步`);
+    return { ok: true, run: aiOpsRunDto(run), needsConfirm: plan!.steps.some((s) => s.destructive) };
+  });
+  app.post('/api/admin/ai-ops/runs/:id/execute', async (req) => {
+    const ctx = requireAdmin(req);
+    const { id } = req.params as { id: string };
+    const body = aiOpsExecuteSchema.parse(req.body ?? {});
+    const auditFn = (action: string, targetType: string, targetId: string, detail: string) =>
+      audit(req, ctx, action, targetType, targetId, detail);
+    const run = await executeAiOpsRun(repos, id, auditFn, { confirmDestructive: !!body.confirmDestructive });
+    return { ok: true, run: aiOpsRunDto(run) };
+  });
+  app.get('/api/admin/ai-ops/runs', async (req) => {
+    requireAdmin(req);
+    return { ok: true, runs: repos.listAiOpsRuns(50).map(aiOpsRunDto) };
+  });
+  app.get('/api/admin/ai-ops/runs/:id', async (req) => {
+    requireAdmin(req);
+    const { id } = req.params as { id: string };
+    const run = repos.getAiOpsRun(id);
+    if (!run) fail(ErrorCode.NOT_FOUND, '运营 run 不存在', 404);
+    return { ok: true, run: aiOpsRunDto(run!) };
+  });
+  app.post('/api/admin/ai-ops/runs/:id/rollback/:stepIndex', async (req) => {
+    const ctx = requireAdmin(req);
+    const { id, stepIndex } = req.params as { id: string; stepIndex: string };
+    const auditFn = (action: string, targetType: string, targetId: string, detail: string) =>
+      audit(req, ctx, action, targetType, targetId, detail);
+    const out = await rollbackAiOpsStep(repos, id, Number(stepIndex), auditFn);
+    const run = repos.getAiOpsRun(id);
+    return { ok: true, ...out, run: run ? aiOpsRunDto(run) : null };
   });
 
   /* ================= E KB 搜索测试：纯读 selectKbForInjection，按当前注入策略回放命中与排序档 ================= */
