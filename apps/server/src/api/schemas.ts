@@ -54,6 +54,18 @@ export const memberSaveSchema = z.object({
     role: z.string().trim().min(1, '工种必填'),
     teamId: z.string().min(1, '必须指定所属小组'),
     prompt: z.string().default(''),
+    // v1.4.0 H：成员级 API 绑定（undefined 不改 / null 清除 / 字符串 换绑，合法性在路由层查本空间 apis）
+    apiId: z.string().min(1).nullable().optional(),
+    // v1.4.0 I：外观定制（undefined 不改 / null 清除 / 对象 覆盖，字段合法性在仓储 sanitizeAppearance 清洗）
+    appearance: z
+      .object({
+        skin: z.string().optional(),
+        shirt: z.string().optional(),
+        hairColor: z.string().optional(),
+        hairStyle: z.enum(['short', 'long', 'bald', 'bun']).optional(),
+      })
+      .nullable()
+      .optional(),
   }),
 });
 

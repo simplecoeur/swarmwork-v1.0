@@ -26,12 +26,30 @@ export interface TeamDto {
   apiId: string | null;
 }
 
+/** v1.4.0 I：像素小人发型枚举（代码绘制分支，见 web PixelOffice） */
+export type HairStyle = 'short' | 'long' | 'bald' | 'bun';
+
+/**
+ * v1.4.0 I：成员外观定制（全部字段可缺省；整体为 null = 未定制，走自动推导）。
+ * skin 须为画布 SKINS 5 档之一；shirt/hairColor 为 #rrggbb；hairStyle 为 HairStyle 枚举。
+ */
+export interface MemberAppearance {
+  skin?: string;
+  shirt?: string;
+  hairColor?: string;
+  hairStyle?: HairStyle;
+}
+
 export interface MemberDto {
   id: string;
   teamId: string;
   role: Role;
   name: string;
   prompt: string;
+  /** v1.4.0 H：成员级绑定的 API id；null = 跟随小组/空间默认 */
+  apiId: string | null;
+  /** v1.4.0 I：外观定制；null = 未定制（自动推导） */
+  appearance: MemberAppearance | null;
 }
 
 export interface ReviewStandardsDto {
@@ -46,6 +64,10 @@ export interface MemberSaveDto {
   role: Role;
   teamId: string;
   prompt: string;
+  /** v1.4.0 H：成员级 API 绑定；undefined = 不改，null = 清除（跟随小组） */
+  apiId?: string | null;
+  /** v1.4.0 I：外观定制；undefined = 不改，null = 清除（回自动推导） */
+  appearance?: MemberAppearance | null;
 }
 
 /** API 测试连接结果（M5，POST /api/apis/test）：不记账、不扣余额，仅连通性探活 */
@@ -142,6 +164,8 @@ export interface CapabilityMemberDto {
   /** 人设首行（persona 第一行） */
   personaFirstLine: string;
   teamId: string;
+  /** v1.4.0 H：成员级绑定的 API id（名册模型徽标用）；null = 跟随小组/默认 */
+  apiId: string | null;
 }
 
 /**

@@ -54,7 +54,9 @@ import { provisionWorkspace } from '../store/bootstrap';
 import { parseManifest, registerPackExtensions } from '../store/industry';
 import { makeMemberRows, ROLE_PERSONAS } from '../store/seed';
 import {
+  memberAppearanceOf,
   PLATFORM_WORKSPACE_ID,
+  sanitizeAppearance,
   type ApiRow,
   type IndustryPackRow,
   type KbRow,
@@ -310,6 +312,7 @@ function buildState(repos: Repos, workspaceId: string): StateDto {
       skillTags: parseIdList(m.skill_tags),
       personaFirstLine: (m.persona || '').split('\n')[0] ?? '',
       teamId: m.team_id,
+      apiId: m.api_id ?? null,
     })),
     recommendedSkills: repos
       .listLibrarySkills()
@@ -342,6 +345,8 @@ function buildState(repos: Repos, workspaceId: string): StateDto {
       role: m.role as MemberDto['role'],
       name: m.name,
       prompt: m.prompt,
+      apiId: m.api_id ?? null,
+      appearance: memberAppearanceOf(m),
     })),
     reviewStandards: repos.getSetting('reviewStandards', { points: '', clientNeeds: '' }, workspaceId),
     params: repos.getSetting('params', { concurrency: 4, taskBudgetTokens: 0 }, workspaceId),
@@ -1211,6 +1216,10 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const rolePersona = roleRow?.persona_template ?? ROLE_PERSONAS.find((r) => r.role === b.role)?.persona ?? '';
     const cur = b.id ? repos.getMember(b.id, ctx.workspaceId) : undefined;
     if (b.id && !cur) fail(ErrorCode.NOT_FOUND, '成员不存在', 404);
+    // v1.4.0 H：成员级绑定 API 必须是本空间的行（平台体验 API 不可绑）
+    if (b.apiId && !repos.getApi(b.apiId, ctx.workspaceId)) {
+      fail(ErrorCode.VALIDATION, '绑定的 API 不存在');
+    }
     if (!cur) {
       const row: MemberRow = {
         id: uid('member'),
@@ -1222,6 +1231,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
         skill_tags: '[]',
         color: '',
         workspace_id: ctx.workspaceId,
+        api_id: b.apiId ?? null,
+        appearance: b.appearance ? JSON.stringify(sanitizeAppearance(b.appearance)) : '',
       };
       repos.insertMember(row);
       logger.info('api', '新建成员', { memberId: row.id });
@@ -1236,6 +1247,14 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
       // 工种变更时人设跟随新工种默认（人设无独立编辑入口，始终与工种口径一致）
       persona: b.role !== cur!.role ? rolePersona : cur!.persona,
       prompt: b.prompt,
+      // v1.4.0 H/I：undefined = 不改、null = 清除、给值 = 换绑/覆盖
+      api_id: b.apiId === undefined ? (cur!.api_id ?? null) : b.apiId,
+      appearance:
+        b.appearance === undefined
+          ? (cur!.appearance ?? '')
+          : b.appearance === null
+            ? ''
+            : JSON.stringify(sanitizeAppearance(b.appearance)),
     };
     repos.updateMember(next);
     audit(req, ctx, 'update_member', 'member', next.id, next.name);

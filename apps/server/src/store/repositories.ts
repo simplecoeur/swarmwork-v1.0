@@ -1,5 +1,39 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { BlockedCode, ProjectStatus, TaskStatus } from '@swarm/shared';
+import type { BlockedCode, HairStyle, MemberAppearance, ProjectStatus, TaskStatus } from '@swarm/shared';
+
+/** v1.4.0 I：合法肤色档（与 web PixelOffice SKINS 同值；web 侧因打包约束另有同值常量） */
+export const MEMBER_SKINS = ['#f2c79b', '#eec39a', '#f6cfae', '#e9bd8d', '#d9a06b'] as const;
+export const HAIR_STYLES: readonly HairStyle[] = ['short', 'long', 'bald', 'bun'];
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * v1.4.0 I：外观入参清洗——只保留合法字段（skin 须在 5 档内、发色/衬衫须 #rrggbb、
+ * 发型须在枚举内），非法字段逐个丢弃；清洗后无任何字段返回空对象。
+ */
+export function sanitizeAppearance(input: unknown): MemberAppearance {
+  if (!input || typeof input !== 'object') return {};
+  const raw = input as Record<string, unknown>;
+  const out: MemberAppearance = {};
+  if (typeof raw.skin === 'string' && (MEMBER_SKINS as readonly string[]).includes(raw.skin)) out.skin = raw.skin;
+  if (typeof raw.shirt === 'string' && HEX_COLOR.test(raw.shirt)) out.shirt = raw.shirt;
+  if (typeof raw.hairColor === 'string' && HEX_COLOR.test(raw.hairColor)) out.hairColor = raw.hairColor;
+  if (typeof raw.hairStyle === 'string' && (HAIR_STYLES as readonly string[]).includes(raw.hairStyle)) {
+    out.hairStyle = raw.hairStyle as HairStyle;
+  }
+  return out;
+}
+
+/** v1.4.0 I：成员行 appearance 原文 → DTO（空串/坏 JSON/无合法字段一律 null = 未定制） */
+export function memberAppearanceOf(row: { appearance?: string | null }): MemberAppearance | null {
+  const raw = row.appearance;
+  if (!raw) return null;
+  try {
+    const clean = sanitizeAppearance(JSON.parse(raw));
+    return Object.keys(clean).length > 0 ? clean : null;
+  } catch {
+    return null;
+  }
+}
 
 /** 默认空间 id（M6 迁移收编的单人数据空间，见 migrations/003） */
 export const DEFAULT_WORKSPACE_ID = 'ws_default';
@@ -40,6 +74,10 @@ export interface MemberRow {
   skill_tags: string;
   color: string;
   workspace_id?: string | null;
+  /** v1.4.0 H：成员级 API 绑定（019）；旧字面量可缺省，仓储层归一为 null */
+  api_id?: string | null;
+  /** v1.4.0 I：外观 JSON 原文（020）；旧字面量可缺省，仓储层归一为空串 */
+  appearance?: string;
 }
 
 export interface ProjectRow {
@@ -618,18 +656,30 @@ export class Repos {
   insertMember(row: MemberRow): void {
     this.db
       .prepare(
-        'INSERT INTO members (id, team_id, name, role, persona, prompt, skill_tags, color, workspace_id) VALUES (?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO members (id, team_id, name, role, persona, prompt, skill_tags, color, workspace_id, api_id, appearance) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
       )
-      .run(row.id, row.team_id, row.name, row.role, row.persona, row.prompt, row.skill_tags, row.color, wsOf(row.workspace_id));
+      .run(
+        row.id,
+        row.team_id,
+        row.name,
+        row.role,
+        row.persona,
+        row.prompt,
+        row.skill_tags,
+        row.color,
+        wsOf(row.workspace_id),
+        row.api_id ?? null,
+        row.appearance ?? '',
+      );
   }
   updateMemberPrompt(id: string, name: string, prompt: string): void {
     this.db.prepare('UPDATE members SET name=?, prompt=? WHERE id=?').run(name, prompt, id);
   }
-  /** 成员全量更新（M5 成员管理：名字/工种/所属组/人设/提示词） */
+  /** 成员全量更新（M5 成员管理：名字/工种/所属组/人设/提示词；v1.4.0 起含 api_id/appearance） */
   updateMember(row: MemberRow): void {
     this.db
-      .prepare('UPDATE members SET team_id=?, name=?, role=?, persona=?, prompt=? WHERE id=?')
-      .run(row.team_id, row.name, row.role, row.persona, row.prompt, row.id);
+      .prepare('UPDATE members SET team_id=?, name=?, role=?, persona=?, prompt=?, api_id=?, appearance=? WHERE id=?')
+      .run(row.team_id, row.name, row.role, row.persona, row.prompt, row.api_id ?? null, row.appearance ?? '', row.id);
   }
   deleteMember(id: string): void {
     this.db.prepare('DELETE FROM members WHERE id = ?').run(id);
