@@ -1097,6 +1097,8 @@ export function registerRoutes(app: FastifyInstance, deps: ApiDeps): void {
     const { id } = apiDeleteSchema.parse(req.body ?? {});
     if (!repos.getApi(id, ctx.workspaceId)) fail(ErrorCode.NOT_FOUND, 'API 不存在', 404);
     repos.deleteApi(id);
+    // v1.4.0 H：与 defaultApiId 改指同口径——引用该 API 的小组/成员绑定一并置空，回退靠清绑定不靠悬空
+    repos.clearApiBindings(id, ctx.workspaceId);
     if (repos.getSetting<string | null>('defaultApiId', null, ctx.workspaceId) === id) {
       repos.setSetting('defaultApiId', repos.listApis(ctx.workspaceId)[0]?.id ?? null, ctx.workspaceId);
     }

@@ -6,6 +6,7 @@ TaskStatus,
 TEMPERATURES,
 TYPE_ROLE,
 } from '@swarm/shared';
+import { resolveOwnApiRow as resolveBoundApiRow } from '../domain/apiResolve';
 import { resolveAssetSections } from '../domain/assetService';
 import { balanceMilli, trialBalanceMilli} from '../domain/costService';
 import { notifyOwner } from '../domain/notify';
@@ -34,7 +35,7 @@ const wsOf = (task: TaskRow): string => task.workspace_id?? DEFAULT_WORKSPACE_ID
 * 调度引擎（设计 §9 + §15.2 + M6 多租户）：
 * DB 为准的队列、1s tick、FIFO + 守卫领取；执行/审核两阶段落库可续跑；
 * M6：按 workspace 迭代队列——每空间的并发/预算守卫沿用既有口径且互不影响；
-* API 解析链：组绑定 API → 空间默认 API →（末位）平台体验 API（自备优先，§8.1）；
+* API 解析链：成员绑定 API（assignee）→ 组绑定 API → 空间默认 API →（末位）平台体验 API（自备优先，§8.1）；
 * 派单查注册表（type_id → role_id），注册表无此类型时回退 shared 种子映射 TYPE_ROLE。
 */
 export class Engine {
@@ -109,13 +110,12 @@ private params(workspaceId: string): { concurrency: number; taskBudgetTokens: nu
 return this.repos.getSetting('params', { concurrency: 4, taskBudgetTokens: 0}, workspaceId);
 }
 
-/** 自备 API 解析：组绑定 → 空间默认（仅本空间行） */
+/** 自备 API 解析（v1.4.0 H 统一走 domain/apiResolve）：成员绑定（task.assignee_id）→ 组绑定 → 空间默认（仅本空间行） */
 private resolveOwnApiRow(task: TaskRow): ApiRow | null {
-const ws = wsOf(task);
-const team = this.repos.getTeam(task.team_id, ws);
-const apiId = team?.api_id || this.repos.getSetting<string | null>('defaultApiId', null, ws);
-if (!apiId) return null;
-return this.repos.getApi(apiId, ws)?? null;
+return resolveBoundApiRow(this.repos, wsOf(task), {
+memberId: task.assignee_id,
+teamId: task.team_id,
+});
 }
 
 /** 守卫链末位解析：自备 API 优先，无自备时落平台体验 API（§8.1） */

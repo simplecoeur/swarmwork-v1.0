@@ -6,7 +6,7 @@ import BriefingCard from './BriefingCard';
 import { CapabilitiesShelf, OnboardingCard } from './Onboarding';
 import { VisitLinksCard } from './Settings';
 import { yuan } from '../utils';
-import { Button, Input, Textarea } from './ui';
+import { Button, Input, Select, Textarea } from './ui';
 
 /** 成员档案编辑器（v1.3.0 起由 App 的 member 弹窗承载，Office 画布点小人 → openDialog('member')） */
 export function MemberEditor({ memberId, onClose }: { memberId: string; onClose: () => void }) {
@@ -14,21 +14,39 @@ export function MemberEditor({ memberId, onClose }: { memberId: string; onClose:
   const m = S?.members.find((x) => x.id === memberId);
   const [name, setName] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [apiId, setApiId] = useState('');
 
   // 打开编辑器时把该成员的现有名字/提示词灌进表单（与原生版点击时渲染表单一致）
   useEffect(() => {
     if (m) {
       setName(m.name);
       setPrompt(m.prompt || '');
+      setApiId(m.apiId || '');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [memberId]);
 
   if (!S || !m) return null;
 
+  // 当前生效模型（成员绑定 → 小组绑定 → 空间默认，与服务端解析同口径；查不到不显示）
+  const team = S.teams.find((t) => t.id === m.teamId);
+  const effectiveApiId = m.apiId || team?.apiId || S.defaultApiId;
+  const effectiveApi = effectiveApiId ? S.apis.find((a) => a.id === effectiveApiId) : undefined;
+
   async function save() {
     try {
-      await post('/api/members/prompt', { memberId, name, prompt });
+      // v1.4.0 H：改走 members/save 一次提交全部字段（工种不变时服务端保留人设，与旧 prompt 端点等价）；
+      // apiId 空串 = 跟随小组（与小组编辑「跟随公司默认」同口径，提交时转 null 清除成员级绑定）
+      await post('/api/members/save', {
+        member: {
+          id: m!.id,
+          name,
+          role: m!.role,
+          teamId: m!.teamId,
+          prompt,
+          apiId: apiId || null,
+        },
+      });
     } catch { return; }
     onClose();
     toast('成员已更新');
@@ -39,9 +57,17 @@ export function MemberEditor({ memberId, onClose }: { memberId: string; onClose:
     <div>
       <p className="hint" style={{ marginTop: 0 }}>
         {m.name}（{m.role}）
+        {effectiveApi ? ` · 当前模型：${effectiveApi.model}` : ''}
       </p>
       <label>名字</label>
       <Input value={name} onChange={(e) => setName(e.target.value)} />
+      <label>驱动模型</label>
+      <Select
+        value={apiId}
+        onValueChange={setApiId}
+        emptyLabel="跟随小组"
+        options={S.apis.map((a) => ({ value: a.id, label: `${a.name} · ${a.model}` }))}
+      />
       <label>专属提示词（只对这个成员生效，会拼进他的干活指令）</label>
       <Textarea
         rows={3}

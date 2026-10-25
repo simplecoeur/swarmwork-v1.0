@@ -3,6 +3,7 @@ import type { Logger } from '../logger';
 import { decryptKey } from '../store/crypto';
 import type { Repos, ScheduleRow, SessionRow, UserRow } from '../store/repositories';
 import { nowIso, uid } from '../util';
+import { resolveOwnApiId } from './apiResolve';
 import { attachAssetRefs, type AssetRefInput } from './assetService';
 import { balanceMilli, trialBalanceMilli } from './costService';
 import { notifyOwner } from './notify';
@@ -300,14 +301,14 @@ export interface ScheduleOutcome {
 /**
  * 守卫预检（与引擎领取守卫同源：组绑定 API → 空间默认 API → 平台体验 API；Key 与余额推导口径一致）。
  * 返回拦截原因 = 本次到点不建单、记 blocked；null = 可发单。
+ * v1.4.0 H：定时发单无具体执行成员，只传 teamId 走统一解析（小组 → 空间默认，口径不变）。
  */
 export function dispatchBlockReason(
   repos: Repos,
   workspaceId: string,
   teamId: string,
 ): { code: string; reason: string } | null {
-  const team = repos.getTeam(teamId, workspaceId);
-  const ownApiId = team?.api_id || repos.getSetting<string | null>('defaultApiId', null, workspaceId);
+  const ownApiId = resolveOwnApiId(repos, workspaceId, { teamId });
   if (ownApiId) {
     const api = repos.getApi(ownApiId, workspaceId);
     if (api) {

@@ -316,16 +316,21 @@ export function CapabilitiesShelf() {
       <h3 style={{ margin: '4px 0 8px', fontSize: 14 }}>成员能力卡（{caps?.members.length ?? 0} 人）</h3>
       {caps && caps.members.length ? (
         <div className="shelf-grid">
-          {caps.members.map((m) => (
-            <div className="shelf-card" key={m.memberId}>
-              <span className="tt">{m.name}</span>
-              <Badge>{m.roleName}</Badge>
-              {m.skillTags.map((t) => (
-                <Badge key={t}>{t}</Badge>
-              ))}
-              <div className="meta">{m.personaFirstLine || '（暂无人设说明）'}</div>
-            </div>
-          ))}
+          {caps.members.map((m) => {
+            // v1.4.0 H：成员级绑定时显示模型徽标（文案 = 绑定 API 的模型名；查不到不显示）
+            const boundApi = m.apiId ? S.apis.find((a) => a.id === m.apiId) : undefined;
+            return (
+              <div className="shelf-card" key={m.memberId}>
+                <span className="tt">{m.name}</span>
+                <Badge>{m.roleName}</Badge>
+                {boundApi ? <Badge>{boundApi.model}</Badge> : null}
+                {m.skillTags.map((t) => (
+                  <Badge key={t}>{t}</Badge>
+                ))}
+                <div className="meta">{m.personaFirstLine || '（暂无人设说明）'}</div>
+              </div>
+            );
+          })}
         </div>
       ) : (
         <p className="hint">暂无成员数据。</p>

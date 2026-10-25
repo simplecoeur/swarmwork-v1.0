@@ -1,4 +1,5 @@
 import { TASK_TYPES, TEMPERATURES, type TaskType } from '@swarm/shared';
+import { resolveOwnApiRow } from './apiResolve';
 import { balanceMilli } from './costService';
 import { LlmGateway } from '../llm/gateway';
 import type { Logger } from '../logger';
@@ -72,9 +73,9 @@ export async function createProject(
   const fallback: SubtaskSpec[] = [{ title: input.name, type: '文案', brief: input.brief }];
   let specs = fallback;
 
-  const apiId = team.api_id || repos.getSetting<string | null>('defaultApiId', null, ws);
-  const api = apiId ? repos.getApi(apiId, ws) : undefined;
+  // v1.4.0 H：拆单执行者是组长——成员上下文 = leader.id，走统一解析（成员 → 小组 → 空间默认）
   const leader = repos.teamMember(input.teamId, '组长', ws);
+  const api = resolveOwnApiRow(repos, ws, { memberId: leader?.id ?? null, teamId: input.teamId });
   if (api && leader && decryptKey(api.api_key_enc) && balanceMilli(repos, api.id, ws) > 0) {
     try {
       const out = await gateway.call({

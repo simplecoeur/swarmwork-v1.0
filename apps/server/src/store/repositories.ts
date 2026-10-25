@@ -606,6 +606,19 @@ export class Repos {
   deleteApi(id: string): void {
     this.db.prepare('DELETE FROM apis WHERE id = ?').run(id);
   }
+  /**
+   * v1.4.0 H：删 API 收尾——把本空间内引用该 API 的小组/成员绑定一并置空，
+   * 与 defaultApiId 改指剩余第一支的先例同口径（回退靠清绑定，不靠悬空兜底；
+   * 解析函数的成员级悬空下行仍保留作双保险）。含已软删小组，一律按 workspace 清。
+   */
+  clearApiBindings(apiId: string, workspaceId: string): void {
+    this.db
+      .prepare('UPDATE teams SET api_id = NULL WHERE api_id = ? AND workspace_id = ?')
+      .run(apiId, workspaceId);
+    this.db
+      .prepare('UPDATE members SET api_id = NULL WHERE api_id = ? AND workspace_id = ?')
+      .run(apiId, workspaceId);
+  }
 
   /* ----- teams / members ----- */
   listTeams(workspaceId: string = DEFAULT_WORKSPACE_ID): TeamRow[] {
